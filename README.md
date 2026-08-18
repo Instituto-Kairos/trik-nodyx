@@ -2,6 +2,8 @@
   
 # TRIK.exe — Uma modificação de Nodyx
 
+</div>
+
 **Um novo jeito de jogar RPG de texto.** 
 
 ## O que é o TRIK?
@@ -14,10 +16,10 @@ O escopo desse *fork* é:
 
 ```
 TRIK
-├── database-dedicado             → novos schemas são adicionados ao banco de dados, focando em facilitar registros dos personagens;
-├── sistema-de-progresso          → leitura e contagem de caracteres das cenas dos jogadores, separado por personagem;
+├── database-dedicado             → novos schemas são adicionados ao banco de dados para registros dos personagens;
+├── sistema-de-progresso          → leitura e contagem de caracteres das cenas dos jogadores;
 ├── widgets-personalizados        → alguns widgets pré-instalados para life-quality dos jogadores;
-└── world-generate-events         → sistema robusto e completo de eventos de mundo com memória persistente, feito a mão, de humanos para humanos;
+└── world-generate-events         → sistema robusto e completo de eventos de mundo com memória persistente, feito a mão;
 ```
 
 ## Projeto Original
