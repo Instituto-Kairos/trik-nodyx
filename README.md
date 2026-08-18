@@ -1,10 +1,9 @@
 <div align="center">
   
 # TRIK.exe — Uma modificação de Nodyx
+**Um novo jeito de jogar RPG de texto.** 
 
 </div>
-
-**Um novo jeito de jogar RPG de texto.** 
 
 ## O que é o TRIK?
 
