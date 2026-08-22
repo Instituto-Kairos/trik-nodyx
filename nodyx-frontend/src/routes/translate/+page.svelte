@@ -28,13 +28,17 @@
 
 	// Les horizons pas encore franchis — de vraies photos aussi, pour ne pas
 	// trahir l'idée en retombant sur des dégradés à cet endroit précis.
-	const UNCLAIMED: { code: string; name: string; img: string }[] = [
-		{ code: 'it', name: 'Italiano',     img: '/biomes/unclaimed/it.webp' },
-		{ code: 'ja', name: '日本語',        img: '/biomes/unclaimed/ja.webp' },
-		{ code: 'ar', name: 'العربية',      img: '/biomes/unclaimed/ar.webp' },
-		{ code: 'hi', name: 'हिन्दी',        img: '/biomes/unclaimed/hi.webp' },
-		{ code: 'uk', name: 'Українська',   img: '/biomes/unclaimed/uk.webp' },
+	const UNCLAIMED: { code: string; name: string; img: string; flagIcon: string }[] = [
+		{ code: 'it', name: 'Italiano',     img: '/biomes/unclaimed/it.webp', flagIcon: 'twemoji:flag-italy' },
+		{ code: 'ja', name: '日本語',        img: '/biomes/unclaimed/ja.webp', flagIcon: 'twemoji:flag-japan' },
+		// Pas de drapeau "arabe" générique dans le bundle Twemoji : le Maroc est
+		// une vraie langue arabophone parmi d'autres, choix pragmatique plutôt
+		// que d'ajouter un nouvel asset pour un seul horizon non franchi.
+		{ code: 'ar', name: 'العربية',      img: '/biomes/unclaimed/ar.webp', flagIcon: 'twemoji:flag-morocco' },
+		{ code: 'hi', name: 'हिन्दी',        img: '/biomes/unclaimed/hi.webp', flagIcon: 'twemoji:flag-india' },
+		{ code: 'uk', name: 'Українська',   img: '/biomes/unclaimed/uk.webp', flagIcon: 'twemoji:flag-ukraine' },
 	]
+	const heroFlagIcon = $derived(LOCALES.find((l) => l.code === $locale)?.flagIcon ?? '')
 
 	let { data } = $props()
 	const activity        = $derived(data.activity.locales as Record<string, { lastUpdated: string; contributors: LocaleContributor[] }>)
@@ -178,6 +182,7 @@
 <div class="hero">
 	{#key $locale}
 		<img src={heroImg} alt="" class="hero-img" in:fade={{ duration: 650 }} />
+		<span class="hero-flag" in:fade={{ duration: 400, delay: 150 }}>{@html flagSvg(heroFlagIcon)}</span>
 	{/key}
 	<div class="hero-scrim"></div>
 	<div class="hero-content">
@@ -397,6 +402,7 @@
 			<a class="hcard" href={NEW_LANG} target="_blank" rel="noopener">
 				<img src={u.img} alt="" loading="lazy" />
 				<div class="hcard-scrim"></div>
+				<span class="hcard-flag">{@html flagSvg(u.flagIcon)}</span>
 				<div class="hcard-txt">
 					<span class="hcard-name">{u.name}</span>
 					<span class="hcard-tag">{tFn('translate.newlang.horizon')}</span>
@@ -610,6 +616,11 @@
 		position: absolute; inset: 0;
 		background: linear-gradient(180deg, rgb(6 7 10 / 0.15) 0%, rgb(8 9 13 / 0.55) 55%, #0b0c11 100%);
 	}
+	.hero-flag {
+		position: absolute; top: 16px; right: 22px; width: 40px; height: 40px; border-radius: 10px;
+		overflow: hidden; line-height: 0; box-shadow: 0 4px 16px rgb(0 0 0 / 0.35), inset 0 0 0 1.5px rgb(255 255 255 / 0.35);
+	}
+	.hero-flag :global(svg) { display: block; width: 100%; height: 100%; }
 	.hero-content {
 		position: relative; height: 100%; max-width: 1120px; margin: 0 auto; padding: 0 22px 26px;
 		display: flex; flex-direction: column; justify-content: flex-end;
@@ -777,7 +788,7 @@
 	/* ── Les horizons pas encore franchis ─────────────────────────────────── */
 	.horizons { display: flex; gap: 10px; margin-top: 10px; overflow-x: auto; padding-bottom: 2px; }
 	.hcard {
-		position: relative; flex: none; width: 170px; height: 108px; border-radius: 10px; overflow: hidden;
+		position: relative; flex: none; width: 194px; height: 132px; border-radius: 12px; overflow: hidden;
 		text-decoration: none; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08);
 		transition: transform 0.18s ease;
 	}
@@ -785,9 +796,14 @@
 	.hcard img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; filter: brightness(0.75) saturate(1.05); transition: filter 0.18s ease; }
 	.hcard:hover img { filter: brightness(0.9) saturate(1.1); }
 	.hcard-scrim { position: absolute; inset: 0; background: linear-gradient(180deg, transparent 40%, rgb(6 7 10 / 0.75) 100%); }
-	.hcard-txt { position: absolute; left: 10px; right: 10px; bottom: 8px; display: flex; flex-direction: column; gap: 2px; }
-	.hcard-name { color: #fff; font-size: 13px; font-weight: 700; text-shadow: 0 1px 6px rgb(0 0 0 / 0.5); }
-	.hcard-tag { color: rgb(255 255 255 / 0.75); font-size: 10.5px; line-height: 1.3; }
+	.hcard-flag {
+		position: absolute; top: 9px; right: 9px; width: 26px; height: 26px; border-radius: 7px;
+		overflow: hidden; line-height: 0; box-shadow: 0 2px 8px rgb(0 0 0 / 0.35), inset 0 0 0 1px rgb(255 255 255 / 0.35);
+	}
+	.hcard-flag :global(svg) { display: block; width: 100%; height: 100%; }
+	.hcard-txt { position: absolute; left: 11px; right: 11px; bottom: 9px; display: flex; flex-direction: column; gap: 2px; }
+	.hcard-name { color: #fff; font-size: 13.5px; font-weight: 700; text-shadow: 0 1px 6px rgb(0 0 0 / 0.5); }
+	.hcard-tag { color: rgb(255 255 255 / 0.75); font-size: 11px; line-height: 1.3; }
 
 	.info {
 		display: flex; align-items: center; gap: 13px; margin-top: 16px; padding: 13px 16px;
