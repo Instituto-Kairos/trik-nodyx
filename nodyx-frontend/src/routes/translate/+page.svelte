@@ -6,10 +6,16 @@
   donc des fichiers de locale eux-mêmes : la page ne peut pas mentir.
 -->
 <script lang="ts">
-	import { t, locale }              from '$lib/i18n'
-	import { getTranslationProgress } from '$lib/translationProgress'
+	import { t, locale, LOCALES }         from '$lib/i18n'
+	import { getTranslationProgress, flagSvg } from '$lib/translationProgress'
 	import type { LocaleProgress }    from '$lib/translationProgress'
 	import type { LocaleContributor, GlobalContributor, AllContributor } from '$lib/localeActivity.server'
+
+	let langMenuOpen = $state(false)
+	function pickPageLocale(code: (typeof LOCALES)[number]['code']) {
+		locale.setLocale(code)
+		langMenuOpen = false
+	}
 
 	let { data } = $props()
 	const activity        = $derived(data.activity.locales as Record<string, { lastUpdated: string; contributors: LocaleContributor[] }>)
@@ -44,6 +50,7 @@
 		if (e.key !== 'Escape') return
 		closePopup()
 		closeAllPopup()
+		langMenuOpen = false
 	}
 
 	const REPO    = 'https://github.com/Pokled/nodyx'
@@ -115,6 +122,30 @@
 		<a href={LOCALES_DIR} target="_blank" rel="noopener">{tFn('translate.nav.files')}</a>
 	</nav>
 	<span class="grow"></span>
+
+	<!-- Le picker de langue du layout principal ne vit pas ici : /translate a
+	     son propre chrome. Sans ce switcher, la page qui explique les
+	     traductions n'était lisible qu'en fr/en — l'ironie a été relevée. -->
+	<div class="langpick">
+		<button type="button" class="langbtn" onclick={() => langMenuOpen = !langMenuOpen} aria-expanded={langMenuOpen} aria-haspopup="listbox">
+			<span class="flag sm">{@html flagSvg(LOCALES.find((l) => l.code === $locale)?.flagIcon ?? '')}</span>
+			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+		</button>
+		{#if langMenuOpen}
+			<div class="lang-backdrop" role="presentation" onclick={() => langMenuOpen = false}></div>
+			<ul class="langmenu" role="listbox">
+				{#each LOCALES as l (l.code)}
+					<li>
+						<button type="button" class:active={l.code === $locale} onclick={() => pickPageLocale(l.code)}>
+							<span class="flag sm">{@html flagSvg(l.flagIcon)}</span>
+							{l.label}
+						</button>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+	</div>
+
 	<a class="cta" href={CONTRIB} target="_blank" rel="noopener">
 		<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
 		{tFn('translate.contribute')}
@@ -487,6 +518,32 @@
 	}
 	.cta:hover { filter: brightness(1.07); }
 	.cta svg { width: 15px; height: 15px; }
+
+	/* ── Sélecteur de langue de la page ───────────────────────────────────── */
+	.langpick { position: relative; margin-right: 6px; }
+	.langbtn {
+		display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px;
+		border: 1px solid #262936; border-radius: 8px; background: #12131b; color: #9698ab;
+		cursor: pointer;
+	}
+	.langbtn:hover { color: #e7e8ef; border-color: #343a5e; }
+	.langbtn svg { width: 13px; height: 13px; }
+	.flag.sm { width: 18px; height: 18px; flex: none; border-radius: 4px; overflow: hidden; line-height: 0; display: inline-block; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12); }
+	.flag.sm :global(svg) { display: block; width: 100%; height: 100%; }
+	.lang-backdrop { position: fixed; inset: 0; z-index: 29; }
+	.langmenu {
+		position: absolute; top: calc(100% + 6px); right: 0; z-index: 30;
+		list-style: none; margin: 0; padding: 6px; min-width: 170px; max-height: 60vh; overflow-y: auto;
+		border: 1px solid #262936; border-radius: 10px; background: #12131b;
+		box-shadow: 0 16px 40px rgb(0 0 0 / 0.4);
+	}
+	.langmenu button {
+		display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 9px;
+		border: 0; border-radius: 7px; background: none; color: #c5c7d6; font-size: 13px;
+		font-family: inherit; text-align: left; cursor: pointer;
+	}
+	.langmenu button:hover { background: rgb(255 255 255 / 0.05); color: #e7e8ef; }
+	.langmenu button.active { color: #8b93ff; font-weight: 600; }
 
 	/* ── En-tête ─────────────────────────────────────────────────────────── */
 	.phead { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
