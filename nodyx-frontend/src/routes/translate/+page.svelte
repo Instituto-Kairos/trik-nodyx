@@ -376,7 +376,7 @@
 	     ne pas les oublier derrière la seule vitrine des langues. -->
 	{#if allContributors.length}
 		<section class="allcontrib">
-			<h2>{tFn('translate.allcontrib.title')}</h2>
+			<h2><span aria-hidden="true">✨</span> {tFn('translate.allcontrib.title')}</h2>
 			<p class="allcontrib-sub">{tFn('translate.allcontrib.subtitle')}</p>
 			<div class="allcontrib-grid">
 				{#each allContributors as p (p.username ?? p.displayName)}
@@ -491,7 +491,15 @@
 <style>
 	/* Registre visuel : outil, pas vitrine. Gris neutres, une seule couleur
 	   d'accent (indigo) sur les actions, l'émeraude réservé à « complet ». */
-	:global(body) { background: #0b0c11; }
+	/* Fond chaud plutôt qu'un noir plat "dashboard" : deux lueurs discrètes,
+	   couleur du bandeau des gens et de la barre de complétion, jamais assez
+	   fortes pour distraire de la lecture. */
+	:global(body) {
+		background:
+			radial-gradient(900px 500px at 8% -6%,  rgb(109 118 245 / 0.10), transparent 60%),
+			radial-gradient(900px 560px at 100% 8%, rgb(46 206 147 / 0.07), transparent 55%),
+			#0b0c11;
+	}
 
 	.wrap { max-width: 1120px; margin: 0 auto; padding: 26px 22px 90px; color: #e7e8ef; font-size: 14px; line-height: 1.45; }
 	.sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
@@ -516,8 +524,9 @@
 		background: var(--nx-accent); padding: 7px 13px; border-radius: 8px;
 		box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.12);
 	}
-	.cta:hover { filter: brightness(1.07); }
+	.cta:hover { filter: brightness(1.07) saturate(1.05); transform: translateY(-1px); }
 	.cta svg { width: 15px; height: 15px; }
+	.cta, .allcontrib-more, .newlang .ask, .langbtn { transition: transform 0.15s ease, filter 0.15s ease, background 0.15s ease, border-color 0.15s ease; }
 
 	/* ── Sélecteur de langue de la page ───────────────────────────────────── */
 	.langpick { position: relative; margin-right: 6px; }
@@ -549,37 +558,52 @@
 	.phead { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
 	h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.02em; display: flex; align-items: center; gap: 11px; }
 	.cico {
-		width: 30px; height: 30px; border-radius: 8px; flex: none; display: grid; place-items: center;
-		color: #8b93ff; background: rgb(109 118 245 / 0.1); border: 1px solid rgb(109 118 245 / 0.22);
+		width: 30px; height: 30px; border-radius: 9px; flex: none; display: grid; place-items: center;
+		color: #a8afff; background: linear-gradient(135deg, rgb(109 118 245 / 0.18), rgb(46 206 147 / 0.12));
+		border: 1px solid rgb(109 118 245 / 0.28);
 	}
 	.cico svg { width: 17px; height: 17px; }
 	.psub { margin: 7px 0 0; color: #9698ab; font-size: 13.5px; padding-left: 41px; max-width: 62ch; }
 	.updated { color: #61647a; font: 500 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 
 	/* ── Les gens ────────────────────────────────────────────────────────── */
+	/* Le cœur émotionnel de la page, pas une ligne de plus dans un tableau :
+	   plus grand, plus chaud, une vraie lueur — le reste peut rester sobre,
+	   pas cette section-là. */
 	.people {
-		display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
-		margin-top: 22px; padding: 14px 16px;
-		border: 1px solid #1c1e28; border-radius: 10px;
-		background: linear-gradient(135deg, rgb(109 118 245 / 0.06), rgb(46 206 147 / 0.04));
+		display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+		margin-top: 22px; padding: 20px 22px;
+		border: 1px solid rgb(109 118 245 / 0.22); border-radius: 16px;
+		background: linear-gradient(135deg, rgb(109 118 245 / 0.14), rgb(46 206 147 / 0.08));
+		box-shadow: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 20px 50px -30px rgb(109 118 245 / 0.5);
 	}
 	.people-row { display: flex; }
 	.pav {
-		width: 34px; height: 34px; border-radius: 50%; flex: none;
-		margin-left: -9px; overflow: hidden; text-decoration: none;
-		border: 2px solid #0f1016; background: #1c1e28;
-		transition: transform 0.15s ease;
+		width: 44px; height: 44px; border-radius: 50%; flex: none;
+		margin-left: -12px; overflow: hidden; text-decoration: none;
+		border: 2.5px solid #0b0c11; background: #1c1e28;
+		transition: transform 0.18s cubic-bezier(.34,1.56,.64,1);
 	}
 	.pav:first-child { margin-left: 0; }
-	.pav:hover, .pav:focus-visible { transform: translateY(-3px); z-index: 1; position: relative; }
+	.pav:hover, .pav:focus-visible { transform: translateY(-5px) scale(1.06); z-index: 1; position: relative; }
 	.pav img { display: block; width: 100%; height: 100%; object-fit: cover; }
-	.people-line { margin: 0; font-size: 13.5px; color: #c5c7d6; }
+	.people-line { margin: 0; font-size: 15px; font-weight: 600; color: #eef0ff; }
 
 	/* ── Vue d'ensemble ──────────────────────────────────────────────────── */
 	.overview { margin: 26px 0 30px; }
-	.metrics { display: flex; flex-wrap: wrap; }
-	.metric { padding: 0 20px; border-left: 1px solid #1c1e28; }
-	.metric:first-child { padding-left: 0; border-left: 0; }
+	.metrics { display: flex; flex-wrap: wrap; gap: 10px; }
+	/* Chips colorées plutôt que des colonnes de tableur grises : chaque
+	   métrique a sa propre teinte douce, discrète mais vivante. */
+	.metric {
+		padding: 12px 18px; border-radius: 12px; background: rgb(255 255 255 / 0.03);
+		border: 1px solid rgb(255 255 255 / 0.05); transition: transform 0.15s ease, background 0.15s ease;
+	}
+	.metric:hover { transform: translateY(-2px); }
+	.metric:nth-child(1) { background: rgb(109 118 245 / 0.09); border-color: rgb(109 118 245 / 0.18); }
+	.metric:nth-child(2) { background: rgb(167 139 250 / 0.09); border-color: rgb(167 139 250 / 0.18); }
+	.metric:nth-child(3) { background: rgb(46 206 147 / 0.09);  border-color: rgb(46 206 147 / 0.18); }
+	.metric:nth-child(4) { background: rgb(245 196 81 / 0.09);  border-color: rgb(245 196 81 / 0.18); }
+	.metric:nth-child(5) { background: rgb(56 189 248 / 0.09);  border-color: rgb(56 189 248 / 0.18); }
 	.metric .v { font: 700 19px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 	.metric .v .s { color: #61647a; font-weight: 600; font-size: 14px; }
 	.metric .v.em { color: #2ece93; }
@@ -686,7 +710,7 @@
 		text-decoration: none; transition: background .15s, border-color .15s;
 	}
 	.newlang .ask svg { width: 15px; height: 15px; }
-	.newlang .ask:hover { background: #202541; border-color: #4a527f; }
+	.newlang .ask:hover { background: #202541; border-color: #4a527f; transform: translateY(-1px); }
 	.newlang .ask:focus-visible { outline: 2px solid #8b93ff; outline-offset: 2px; }
 
 	.info {
@@ -708,10 +732,14 @@
 	.acard {
 		display: flex; flex-direction: column; align-items: center; gap: 6px;
 		width: 108px; padding: 14px 10px; cursor: pointer; text-align: center;
-		border: 1px solid #1c1e28; border-radius: 10px; background: #0f1016;
-		font-family: inherit; transition: border-color 0.15s, background 0.15s;
+		border: 1px solid #1c1e28; border-radius: 12px; background: #0f1016;
+		font-family: inherit; transition: border-color 0.15s, background 0.15s, transform 0.15s;
 	}
-	.acard:hover, .acard:focus-visible { border-color: #343a5e; background: #12131b; }
+	.acard:hover, .acard:focus-visible {
+		border-color: #4a527f; background: #12131b;
+		transform: translateY(-3px);
+		box-shadow: 0 10px 24px rgb(109 118 245 / 0.12);
+	}
 	.acard img, .acard .cinit { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; }
 	.acard .cinit { display: grid; place-items: center; background: #1c1e28; font-size: 15px; color: #9698ab; }
 	.acard-name { font-size: 12.5px; font-weight: 650; color: #e7e8ef; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
@@ -787,7 +815,7 @@
 	a.pop-entry-blurb:hover { color: #e7e8ef; text-decoration: underline; }
 
 	@media (max-width: 640px) {
-		.metric { padding: 0 14px; }
+		.metric { padding: 10px 14px; }
 		.search input { width: 150px; }
 
 		/* En colonne, `align-items: center` empecherait le bouton de prendre la
