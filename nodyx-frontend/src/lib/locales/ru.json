@@ -1035,5 +1035,6 @@
   "translate.contributors.view_profile": "Открыть профиль GitHub",
   "translate.contributors.view_pr": "Открыть pull request #{{n}}",
   "translate.contributors.view_commit": "Открыть commit",
-  "translate.contributors.close": "Закрыть"
+  "translate.contributors.close": "Закрыть",
+  "translate.newlang.horizon": "Nodyx ещё не пересёк этот горизонт."
 }

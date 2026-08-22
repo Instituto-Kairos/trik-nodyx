@@ -1035,5 +1035,6 @@
   "translate.contributors.view_profile": "Ver perfil do GitHub",
   "translate.contributors.view_pr": "Ver o pull request #{{n}}",
   "translate.contributors.view_commit": "Ver o commit",
-  "translate.contributors.close": "Fechar"
+  "translate.contributors.close": "Fechar",
+  "translate.newlang.horizon": "O Nodyx ainda não chegou a este horizonte."
 }
