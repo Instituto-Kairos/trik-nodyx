@@ -13,6 +13,7 @@ Forum + Chat + Voice + P2P + Canvas + Homepage Builder + Streamer Hub, one serve
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![CI](https://github.com/Pokled/Nodyx/actions/workflows/ci.yml/badge.svg)](https://github.com/Pokled/Nodyx/actions/workflows/ci.yml)
 [![Stack](https://img.shields.io/badge/stack-Fastify%20%2B%20SvelteKit%20%2B%20PostgreSQL%20%2B%20Rust-green)](docs/en/ARCHITECTURE.md)
+[![Security Policy](https://img.shields.io/badge/security-Argon2id%20%2B%20E2E%20%2B%202FA-1a1a2e)](.github/SECURITY.md)
 [![Ko-fi](https://img.shields.io/badge/Support-Ko--fi-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/Pokled)
 
 <sub>If Nodyx resonates with you, a star helps others find it, and keeps us going.</sub>
@@ -32,6 +33,7 @@ Forum + Chat + Voice + P2P + Canvas + Homepage Builder + Streamer Hub, one serve
 <div align="center">
 
 [Features](#where-each-project-shines) &nbsp;·&nbsp;
+[Security](#security) &nbsp;·&nbsp;
 [Homepage Builder](docs/en/HOMEPAGE-BUILDER.md) &nbsp;·&nbsp;
 [Streamer Hub](docs/en/STREAMER-HUB.md) &nbsp;·&nbsp;
 [Architecture](#architecture) &nbsp;·&nbsp;
@@ -45,7 +47,13 @@ Forum + Chat + Voice + P2P + Canvas + Homepage Builder + Streamer Hub, one serve
 
 ---
 
-> **Hey, before you scroll.** Nodyx isn't trying to fight Discord, and it isn't trying to be the only open alternative. There are great projects out there. Matrix, Stoat, Fluxer, Mattermost, Rocket.Chat, Discourse, Haven and others. And we genuinely want you to know about them. We list them, with their GitHub repos, on a page we wrote ourselves: **[→ Why Nodyx (and the other alternatives we respect)](https://nodyx.dev/why-nodyx)**.
+<div align="center">
+  <img src="docs/img/fronted_nodyx_page_builder.png" alt="Nodyx, Homepage Builder" width="860"/>
+</div>
+
+---
+
+> **Hey, before you scroll.** Nodyx isn't trying to fight Discord, and it isn't trying to be the only open alternative. There are great projects out there. Matrix, Stoat, Fluxer, Mattermost, Rocket.Chat, Discourse, Haven and others. And we genuinely want you to know about them. We list them, with their GitHub repos, on a page we wrote ourselves: **[Why Nodyx, and the other alternatives we respect](https://nodyx.dev/why-nodyx)**.
 >
 > *The fight isn't between us. It's between locked silos and communities that actually own themselves. Pick the tool that fits you. We'll cheer either way.*
 
@@ -68,10 +76,6 @@ Forum + Chat + Voice + P2P + Canvas + Homepage Builder + Streamer Hub, one serve
 | 日本語 | 取締役会の気分や投資家の気まぐれを気にする必要のないツール。 |
 
 </details>
-
-<div align="center">
-  <img src="docs/img/fronted_nodyx_page_builder.png" alt="Nodyx, Homepage Builder" width="860"/>
-</div>
 
 ---
 
@@ -98,6 +102,27 @@ One command. Your server. Forever.
 | Reverse proxy | **Caddy**, automatic Let's Encrypt TLS |
 
 > **No Docker required.** The installer deploys Node.js + PostgreSQL + Redis + Caddy + PM2 natively. `docker-compose.yml` is provided for local development only.
+
+---
+
+## Security
+
+Self-hosting your community means the responsibility for keeping it safe sits with you. Nodyx is built to make that responsibility smaller, not bigger.
+
+| Surface | How it's handled |
+|---|---|
+| Passwords | Argon2id, OWASP-recommended parameters, transparent migration off any legacy bcrypt hash |
+| Direct messages | End-to-end encrypted, ECDH P-256 + AES-256-GCM. Private keys never leave the browser, the server only ever sees ciphertext |
+| Sessions | JWT + Redis, configurable TTL, forced logout on demand |
+| Two-factor auth | TOTP (Google Authenticator, Aegis, Bitwarden) or Nodyx Signet, a passwordless ECDSA P-256 PWA |
+| Rate limiting | Trusted proxy chain scoped explicitly, so a forged `X-Forwarded-For` can't impersonate an internal request or dodge a limit |
+| Every API input | Validated against a Zod schema, parameterized SQL only, no string concatenation |
+| Every response | CSP, X-Frame-Options, HSTS headers, sanitized HTML rendering |
+| Backups | Proven nightly by an automated restore, not just a file copy sitting untested |
+
+Found a vulnerability? **Do not open a public issue.** Report it privately to `security@nodyx.org` or through [GitHub's private advisories](https://github.com/Pokled/nodyx/security/advisories/new). Acknowledged within 48 hours, assessed within 7 days, credited in the release notes unless you'd rather stay anonymous.
+
+→ **[Full security policy](.github/SECURITY.md)**
 
 ---
 
