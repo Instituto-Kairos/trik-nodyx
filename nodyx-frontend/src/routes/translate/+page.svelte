@@ -18,13 +18,35 @@
 		langMenuOpen = false
 	}
 
-	// Une vraie photo par langue — cf static/biomes/. Le {#key $locale} plus bas
-	// fait le fondu enchaîné entre deux photos au changement de langue.
-	const BIOME_IMG: Record<string, string> = {
-		fr: '/biomes/fr.webp', en: '/biomes/en.webp', es: '/biomes/es.webp', de: '/biomes/de.webp',
-		ru: '/biomes/ru.webp', 'pt-PT': '/biomes/pt-PT.webp', 'pt-BR': '/biomes/pt-BR.webp', vi: '/biomes/vi.webp',
+	// Plusieurs photos par langue — cf static/biomes/. Jonathan : "imagine un
+	// guide touristique par mise en avant de pays" — donc pas une photo figée,
+	// une petite tournée qui défile toute seule tant qu'on reste sur la langue.
+	// Le {#key} plus bas fait le fondu enchaîné à chaque changement (de photo
+	// comme de langue).
+	const BIOME_IMGS: Record<string, string[]> = {
+		fr:      ['/biomes/fr-1.webp', '/biomes/fr-2.webp', '/biomes/fr-3.webp'],
+		en:      ['/biomes/en-1.webp', '/biomes/en-2.webp', '/biomes/en-3.webp'],
+		es:      ['/biomes/es-1.webp', '/biomes/es-2.webp', '/biomes/es-3.webp'],
+		de:      ['/biomes/de-1.webp', '/biomes/de-2.webp', '/biomes/de-3.webp'],
+		ru:      ['/biomes/ru-1.webp', '/biomes/ru-2.webp'],
+		'pt-PT': ['/biomes/pt-PT-1.webp', '/biomes/pt-PT-2.webp'],
+		'pt-BR': ['/biomes/pt-BR-1.webp', '/biomes/pt-BR-2.webp'],
+		vi:      ['/biomes/vi-1.webp', '/biomes/vi-2.webp', '/biomes/vi-3.webp'],
 	}
-	const heroImg = $derived(BIOME_IMG[$locale] ?? BIOME_IMG.en)
+	const heroImages = $derived(BIOME_IMGS[$locale] ?? BIOME_IMGS.en)
+
+	let heroIndex = $state(0)
+	// Repart de la première photo (celle qui donne le ton du pays) à chaque
+	// changement de langue, plutôt que de garder un index qui ne correspond
+	// plus à rien pour la nouvelle série.
+	$effect(() => { $locale; heroIndex = 0 })
+	$effect(() => {
+		const n = heroImages.length
+		if (n <= 1) return
+		const id = setInterval(() => { heroIndex = (heroIndex + 1) % n }, 6000)
+		return () => clearInterval(id)
+	})
+	const heroImg = $derived(heroImages[heroIndex] ?? heroImages[0])
 
 	// Les horizons pas encore franchis — de vraies photos aussi, pour ne pas
 	// trahir l'idée en retombant sur des dégradés à cet endroit précis.
@@ -180,8 +202,10 @@
      Jonathan : "je veux voir ce dont tu es capable" — donc pas un dégradé,
      un vrai lieu, à chaque langue le sien. -->
 <div class="hero">
-	{#key $locale}
+	{#key heroImg}
 		<img src={heroImg} alt="" class="hero-img" in:fade={{ duration: 650 }} />
+	{/key}
+	{#key $locale}
 		<span class="hero-flag" in:fade={{ duration: 400, delay: 150 }}>{@html flagSvg(heroFlagIcon)}</span>
 	{/key}
 	<div class="hero-scrim"></div>
