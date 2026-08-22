@@ -15,30 +15,31 @@ Forum + Chat + Voice + P2P + Canvas + Homepage Builder + Streamer Hub, one serve
 [![Stack](https://img.shields.io/badge/stack-Fastify%20%2B%20SvelteKit%20%2B%20PostgreSQL%20%2B%20Rust-green)](docs/en/ARCHITECTURE.md)
 [![Ko-fi](https://img.shields.io/badge/Support-Ko--fi-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/Pokled)
 
-<sub>⭐ If Nodyx resonates with you, a star helps others find it, and keeps us going.</sub>
+<sub>If Nodyx resonates with you, a star helps others find it, and keeps us going.</sub>
 
 </div>
 
 <div align="center">
 
-**[🌐 Discover → start.nodyx.org](https://start.nodyx.org)** &nbsp;·&nbsp;
-**[📖 Documentation → nodyx.dev](https://nodyx.dev)** &nbsp;·&nbsp;
-**[🚀 Live demo → nodyx.org](https://nodyx.org)** &nbsp;·&nbsp;
+**[Discover](https://start.nodyx.org)** &nbsp;·&nbsp;
+**[Documentation](https://nodyx.dev)** &nbsp;·&nbsp;
+**[Live demo](https://nodyx.org)** &nbsp;·&nbsp;
+**[Translate](https://nodyx.org/translate)** &nbsp;·&nbsp;
 <a href="README.md"><img src="https://flagcdn.com/16x12/gb.png" alt="EN"> English</a> · <a href="docs/fr/README.md"><img src="https://flagcdn.com/16x12/fr.png" alt="FR"> Français</a>
 
 </div>
 
 <div align="center">
 
-[✨ Features](#where-each-project-shines) &nbsp;|&nbsp;
-[🧩 Homepage Builder](docs/en/HOMEPAGE-BUILDER.md) &nbsp;|&nbsp;
-[🎥 Streamer Hub](docs/en/STREAMER-HUB.md) &nbsp;|&nbsp;
-[🏗️ Architecture](#architecture) &nbsp;|&nbsp;
-[📸 Screenshots](#screenshots) &nbsp;|&nbsp;
-[🚀 Quick Start](#quick-start) &nbsp;|&nbsp;
-[📋 Changelog](CHANGELOG.md) &nbsp;|&nbsp;
-[🤝 Contributing](#contributing) &nbsp;|&nbsp;
-[📚 Full docs](docs/en/)
+[Features](#where-each-project-shines) &nbsp;·&nbsp;
+[Homepage Builder](docs/en/HOMEPAGE-BUILDER.md) &nbsp;·&nbsp;
+[Streamer Hub](docs/en/STREAMER-HUB.md) &nbsp;·&nbsp;
+[Architecture](#architecture) &nbsp;·&nbsp;
+[Screenshots](#screenshots) &nbsp;·&nbsp;
+[Quick Start](#quick-start) &nbsp;·&nbsp;
+[Changelog](CHANGELOG.md) &nbsp;·&nbsp;
+[Contributing](#contributing) &nbsp;·&nbsp;
+[Full docs](docs/en/)
 
 </div>
 
@@ -51,7 +52,7 @@ Forum + Chat + Voice + P2P + Canvas + Homepage Builder + Streamer Hub, one serve
 > **A tool that doesn't have to worry about the moods of a board of directors or the whims of an investor.**
 
 <details>
-<summary>🌍 Translations (click to expand)</summary>
+<summary>Translations (click to expand)</summary>
 
 | Language | Translation |
 |----------|-------------|
@@ -143,24 +144,23 @@ The community-tools landscape isn't a battle. Each project optimizes for differe
 
 ### What's inside the Nodyx single install
 
-- Indexed forum (canonical URLs, JSON-LD, sitemap, Google-friendly)
-- Real-time chat with replies, pins, reactions, unfurls
-- P2P voice channels, zero Big Tech relay
-- Collaborative P2P canvas (whiteboard)
-- WebRTC DataChannels for instant typing/reactions
-- Home server support, no port forwarding, no domain required
-- Federated community directory + cross-instance global search
-- Asset library (frames, badges, banners, profile themes)
-- Ephemeral whisper rooms
-- Passwordless login (ECDSA P-256 PWA, Nodyx Signet)
-- Collaborative jukebox (YouTube queue)
-- Event calendar (OSM maps, RSVP, SEO)
-- **Homepage Builder**, drag-and-drop rows and columns on a 12-unit grid
-- **Widget Store**, install external widgets via .zip
-- **Widget SDK**, build custom widgets, no framework needed
-- **OctoGuard**, native auto-mod (regex/word/link/emoji-flood, ReDoS-safe via Google `re2`), welcome bot, custom commands, mutes, signed webhook, all admin-tunable, off by default
-- **Streamer Hub**, Twitch integration with a native Soundboard (ID3 tags, viewer queue, `!ns` chat command), a multi-page mobile Stream Deck, OBS browser-source overlays (alerts, goals, timers, tickers, leaderboards, clips, soundboard) and audio playlists with per-playlist OBS scenes
-- **Rich article editor**, anchor-on-selection table of contents, corner-handle image resize, protected code/render blocks, two-column layouts, embedded media, all round-trip safe through the sanitizer
+**Talk, in every form**
+Indexed forum with canonical URLs, JSON-LD and a sitemap · real-time chat with replies, pins, reactions, unfurls · P2P voice channels with zero Big Tech relay in between · ephemeral whisper rooms for a side conversation that isn't meant to last.
+
+**Build and create, together**
+A collaborative P2P canvas for whiteboarding in real time · WebRTC DataChannels carrying typing indicators and reactions peer-to-peer · a rich article editor with a table of contents, image resize handles, protected code blocks and two-column layouts, all safe through the sanitizer on the way back out.
+
+**Own your front door**
+A drag-and-drop **Homepage Builder**, rows and columns on a 12-unit grid · a **Widget Store** for installing external widgets from a `.zip`, no rebuild · a **Widget SDK** for building your own, plain JavaScript, no framework required.
+
+**Run it from a spare laptop**
+Home server support with no port forwarding and no domain required · a federated community directory with cross-instance search · a collaborative jukebox, an event calendar with maps and RSVP, an asset library for frames, badges and banners, passwordless login via ECDSA P-256.
+
+**Keep it yours to moderate**
+**OctoGuard**, native auto-moderation (regex/word/link/emoji-flood, ReDoS-safe via Google `re2`), a welcome bot, custom commands, mutes, signed webhooks, every switch admin-tunable and off by default.
+
+**Stream without stitching five tools together**
+A native **Streamer Hub**: Soundboard with ID3 tags and a viewer queue, a `!ns` Twitch chat command, a mobile multi-page Stream Deck, seven OBS browser-source overlay types, and audio playlists with per-playlist OBS scenes.
 
 ---
 
@@ -324,7 +324,7 @@ apt-get install -y git curl
 |---|---|---|---|---|
 | < 1.5 GB | 256 MB | 192 MB | 2 GB created | Raspberry Pi 1 GB |
 | 1.5 - 3 GB | 384 MB | 256 MB | 1 GB if needed | RPi 4 / small VPS |
-| ≥ 3 GB | 512 MB | 512 MB | 1 GB if needed | Standard VPS ⭐ |
+| ≥ 3 GB | 512 MB | 512 MB | 1 GB if needed | Standard VPS |
 
 > Raspberry Pi: use a **64-bit OS** (Raspberry Pi OS 64-bit or Ubuntu ARM64). 32-bit is not supported.
 
@@ -344,7 +344,7 @@ The installer offers **three network modes**:
 
 | Mode | Requirements | Result |
 |---|---|---|
-| **Nodyx Relay** ⭐ | Nothing, outbound TCP only | `yourclub.nodyx.org` in minutes |
+| **Nodyx Relay** *(recommended)* | Nothing, outbound TCP only | `yourclub.nodyx.org` in minutes |
 | **Open ports** | Ports 80 + 443, domain or IP | Let's Encrypt HTTPS, full control |
 | **Cloudflare Tunnel** | CF account + own domain | Your custom domain, no open ports |
 
@@ -500,11 +500,11 @@ docs/ideas/  →  design thinking, UX proposals, new ideas
 
 The core (`nodyx-core/src/`) requires discussion first, open an Issue.
 
-### 🌍 Translate Nodyx
+### Translate Nodyx
 
-Nodyx speaks 7 languages. French and English are complete, and the core interface is translated in all of them. The rest is open.
+Nodyx ships in 8 languages. French and English are complete, the core interface is translated in all of them, and the rest is open.
 
-**👉 [nodyx.org/translate](https://nodyx.org/translate)** shows the exact state of every language and links straight to the file you would edit.
+**[nodyx.org/translate](https://nodyx.org/translate)** shows the exact state of every language, live avatars of who last worked on it, and links straight to the file you would edit.
 
 No account to create, no tool to install, no platform in the middle. Each language is one flat JSON file in `nodyx-frontend/src/lib/locales/`. Pick your language, fill in the missing keys, leave every `{{variable}}` alone, open a Pull Request. CI checks the placeholders, so translating cannot break the app.
 
@@ -512,7 +512,7 @@ Two people already brought a whole language in this way, and both are in the Nod
 
 ---
 
-## 🌟 Nodyx Stars, Contributors
+## Nodyx Stars, Contributors
 
 Every external contribution earns a star. Every Star goes on [our Hall of Fame](CONTRIBUTORS.md), with avatar, profile link, and rank. **Recognition is not optional here.** Open source without recognition is just free labor, and that's not how we roll.
 
@@ -541,7 +541,7 @@ Every external contribution earns a star. Every Star goes on [our Hall of Fame](
   </tr>
 </table>
 
-👉 **[Read every story and see all contributors →](CONTRIBUTORS.md)**
+**[Read every story and see all contributors →](CONTRIBUTORS.md)**
 
 ---
 
