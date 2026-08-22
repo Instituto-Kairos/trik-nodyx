@@ -15,10 +15,10 @@ Forum + Chat + Voice + P2P + Canvas + Homepage Builder + Streamer Hub, one serve
 [![Security Policy](https://img.shields.io/badge/security-Argon2id%20%2B%20E2E%20%2B%202FA-1a1a2e)](.github/SECURITY.md)
 [![Ko-fi](https://img.shields.io/badge/Support-Ko--fi-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/Pokled)
 
-[![TypeScript](https://img.shields.io/badge/-TypeScript-3178C6?logo=typescript&logoColor=white)](docs/en/ARCHITECTURE.md)
-[![Svelte](https://img.shields.io/badge/-Svelte%205-FF3E00?logo=svelte&logoColor=white)](docs/en/ARCHITECTURE.md)
-[![PostgreSQL](https://img.shields.io/badge/-PostgreSQL%2016-4169E1?logo=postgresql&logoColor=white)](docs/en/ARCHITECTURE.md)
-[![Rust](https://img.shields.io/badge/-Rust-000000?logo=rust&logoColor=white)](docs/en/ARCHITECTURE.md)
+[![TypeScript](https://img.shields.io/badge/-TypeScript-3178C6?logo=typescript&logoColor=white)](nodyx-core/)
+[![Svelte](https://img.shields.io/badge/-Svelte%205-FF3E00?logo=svelte&logoColor=white)](nodyx-frontend/)
+[![PostgreSQL](https://img.shields.io/badge/-PostgreSQL%2016-4169E1?logo=postgresql&logoColor=white)](docs/en/ARCHITECTURE.md#3-postgresql-data-model)
+[![Rust](https://img.shields.io/badge/-Rust-000000?logo=rust&logoColor=white)](#the-p2p-stack-100-handwritten-rust)
 
 <!-- Ces deux-là ne sont pas des images figées : elles interrogent nodyx.org
      en direct à chaque affichage. Le badge dit la vérité du jour, pas celle
