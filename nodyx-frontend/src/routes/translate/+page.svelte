@@ -35,6 +35,8 @@
 	}
 	const heroImages = $derived(BIOME_IMGS[$locale] ?? BIOME_IMGS.en)
 
+	const ROTATION_MS = 6000
+
 	let heroIndex = $state(0)
 	// Repart de la première photo (celle qui donne le ton du pays) à chaque
 	// changement de langue, plutôt que de garder un index qui ne correspond
@@ -43,10 +45,14 @@
 	$effect(() => {
 		const n = heroImages.length
 		if (n <= 1) return
-		const id = setInterval(() => { heroIndex = (heroIndex + 1) % n }, 6000)
+		const id = setInterval(() => { heroIndex = (heroIndex + 1) % n }, ROTATION_MS)
 		return () => clearInterval(id)
 	})
 	const heroImg = $derived(heroImages[heroIndex] ?? heroImages[0])
+	// Un clic sur une barre saute directement à cette photo — le minuteur
+	// continue de tourner sur son propre cycle, pas la peine de le relancer
+	// pour un simple raccourci manuel.
+	function jumpToHero(i: number) { heroIndex = i }
 
 	// Les horizons pas encore franchis — de vraies photos aussi, pour ne pas
 	// trahir l'idée en retombant sur des dégradés à cet endroit précis.
@@ -208,6 +214,32 @@
 	{#key $locale}
 		<span class="hero-flag" in:fade={{ duration: 400, delay: 150 }}>{@html flagSvg(heroFlagIcon)}</span>
 	{/key}
+
+	<!-- Le minuteur de la tournée — façon stories, une barre par photo. Sans
+	     lui la rotation se voyait mais ne s'expliquait pas. Cliquable : on
+	     peut sauter directement à une photo plutôt que d'attendre. -->
+	{#if heroImages.length > 1}
+		<div class="hero-timer" role="tablist" aria-label={tFn('translate.title')}>
+			{#each heroImages as img, i (img)}
+				<button
+					type="button"
+					class="ht-bar"
+					role="tab"
+					aria-selected={i === heroIndex}
+					onclick={() => jumpToHero(i)}
+				>
+					<span class="ht-fill" class:done={i < heroIndex}>
+						{#if i === heroIndex}
+							{#key heroIndex}
+								<span class="ht-run" style="animation-duration:{ROTATION_MS}ms"></span>
+							{/key}
+						{/if}
+					</span>
+				</button>
+			{/each}
+		</div>
+	{/if}
+
 	<div class="hero-scrim"></div>
 	<div class="hero-content">
 		<h1>
@@ -645,6 +677,28 @@
 		overflow: hidden; line-height: 0; box-shadow: 0 4px 16px rgb(0 0 0 / 0.35), inset 0 0 0 1.5px rgb(255 255 255 / 0.35);
 	}
 	.hero-flag :global(svg) { display: block; width: 100%; height: 100%; }
+
+	/* ── Le minuteur façon stories ─────────────────────────────────────────── */
+	.hero-timer {
+		position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+		z-index: 2; width: 100%; max-width: 1120px; padding: 0 74px 0 22px;
+		display: flex; gap: 6px; box-sizing: border-box;
+	}
+	.ht-bar {
+		flex: 1; height: 12px; padding: 0; border: 0; background: none; cursor: pointer;
+		display: flex; align-items: center;
+	}
+	.ht-fill {
+		position: relative; width: 100%; height: 3px; border-radius: 999px;
+		background: rgb(255 255 255 / 0.3); overflow: hidden;
+	}
+	.ht-fill.done { background: rgb(255 255 255 / 0.85); }
+	.ht-run {
+		position: absolute; inset: 0 100% 0 0; border-radius: 999px; background: #fff;
+		animation-name: ht-grow; animation-timing-function: linear; animation-fill-mode: forwards;
+	}
+	@keyframes ht-grow { from { right: 100%; } to { right: 0%; } }
+	.ht-bar:hover .ht-fill:not(.done) { background: rgb(255 255 255 / 0.5); }
 	.hero-content {
 		position: relative; height: 100%; max-width: 1120px; margin: 0 auto; padding: 0 22px 26px;
 		display: flex; flex-direction: column; justify-content: flex-end;
