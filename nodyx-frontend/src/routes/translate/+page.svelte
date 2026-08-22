@@ -9,8 +9,32 @@
 	import { t, locale }              from '$lib/i18n'
 	import { getTranslationProgress } from '$lib/translationProgress'
 	import type { LocaleProgress }    from '$lib/translationProgress'
+	import type { LocaleContributor, GlobalContributor } from '$lib/localeActivity.server'
+
+	let { data } = $props()
+	const activity  = $derived(data.activity.locales as Record<string, { lastUpdated: string; contributors: LocaleContributor[] }>)
+	const everyone  = $derived(data.activity.contributors as GlobalContributor[])
 
 	const tFn = $derived($t)
+
+	const RANK_KEY: Record<string, string> = {
+		rookie:  'translate.contributors.rank.rookie',
+		regular: 'translate.contributors.rank.regular',
+		core:    'translate.contributors.rank.core',
+		star:    'translate.contributors.rank.star',
+		legend:  'translate.contributors.rank.legend',
+	}
+
+	const rtf = $derived(new Intl.RelativeTimeFormat($locale, { numeric: 'auto' }))
+	function relativeDate(iso: string): string {
+		const days = Math.round((Date.now() - new Date(iso).getTime()) / 86_400_000)
+		return rtf.format(days > 0 ? -days : 0, 'day')
+	}
+
+	let openPopup = $state<{ contributor: LocaleContributor; localeLabel: string } | null>(null)
+	function showPopup(contributor: LocaleContributor, localeLabel: string) { openPopup = { contributor, localeLabel } }
+	function closePopup() { openPopup = null }
+	function onKeydown(e: KeyboardEvent) { if (e.key === 'Escape') closePopup() }
 
 	const REPO    = 'https://github.com/Pokled/nodyx'
 	const LOCALES_DIR = `${REPO}/tree/main/nodyx-frontend/src/lib/locales`
@@ -103,6 +127,35 @@
 		<span class="updated">{tFn('translate.computed_hint')}</span>
 	</div>
 
+	<!-- ══ Les gens ═════════════════════════════════════════════════════════
+	     Avant le tableau de bord froid, les visages. Décompte collectif, pas
+	     un crédit par langue (cf pile plus bas) : qui, un jour, a traduit
+	     un mot de Nodyx pour quelqu'un d'autre. -->
+	{#if everyone.length}
+		<section class="people">
+			<div class="people-row" role="group" aria-label={tFn('translate.people.aria')}>
+				{#each everyone as p (p.username ?? p.authorName)}
+					{#if p.profileUrl}
+						<a class="pav" href={p.profileUrl} target="_blank" rel="noopener" title={p.username ?? p.authorName}>
+							{#if p.avatarUrl}
+								<img src={p.avatarUrl} alt="" loading="lazy" />
+							{:else}
+								<span class="cinit">{(p.authorName || '?').slice(0, 1).toUpperCase()}</span>
+							{/if}
+						</a>
+					{:else}
+						<span class="pav" title={p.authorName}>
+							<span class="cinit">{(p.authorName || '?').slice(0, 1).toUpperCase()}</span>
+						</span>
+					{/if}
+				{/each}
+			</div>
+			<p class="people-line">
+				{tFn(everyone.length > 1 ? 'translate.people.many' : 'translate.people.one', { n: everyone.length })}
+			</p>
+		</section>
+	{/if}
+
 	<!-- ══ Vue d'ensemble ═══════════════════════════════════════════════════ -->
 	<section class="overview">
 		<div class="metrics">
@@ -168,6 +221,7 @@
 							{tFn('translate.col.remaining')} <span class="car">{caret}</span>
 						</button></th>
 						<th class="mid">{tFn('translate.col.core')}</th>
+						<th>{tFn('translate.col.contributors')}</th>
 						<th><span class="sr">{tFn('translate.col.actions')}</span></th>
 					</tr>
 				</thead>
@@ -206,6 +260,30 @@
 									</span>
 								{:else}
 									<span class="core-no" aria-hidden="true">·</span>
+								{/if}
+							</td>
+							<td>
+								{#if activity[l.code]?.contributors.length}
+									<div class="cstack" role="group" aria-label={tFn('translate.contributors.aria_stack', { lang: l.label })}>
+										{#each activity[l.code].contributors as c, i (c.username ?? c.authorName)}
+											<button
+												type="button"
+												class="cav"
+												style="--i:{i}; z-index:{10 - i}"
+												title={c.username ?? c.authorName}
+												onclick={() => showPopup(c, l.label)}
+											>
+												{#if c.avatarUrl}
+													<img src={c.avatarUrl} alt="" loading="lazy" />
+												{:else}
+													<span class="cinit">{(c.authorName || '?').slice(0, 1).toUpperCase()}</span>
+												{/if}
+											</button>
+										{/each}
+									</div>
+								{/if}
+								{#if activity[l.code]?.lastUpdated}
+									<div class="clast">{tFn('translate.contributors.updated', { when: relativeDate(activity[l.code].lastUpdated) })}</div>
 								{/if}
 							</td>
 							<td>
@@ -259,6 +337,42 @@
 
 </div>
 
+<svelte:window onkeydown={onKeydown} />
+
+{#if openPopup}
+	{@const c = openPopup.contributor}
+	<div class="pop-overlay" role="presentation" onclick={closePopup}>
+		<div class="pop" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+			<button type="button" class="pop-close" onclick={closePopup} aria-label={tFn('translate.contributors.close')}>×</button>
+			<div class="pop-head">
+				{#if c.avatarUrl}
+					<img class="pop-avatar" src={c.avatarUrl} alt="" />
+				{:else}
+					<span class="cinit big">{(c.authorName || '?').slice(0, 1).toUpperCase()}</span>
+				{/if}
+				<div class="pop-id">
+					<h3>{tFn('translate.contributors.thanks', { name: c.username ?? c.authorName })}</h3>
+					{#if c.starRank}
+						<span class="pop-rank">🌟 {tFn(RANK_KEY[c.starRank])}</span>
+					{/if}
+				</div>
+			</div>
+			<p class="pop-blurb">{c.blurb ?? c.commitTitle}</p>
+			<div class="pop-meta">
+				<span>{relativeDate(c.date)}</span>
+				{#if c.profileUrl}
+					<a href={c.profileUrl} target="_blank" rel="noopener">{tFn('translate.contributors.view_profile')}</a>
+				{/if}
+				{#if c.prUrl && c.prNumber}
+					<a href={c.prUrl} target="_blank" rel="noopener">{tFn('translate.contributors.view_pr', { n: c.prNumber })}</a>
+				{:else}
+					<a href={c.commitUrl} target="_blank" rel="noopener">{tFn('translate.contributors.view_commit')}</a>
+				{/if}
+			</div>
+		</div>
+	</div>
+{/if}
+
 <style>
 	/* Registre visuel : outil, pas vitrine. Gris neutres, une seule couleur
 	   d'accent (indigo) sur les actions, l'émeraude réservé à « complet ». */
@@ -301,6 +415,25 @@
 	.psub { margin: 7px 0 0; color: #9698ab; font-size: 13.5px; padding-left: 41px; max-width: 62ch; }
 	.updated { color: #61647a; font: 500 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 
+	/* ── Les gens ────────────────────────────────────────────────────────── */
+	.people {
+		display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+		margin-top: 22px; padding: 14px 16px;
+		border: 1px solid #1c1e28; border-radius: 10px;
+		background: linear-gradient(135deg, rgb(109 118 245 / 0.06), rgb(46 206 147 / 0.04));
+	}
+	.people-row { display: flex; }
+	.pav {
+		width: 34px; height: 34px; border-radius: 50%; flex: none;
+		margin-left: -9px; overflow: hidden; text-decoration: none;
+		border: 2px solid #0f1016; background: #1c1e28;
+		transition: transform 0.15s ease;
+	}
+	.pav:first-child { margin-left: 0; }
+	.pav:hover, .pav:focus-visible { transform: translateY(-3px); z-index: 1; position: relative; }
+	.pav img { display: block; width: 100%; height: 100%; object-fit: cover; }
+	.people-line { margin: 0; font-size: 13.5px; color: #c5c7d6; }
+
 	/* ── Vue d'ensemble ──────────────────────────────────────────────────── */
 	.overview { margin: 26px 0 30px; }
 	.metrics { display: flex; flex-wrap: wrap; }
@@ -341,7 +474,7 @@
 	   En rendant ce conteneur positionne, les `.sr` redeviennent les siens, donc
 	   contenus et rognes. Ils restent lus par les lecteurs d'ecran. */
 	.tscroll { overflow-x: auto; position: relative; }
-	table { width: 100%; border-collapse: collapse; min-width: 720px; }
+	table { width: 100%; border-collapse: collapse; min-width: 820px; }
 	th { text-align: left; padding: 0; border-bottom: 1px solid #1c1e28; white-space: nowrap; }
 	th.mid { padding: 11px 16px; text-align: center; }
 	th.mid, th:last-child { font: 600 11px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: 0.06em; text-transform: uppercase; color: #61647a; }
@@ -430,6 +563,51 @@
 	footer a { color: inherit; text-decoration: none; }
 	footer a:hover { color: #9698ab; }
 	footer .dot { color: #262936; }
+
+	/* ── Pile de contributeurs ───────────────────────────────────────────── */
+	.cstack { display: flex; align-items: center; }
+	.cav {
+		--i: 0;
+		width: 26px; height: 26px; border-radius: 50%; flex: none; position: relative;
+		margin-left: -10px; padding: 0; overflow: hidden; cursor: pointer;
+		border: 2px solid #0f1016; background: #1c1e28;
+		transition: transform 0.16s ease;
+	}
+	.cav:first-child { margin-left: 0; }
+	.cav img { display: block; width: 100%; height: 100%; object-fit: cover; }
+	.cav:focus-visible { outline: 2px solid #8b93ff; outline-offset: 2px; }
+	.cstack:hover .cav { transform: translateX(calc(var(--i) * 8px)); }
+	.cinit {
+		width: 100%; height: 100%; display: grid; place-items: center;
+		font: 600 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #9698ab;
+	}
+	.clast { margin-top: 5px; color: #61647a; font-size: 11px; }
+
+	/* ── Popup contributeur ──────────────────────────────────────────────── */
+	.pop-overlay {
+		position: fixed; inset: 0; z-index: 50; display: grid; place-items: center;
+		background: rgb(6 7 10 / 0.65); backdrop-filter: blur(2px); padding: 20px;
+	}
+	.pop {
+		position: relative; width: 100%; max-width: 380px; padding: 20px;
+		border: 1px solid #262936; border-radius: 12px; background: #12131b;
+		box-shadow: 0 20px 50px rgb(0 0 0 / 0.4);
+	}
+	.pop-close {
+		position: absolute; top: 10px; right: 10px; width: 28px; height: 28px;
+		display: grid; place-items: center; border-radius: 7px; border: 0; background: none;
+		color: #61647a; font-size: 18px; line-height: 1; cursor: pointer;
+	}
+	.pop-close:hover { color: #e7e8ef; background: rgb(255 255 255 / 0.06); }
+	.pop-head { display: flex; align-items: center; gap: 12px; padding-right: 20px; }
+	.pop-avatar { width: 48px; height: 48px; border-radius: 50%; flex: none; object-fit: cover; }
+	.cinit.big { width: 48px; height: 48px; border-radius: 50%; flex: none; font-size: 18px; background: #1c1e28; }
+	.pop-id h3 { margin: 0; font-size: 15.5px; font-weight: 700; letter-spacing: -0.01em; }
+	.pop-rank { display: inline-block; margin-top: 4px; font-size: 11.5px; color: #f5c451; }
+	.pop-blurb { margin: 14px 0 0; font-size: 13.5px; line-height: 1.55; color: #c5c7d6; }
+	.pop-meta { margin-top: 14px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12px; color: #61647a; }
+	.pop-meta a { color: #8b93ff; font-weight: 600; text-decoration: none; }
+	.pop-meta a:hover { text-decoration: underline; }
 
 	@media (max-width: 640px) {
 		.metric { padding: 0 14px; }
