@@ -1035,5 +1035,6 @@
   "translate.contributors.view_profile": "Xem hồ sơ GitHub",
   "translate.contributors.view_pr": "Xem pull request #{{n}}",
   "translate.contributors.view_commit": "Xem commit",
-  "translate.contributors.close": "Đóng"
+  "translate.contributors.close": "Đóng",
+  "translate.newlang.horizon": "Nodyx vẫn chưa vượt qua đường chân trời này."
 }

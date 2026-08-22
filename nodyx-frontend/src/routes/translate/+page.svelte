@@ -6,6 +6,7 @@
   donc des fichiers de locale eux-mêmes : la page ne peut pas mentir.
 -->
 <script lang="ts">
+	import { fade }                      from 'svelte/transition'
 	import { t, locale, LOCALES }         from '$lib/i18n'
 	import { getTranslationProgress, flagSvg } from '$lib/translationProgress'
 	import type { LocaleProgress }    from '$lib/translationProgress'
@@ -16,6 +17,24 @@
 		locale.setLocale(code)
 		langMenuOpen = false
 	}
+
+	// Une vraie photo par langue — cf static/biomes/. Le {#key $locale} plus bas
+	// fait le fondu enchaîné entre deux photos au changement de langue.
+	const BIOME_IMG: Record<string, string> = {
+		fr: '/biomes/fr.webp', en: '/biomes/en.webp', es: '/biomes/es.webp', de: '/biomes/de.webp',
+		ru: '/biomes/ru.webp', 'pt-PT': '/biomes/pt-PT.webp', 'pt-BR': '/biomes/pt-BR.webp', vi: '/biomes/vi.webp',
+	}
+	const heroImg = $derived(BIOME_IMG[$locale] ?? BIOME_IMG.en)
+
+	// Les horizons pas encore franchis — de vraies photos aussi, pour ne pas
+	// trahir l'idée en retombant sur des dégradés à cet endroit précis.
+	const UNCLAIMED: { code: string; name: string; img: string }[] = [
+		{ code: 'it', name: 'Italiano',     img: '/biomes/unclaimed/it.webp' },
+		{ code: 'ja', name: '日本語',        img: '/biomes/unclaimed/ja.webp' },
+		{ code: 'ar', name: 'العربية',      img: '/biomes/unclaimed/ar.webp' },
+		{ code: 'hi', name: 'हिन्दी',        img: '/biomes/unclaimed/hi.webp' },
+		{ code: 'uk', name: 'Українська',   img: '/biomes/unclaimed/uk.webp' },
+	]
 
 	let { data } = $props()
 	const activity        = $derived(data.activity.locales as Record<string, { lastUpdated: string; contributors: LocaleContributor[] }>)
@@ -152,21 +171,28 @@
 	</a>
 </header>
 
-<div class="wrap">
-
-	<!-- ══ En-tête ══════════════════════════════════════════════════════════ -->
-	<div class="phead">
-		<div>
-			<h1>
-				<span class="cico" aria-hidden="true">
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 8 6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6"/></svg>
-				</span>
-				{tFn('translate.title')}
-			</h1>
-			<p class="psub">{tFn('translate.subtitle', { n: progress.languages.length })}</p>
-		</div>
+<!-- ══ Le paysage ═══════════════════════════════════════════════════════════
+     Une vraie photo par langue, en fondu enchaîné au changement (cf $locale).
+     Jonathan : "je veux voir ce dont tu es capable" — donc pas un dégradé,
+     un vrai lieu, à chaque langue le sien. -->
+<div class="hero">
+	{#key $locale}
+		<img src={heroImg} alt="" class="hero-img" in:fade={{ duration: 650 }} />
+	{/key}
+	<div class="hero-scrim"></div>
+	<div class="hero-content">
+		<h1>
+			<span class="cico" aria-hidden="true">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 8 6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6"/></svg>
+			</span>
+			{tFn('translate.title')}
+		</h1>
+		<p class="psub">{tFn('translate.subtitle', { n: progress.languages.length })}</p>
 		<span class="updated">{tFn('translate.computed_hint')}</span>
 	</div>
+</div>
+
+<div class="wrap">
 
 	<!-- ══ Les gens ═════════════════════════════════════════════════════════
 	     Avant le tableau de bord froid, les visages. Décompte collectif, pas
@@ -362,6 +388,23 @@
 		</a>
 	</section>
 
+	<!-- ══ Les horizons pas encore franchis ════════════════════════════════════
+	     L'idée de Jonathan : montrer, pas juste dire, ce qui manque encore.
+	     De vraies photos, pas des dégradés — même traitement que le paysage
+	     d'en-tête. Chaque carte mène à la même porte que translate.newlang. -->
+	<section class="horizons">
+		{#each UNCLAIMED as u (u.code)}
+			<a class="hcard" href={NEW_LANG} target="_blank" rel="noopener">
+				<img src={u.img} alt="" loading="lazy" />
+				<div class="hcard-scrim"></div>
+				<div class="hcard-txt">
+					<span class="hcard-name">{u.name}</span>
+					<span class="hcard-tag">{tFn('translate.newlang.horizon')}</span>
+				</div>
+			</a>
+		{/each}
+	</section>
+
 	<!-- ══ Le filet ═════════════════════════════════════════════════════════ -->
 	<div class="info">
 		<svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg>
@@ -554,17 +597,35 @@
 	.langmenu button:hover { background: rgb(255 255 255 / 0.05); color: #e7e8ef; }
 	.langmenu button.active { color: #8b93ff; font-weight: 600; }
 
-	/* ── En-tête ─────────────────────────────────────────────────────────── */
-	.phead { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
-	h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.02em; display: flex; align-items: center; gap: 11px; }
-	.cico {
-		width: 30px; height: 30px; border-radius: 9px; flex: none; display: grid; place-items: center;
-		color: #a8afff; background: linear-gradient(135deg, rgb(109 118 245 / 0.18), rgb(46 206 147 / 0.12));
-		border: 1px solid rgb(109 118 245 / 0.28);
+	/* ── Le paysage ──────────────────────────────────────────────────────── */
+	.hero { position: relative; height: 320px; overflow: hidden; }
+	.hero-img {
+		position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+		/* Les 13 photos n'ont pas la même luminosité d'origine (désert vs aurore
+		   nocturne) : on les ramène toutes au même registre pour que le texte
+		   reste lisible quelle que soit la langue affichée. */
+		filter: brightness(0.68) saturate(1.08);
 	}
-	.cico svg { width: 17px; height: 17px; }
-	.psub { margin: 7px 0 0; color: #9698ab; font-size: 13.5px; padding-left: 41px; max-width: 62ch; }
-	.updated { color: #61647a; font: 500 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+	.hero-scrim {
+		position: absolute; inset: 0;
+		background: linear-gradient(180deg, rgb(6 7 10 / 0.15) 0%, rgb(8 9 13 / 0.55) 55%, #0b0c11 100%);
+	}
+	.hero-content {
+		position: relative; height: 100%; max-width: 1120px; margin: 0 auto; padding: 0 22px 26px;
+		display: flex; flex-direction: column; justify-content: flex-end;
+	}
+	h1 {
+		margin: 0; font-size: 26px; font-weight: 750; letter-spacing: -0.02em; display: flex; align-items: center; gap: 12px;
+		color: #fff; text-shadow: 0 2px 16px rgb(0 0 0 / 0.35);
+	}
+	.cico {
+		width: 32px; height: 32px; border-radius: 9px; flex: none; display: grid; place-items: center;
+		color: #fff; background: rgb(255 255 255 / 0.14); backdrop-filter: blur(6px);
+		border: 1px solid rgb(255 255 255 / 0.28);
+	}
+	.cico svg { width: 18px; height: 18px; }
+	.psub { margin: 9px 0 0; color: rgb(255 255 255 / 0.82); font-size: 14px; padding-left: 44px; max-width: 62ch; text-shadow: 0 1px 10px rgb(0 0 0 / 0.4); }
+	.updated { margin: 14px 0 0 44px; color: rgb(255 255 255 / 0.55); font: 500 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 
 	/* ── Les gens ────────────────────────────────────────────────────────── */
 	/* Le cœur émotionnel de la page, pas une ligne de plus dans un tableau :
@@ -712,6 +773,21 @@
 	.newlang .ask svg { width: 15px; height: 15px; }
 	.newlang .ask:hover { background: #202541; border-color: #4a527f; transform: translateY(-1px); }
 	.newlang .ask:focus-visible { outline: 2px solid #8b93ff; outline-offset: 2px; }
+
+	/* ── Les horizons pas encore franchis ─────────────────────────────────── */
+	.horizons { display: flex; gap: 10px; margin-top: 10px; overflow-x: auto; padding-bottom: 2px; }
+	.hcard {
+		position: relative; flex: none; width: 170px; height: 108px; border-radius: 10px; overflow: hidden;
+		text-decoration: none; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08);
+		transition: transform 0.18s ease;
+	}
+	.hcard:hover, .hcard:focus-visible { transform: translateY(-3px); }
+	.hcard img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; filter: brightness(0.75) saturate(1.05); transition: filter 0.18s ease; }
+	.hcard:hover img { filter: brightness(0.9) saturate(1.1); }
+	.hcard-scrim { position: absolute; inset: 0; background: linear-gradient(180deg, transparent 40%, rgb(6 7 10 / 0.75) 100%); }
+	.hcard-txt { position: absolute; left: 10px; right: 10px; bottom: 8px; display: flex; flex-direction: column; gap: 2px; }
+	.hcard-name { color: #fff; font-size: 13px; font-weight: 700; text-shadow: 0 1px 6px rgb(0 0 0 / 0.5); }
+	.hcard-tag { color: rgb(255 255 255 / 0.75); font-size: 10.5px; line-height: 1.3; }
 
 	.info {
 		display: flex; align-items: center; gap: 13px; margin-top: 16px; padding: 13px 16px;

@@ -1047,5 +1047,6 @@
   "translate.contributors.view_profile": "GitHub-Profil ansehen",
   "translate.contributors.view_pr": "Pull Request #{{n}} ansehen",
   "translate.contributors.view_commit": "Commit ansehen",
-  "translate.contributors.close": "Schließen"
+  "translate.contributors.close": "Schließen",
+  "translate.newlang.horizon": "Nodyx hat diesen Horizont noch nicht erreicht."
 }
