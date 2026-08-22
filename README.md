@@ -49,6 +49,9 @@ Forum + Chat + Voice + P2P + Canvas + Homepage Builder + Streamer Hub, one serve
 
 <div align="center">
   <img src="docs/img/fronted_nodyx_page_builder.png" alt="Nodyx, Homepage Builder" width="860"/>
+  <br/><br/>
+  <img src="docs/img/nodyx_home_page.png" alt="Nodyx homepage" width="424"/>
+  <img src="docs/img/Nodyx_Forum.png" alt="Nodyx forum" width="424"/>
 </div>
 
 ---
