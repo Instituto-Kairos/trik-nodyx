@@ -50,7 +50,10 @@
 	let linkUrl     = $state('')
 	let imageUrl    = $state('')
 	let imageAlt    = $state('')
-	let imageAlign  = $state<'left'|'center'|'right'|'full'>('center')
+	// `inline` place l'image DANS la ligne de texte, au lieu de la poser sur sa
+	// propre ligne comme les quatre autres. C'est ce qui permet une icône devant
+	// un lien, un logo au fil d'une phrase, un pictogramme dans un tableau.
+	let imageAlign  = $state<'left'|'center'|'right'|'full'|'inline'>('center')
 	// Position du noeud image sélectionné quand on ouvre le menu image : permet
 	// de REMPLACER l'image au lieu d'en insérer une nouvelle (la sélection se
 	// perd dès qu'on tape dans le champ URL, on la capture donc à l'ouverture).
@@ -161,6 +164,24 @@
 
 		// ── Custom Image with alignment ──────────────────────────────────────
 		const AlignableImage = Image.extend({
+			// `inline: true` est STRUCTUREL, pas cosmétique.
+			//
+			// Par défaut l'extension Image crée un nœud de BLOC (`group: 'block'`).
+			// Un nœud de bloc ne peut pas vivre dans un paragraphe : à la lecture,
+			// ProseMirror l'EXTRAIT et le pose entre deux paragraphes. Une icône
+			// posée devant un lien se retrouvait donc seule sur sa ligne dès que
+			// l'auteur rouvrait son article dans l'éditeur, alors qu'elle était
+			// correcte à la publication. Constaté en production le 2026-08-19.
+			//
+			// En `inline`, l'image devient un nœud de ligne : elle reste dans le
+			// paragraphe. Les alignements de bloc (`center`, `full`) continuent de
+			// s'afficher en bloc, c'est le CSS qui les gouverne, pas le schéma.
+			addOptions() {
+				// `this.parent?.()` est typé optionnel, mais il est toujours défini
+				// sur une extension dérivée : sans l'assertion, le type résultant a
+				// des champs facultatifs et ne satisfait plus `ImageOptions`.
+				return { ...this.parent!(), inline: true }
+			},
 			addAttributes() {
 				return {
 					...this.parent?.(),
@@ -259,7 +280,50 @@
 		// donc au rechargement l'extension ne reconnaissait plus son wrapper et
 		// JETAIT l'iframe (vidéos qui disparaissent à la réédition). On ajoute
 		// une règle parseHTML qui reparse aussi un <iframe> nu d'origine YouTube.
+		// ── Liens : une ancre interne ne s'ouvre pas dans un onglet ──────────
+		//
+		// L'extension Link applique par DÉFAUT `target="_blank"` et
+		// `rel="noopener noreferrer nofollow"` à tous les liens, sans distinguer
+		// leur destination. Appliqué à une ancre `#section`, ça ouvre un onglet
+		// VIDE au lieu de descendre dans la page : tout sommaire éditable était
+		// donc cassé dès la première réouverture de l'article. Constaté en
+		// production le 2026-08-19.
+		//
+		// On ne retire ces attributs que pour les ancres, jamais pour les liens
+		// sortants, où ils restent la bonne pratique.
+		const SmartLink = Link.extend({
+			renderHTML({ HTMLAttributes }: any) {
+				const href = HTMLAttributes?.href
+				if (typeof href === 'string' && href.startsWith('#')) {
+					const { target: _t, rel: _r, ...interne } = HTMLAttributes
+					return ['a', mergeAttributes(interne), 0]
+				}
+				return ['a', mergeAttributes(this.options.HTMLAttributes, HTMLAttributes), 0]
+			},
+		})
+
 		const RobustYoutube = Youtube.extend({
+			// L'extension enveloppe l'iframe dans `<div data-youtube-video>`. Or
+			// l'assainisseur du coeur n'autorise pas cet attribut : il le retire et
+			// laisse un `<div>` NU, sans aucune prise pour le style. Consequence
+			// mesuree le 2026-08-20 : toute video inseree depuis l'editeur perdait
+			// sa mise en forme, gardant 360 px de haut pour 324 de large, donc un
+			// ratio faux. Ce n'etait pas un defaut d'aller-retour, c'etait le cas
+			// NORMAL, et les videos ecrites a la main etaient l'exception.
+			//
+			// `class` fait partie des attributs autorises : on y accroche la classe
+			// que la feuille de style attend deja, sans rien retirer de ce que
+			// l'extension produit pour son propre usage dans l'editeur.
+			renderHTML(props: any) {
+				// `this.parent!` et non `?.` : sur une extension derivee le parent est
+				// toujours defini, et `renderHTML` doit rendre un DOMOutputSpec, jamais
+				// `undefined`. Meme contrainte que pour `addOptions` plus bas.
+				const rendu = this.parent!(props)
+				if (Array.isArray(rendu) && rendu[0] === 'div' && rendu[1] && typeof rendu[1] === 'object') {
+					rendu[1] = mergeAttributes(rendu[1], { class: 'youtube-wrapper' })
+				}
+				return rendu
+			},
 			parseHTML() {
 				return [
 					...(this.parent?.() ?? []),
@@ -606,7 +670,7 @@
 				StarterKit.configure({ codeBlock: false, link: false, underline: false }),
 				Underline,
 				TextAlign.configure({ types: ['heading', 'paragraph', 'image'] }),
-				Link.configure({ openOnClick: false, autolink: true }),
+				SmartLink.configure({ openOnClick: false, autolink: true }),
 				AlignableImage,
 				RobustYoutube.configure({ nocookie: true }),
 				Table.configure({ resizable: false }),
@@ -695,7 +759,7 @@
 
 	function insertImage() {
 		if (!imageUrl.trim()) return
-		const alignClass = { left: 'float-left mr-4', right: 'float-right ml-4', center: 'mx-auto block', full: 'w-full block' }[imageAlign]
+		const alignClass = { left: 'float-left mr-4', right: 'float-right ml-4', center: 'mx-auto block', full: 'w-full block', inline: 'inline align-middle' }[imageAlign]
 		const attrs = { src: imageUrl, alt: imageAlt || '', class: alignClass, 'data-align': imageAlign, align: imageAlign }
 		if (replaceImagePos !== null) {
 			// Remplace l'image existante à sa position (conserve le noeud, change
@@ -1274,15 +1338,18 @@
 				</div>
 				<input type="url" bind:value={imageUrl} placeholder={tFn('editor.image_url_placeholder')} class="popup-input" />
 				<input type="text" bind:value={imageAlt} placeholder={tFn('editor.image_alt_placeholder')} class="popup-input" />
-				<div class="flex gap-1">
-					{#each [['left', tFn('editor.img_align_left')],['center', tFn('editor.img_align_center')],['right', tFn('editor.img_align_right')],['full', tFn('editor.img_align_full')]] as [v, label]}
+				<!-- `flex-wrap` : à cinq choix, les libellés traduits ne tiennent plus
+				     forcément sur une ligne. Sans lui, un libellé long écraserait les
+				     autres au lieu de passer dessous. -->
+				<div class="flex flex-wrap gap-1">
+					{#each [['left', tFn('editor.img_align_left')],['center', tFn('editor.img_align_center')],['right', tFn('editor.img_align_right')],['full', tFn('editor.img_align_full')],['inline', tFn('editor.img_align_inline')]] as [v, label]}
 						<button type="button" onclick={() => imageAlign = v as any}
 							class="flex-1 text-xs px-2 py-1 rounded border transition-colors {imageAlign === v ? 'border-indigo-500 bg-indigo-900/50 text-indigo-300' : 'border-gray-700 text-gray-500 hover:border-gray-500'}">
 							{label}
 						</button>
 					{/each}
 				</div>
-				<button type="button" onclick={insertImage} class="popup-btn-primary">{replaceImagePos !== null ? 'Remplacer' : tFn('editor.insert')}</button>
+				<button type="button" onclick={insertImage} class="popup-btn-primary">{replaceImagePos !== null ? tFn('editor.replace') : tFn('editor.insert')}</button>
 			</div>
 			{/if}
 		</div>

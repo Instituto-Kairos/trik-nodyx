@@ -403,6 +403,24 @@ T_EN[relay_mode_url]='Nodyx Relay mode — URL: %s%s%s'
 T_FR[relay_mode_url]='Mode Nodyx Relay — URL : %s%s%s'
 T_EN[relay_mode_no_port]='No port to open. The tunnel will be established to relay.nodyx.org.'
 T_FR[relay_mode_no_port]='Aucun port à ouvrir. Le tunnel sera établi vers relay.nodyx.org.'
+T_EN[relay_probe]='Checking that your network lets the tunnel out on port 7443...'
+T_FR[relay_probe]='Vérification que votre réseau laisse sortir le tunnel sur le port 7443...'
+T_EN[relay_probe_ok]='Outbound port 7443 is open. The tunnel will work.'
+T_FR[relay_probe_ok]='Le port 7443 sort bien. Le tunnel fonctionnera.'
+T_EN[relay_probe_v6]='Port 7443 is filtered over IPv4, but IPv6 works. Using %s instead.'
+T_FR[relay_probe_v6]='Le port 7443 est filtré en IPv4, mais IPv6 fonctionne. Utilisation de %s à la place.'
+T_EN[relay_probe_wss]='Port 7443 is blocked, but the tunnel goes through HTTPS on port 443. Using %s instead.'
+T_FR[relay_probe_wss]='Le port 7443 est bloqué, mais le tunnel passe en HTTPS sur le port 443. Utilisation de %s à la place.'
+T_EN[relay_probe_wss_try]='Port 7443 is blocked. Trying the tunnel over HTTPS, on port 443...'
+T_FR[relay_probe_wss_try]='Le port 7443 est bloqué. Essai du tunnel en HTTPS, sur le port 443...'
+T_EN[relay_probe_blocked]='Your network silently drops outbound port 7443. The tunnel cannot come up.'
+T_FR[relay_probe_blocked]='Votre réseau bloque silencieusement le port 7443 en sortie. Le tunnel ne pourra pas monter.'
+T_EN[relay_probe_hint]='This is a network restriction, not a mistake on your side. Company, university and institute networks often allow only 80 and 443.'
+T_FR[relay_probe_hint]="C'est une restriction du réseau, pas une erreur de votre part. Les réseaux d'entreprise, d'université et d'institut n'autorisent souvent que 80 et 443."
+T_EN[relay_probe_doc]='What to do, including a message to send to your network administrator: %s'
+T_FR[relay_probe_doc]="Que faire, avec un message prêt à envoyer à votre administrateur réseau : %s"
+T_EN[relay_probe_continue]='Continue anyway? The instance will install correctly but stay unreachable until the port is opened. [y/N]'
+T_FR[relay_probe_continue]="Continuer quand même ? L'instance s'installera correctement mais restera injoignable tant que le port ne sera pas ouvert. [o/N]"
 T_EN[auto_domain]='Auto domain: %s%s%s'
 T_FR[auto_domain]='Domaine automatique : %s%s%s'
 T_EN[sslip_resolves]='sslip.io auto-resolves to %s — HTTPS certificate handled by Caddy.'
@@ -769,8 +787,8 @@ T_FR[sub_skipped]='Sous-domaine gratuit ignoré. Tu utiliseras https://%s'
 # §23 — Relay client systemd service
 T_EN[step_relay_client]='Configuring the Nodyx Relay Client service'
 T_FR[step_relay_client]='Configuration du service Nodyx Relay Client'
-T_EN[relay_client_started]='Nodyx Relay Client started — tunnel to relay.nodyx.org:7443 active'
-T_FR[relay_client_started]='Nodyx Relay Client démarré — tunnel vers relay.nodyx.org:7443 actif'
+T_EN[relay_client_started]='Nodyx Relay Client started — tunnel to %s active'
+T_FR[relay_client_started]='Nodyx Relay Client démarré — tunnel vers %s actif'
 T_EN[relay_client_url_soon]='Your instance will be reachable at https://%s in a few seconds.'
 T_FR[relay_client_url_soon]='Ton instance sera accessible sur https://%s dans quelques secondes.'
 
@@ -1063,7 +1081,7 @@ _nodyx_upgrade() {
 Description=Nodyx Relay Client
 After=network.target
 [Service]
-ExecStart=/usr/local/bin/nodyx-relay client --server relay.nodyx.org:7443 --slug ${_slug} --token ${_dir_token} --local-port 80
+ExecStart=/usr/local/bin/nodyx-relay client --server ${RELAY_SERVER:-relay.nodyx.org:7443} --slug ${_slug} --token ${_dir_token} --local-port 80
 Restart=on-failure
 RestartSec=5s
 StartLimitIntervalSec=60
@@ -1785,6 +1803,86 @@ NET_MODE="${NET_MODE:-2}"
 RELAY_MODE=false
 DOMAIN_IS_AUTO=false
 
+# ── La sonde qui évite une installation « réussie » mais injoignable ──────────
+#
+# Le relais n'a besoin que d'UNE sortie TCP sur 7443. Les connexions grand public
+# l'autorisent, les réseaux d'entreprise, d'université et d'institut souvent pas,
+# et ils ne le disent jamais. Sans ce contrôle, l'installeur se terminait en
+# annonçant un succès, puis l'instance restait muette sans le moindre indice.
+# Cas réel : une inscription en août 2026, tombée exactement là-dessus.
+#
+# Un port filtré ne REFUSE pas, il ne répond rien : on borne donc l'essai.
+RELAY_SERVER="relay.nodyx.org:7443"
+
+_relay_joignable() {
+  timeout 8 bash -c "exec 3<>/dev/tcp/$1/$2" 2>/dev/null
+}
+
+# La porte WebSocket, en HTTPS sur 443.
+#
+# On n'accepte PAS une simple ouverture du port 443 comme preuve : un proxy
+# d'entreprise peut accepter la connexion, puis refuser la montée en WebSocket ou
+# la casser en inspectant le trafic. Le seul verdict qui engage est le 101
+# Switching Protocols, c'est-à-dire la poignée de main réellement aboutie.
+_relais_ws_joignable() {
+  local cle code
+  cle=$(head -c16 /dev/urandom | base64 2>/dev/null) || return 1
+
+  # Attention au code de SORTIE de curl : il ne dit rien de la réussite ici.
+  # curl n'est pas un client WebSocket. Une fois le 101 reçu il attend des
+  # données qui ne viendront pas, jusqu'à expiration du délai, et sort alors en
+  # code 28. Tester ce code de sortie faisait rejeter une porte parfaitement
+  # ouverte. Seul le code HTTP imprimé fait foi.
+  #
+  # Le délai est donc atteint à chaque essai RÉUSSI, et non l'inverse : il est
+  # court parce qu'il borne le succès, pas l'échec.
+  code=$(curl -s -o /dev/null -w '%{http_code}' -m 5 --http1.1 \
+    -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+    -H 'Sec-WebSocket-Version: 13' -H "Sec-WebSocket-Key: $cle" \
+    "https://$1/tunnel" 2>/dev/null)
+
+  [ "$code" = "101" ]
+}
+
+verifier_sortie_relais() {
+  info "$(t relay_probe)"
+
+  if _relay_joignable relay.nodyx.org 7443; then
+    ok "$(t relay_probe_ok)"
+    return 0
+  fi
+
+  # IPv4 filtrée. Certains réseaux laissent passer l'IPv6, et un réseau IPv6 seul
+  # ne pouvait pas se connecter du tout avant que ce nom existe.
+  if _relay_joignable relay6.nodyx.org 7443; then
+    RELAY_SERVER="relay6.nodyx.org:7443"
+    ok "$(printf "$(t relay_probe_v6)" "relay6.nodyx.org")"
+    return 0
+  fi
+
+  # 7443 est muré dans les deux familles. C'est le cas des réseaux d'entreprise,
+  # d'université et d'institut, qui ne laissent sortir que 80 et 443. Ce dernier
+  # essai est précisément ce pour quoi la porte WebSocket existe : un réseau qui
+  # bloque tout sauf le web laisse passer un tunnel déguisé en trafic web.
+  info "$(t relay_probe_wss_try)"
+  if _relais_ws_joignable tunnel.nodyx.org; then
+    RELAY_SERVER="wss://tunnel.nodyx.org/tunnel"
+    ok "$(printf "$(t relay_probe_wss)" "$RELAY_SERVER")"
+    return 0
+  fi
+
+  warn "$(t relay_probe_blocked)"
+  info "$(t relay_probe_hint)"
+  info "$(printf "$(t relay_probe_doc)" "https://nodyx.dev/relay#the-tunnel-never-connects-the-port-7443-wall")"
+
+  local reponse=""
+  read -r -p "  $(t relay_probe_continue) " reponse || true
+  case "${reponse,,}" in
+    y|yes|o|oui) return 0 ;;
+    *) die "$(t relay_probe_blocked)" ;;
+  esac
+}
+
 case "$NET_MODE" in
   1)
     prompt DOMAIN "$(t prompt_domain)"
@@ -1794,6 +1892,7 @@ case "$NET_MODE" in
     DOMAIN="${COMMUNITY_SLUG}.nodyx.org"
     ok "$(printf "$(t relay_mode_url)" "${BOLD}" "https://${DOMAIN}" "${RESET}")"
     info "$(t relay_mode_no_port)"
+    verifier_sortie_relais
     ;;
   3|*)
     DOMAIN="${PUBLIC_IP//./-}.sslip.io"
@@ -2437,7 +2536,13 @@ NODYX_VERSION=${NODYX_VERSION}
 
 # Serveur
 PORT=3000
-HOST=0.0.0.0
+# Loopback, volontairement. Caddy tourne sur la même machine et mandate vers
+# localhost:3000 : écouter sur toutes les interfaces publierait l'API sur
+# Internet, et il ne resterait qu'une règle de pare-feu entre elle et le monde.
+# Une ligne de défense n'en fait pas deux.
+#
+# À changer seulement si votre mandataire vit sur une AUTRE machine.
+HOST=127.0.0.1
 NODE_ENV=production
 
 # JWT
@@ -2995,7 +3100,7 @@ After=network.target
 
 [Service]
 ExecStart=/usr/local/bin/nodyx-relay client \
-  --server relay.nodyx.org:7443 \
+  --server ${RELAY_SERVER:-relay.nodyx.org:7443} \
   --slug ${COMMUNITY_SLUG} \
   --token ${NODYX_DIRECTORY_TOKEN} \
   --local-port 80
@@ -3012,7 +3117,7 @@ SVC
   systemctl daemon-reload
   systemctl enable nodyx-relay-client --quiet
   systemctl start nodyx-relay-client
-  ok "$(t relay_client_started)"
+  ok "$(printf "$(t relay_client_started)" "${RELAY_SERVER:-relay.nodyx.org:7443}")"
   info "$(printf "$(t relay_client_url_soon)" "${DOMAIN}")"
 fi
 
@@ -3403,7 +3508,7 @@ if ! $RELAY_MODE; then
   echo -e "     ${BOLD}$(t summ_voice)   ${RESET}stun/turn:${PUBLIC_IP}:3478 (nodyx-turn)"
 fi
 if $RELAY_MODE; then
-  echo -e "     ${BOLD}$(t summ_relay)   ${RESET}tunnel → relay.nodyx.org:7443"
+  echo -e "     ${BOLD}$(t summ_relay)   ${RESET}tunnel → ${RELAY_SERVER:-relay.nodyx.org:7443}"
 fi
 echo -e "     ${BOLD}$(t summ_version)   ${RESET}${NODYX_VERSION}"
 echo -e "     ${BOLD}$(t summ_dir)   ${RESET}${NODYX_DIR}"
