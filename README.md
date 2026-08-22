@@ -12,9 +12,19 @@ Forum + Chat + Voice + P2P + Canvas + Homepage Builder + Streamer Hub, one serve
 [![Version](https://img.shields.io/github/v/release/Pokled/nodyx?label=version&color=7c3aed)](https://github.com/Pokled/nodyx/releases/latest)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![CI](https://github.com/Pokled/Nodyx/actions/workflows/ci.yml/badge.svg)](https://github.com/Pokled/Nodyx/actions/workflows/ci.yml)
-[![Stack](https://img.shields.io/badge/stack-Fastify%20%2B%20SvelteKit%20%2B%20PostgreSQL%20%2B%20Rust-green)](docs/en/ARCHITECTURE.md)
 [![Security Policy](https://img.shields.io/badge/security-Argon2id%20%2B%20E2E%20%2B%202FA-1a1a2e)](.github/SECURITY.md)
 [![Ko-fi](https://img.shields.io/badge/Support-Ko--fi-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/Pokled)
+
+[![TypeScript](https://img.shields.io/badge/-TypeScript-3178C6?logo=typescript&logoColor=white)](docs/en/ARCHITECTURE.md)
+[![Svelte](https://img.shields.io/badge/-Svelte%205-FF3E00?logo=svelte&logoColor=white)](docs/en/ARCHITECTURE.md)
+[![PostgreSQL](https://img.shields.io/badge/-PostgreSQL%2016-4169E1?logo=postgresql&logoColor=white)](docs/en/ARCHITECTURE.md)
+[![Rust](https://img.shields.io/badge/-Rust-000000?logo=rust&logoColor=white)](docs/en/ARCHITECTURE.md)
+
+<!-- Ces deux-là ne sont pas des images figées : elles interrogent nodyx.org
+     en direct à chaque affichage. Le badge dit la vérité du jour, pas celle
+     du jour où quelqu'un a pensé à le mettre à jour. -->
+[![Translated live](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fnodyx.org%2Ftranslate%2Fprogress.json&query=%24.overallPct&suffix=%25&label=translated%20live&color=6d76f5)](https://nodyx.org/translate)
+[![Federated instances](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fnodyx.org%2Fapi%2Fdirectory&query=%24.instances.length&label=federated%20instances%20live&color=2ece93)](https://nodyx.org/discover)
 
 <sub>If Nodyx resonates with you, a star helps others find it, and keeps us going.</sub>
 
