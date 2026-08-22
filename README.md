@@ -30,28 +30,33 @@ Forum + Chat + Voice + P2P + Canvas + Homepage Builder + Streamer Hub, one serve
 
 </div>
 
+<!-- Une vraie barre de nav, pas un mur de liens bleus soulignés : GitHub impose
+     le style des hyperliens dans un README (bleu, souligné), impossible à
+     changer en CSS. Des boutons (badges) contournent cette contrainte. -->
 <div align="center">
 
-**[Discover](https://start.nodyx.org)** &nbsp;·&nbsp;
-**[Documentation](https://nodyx.dev)** &nbsp;·&nbsp;
-**[Live demo](https://nodyx.org)** &nbsp;·&nbsp;
-**[Translate](https://nodyx.org/translate)** &nbsp;·&nbsp;
-<a href="README.md"><img src="https://flagcdn.com/16x12/gb.png" alt="EN"> English</a> · <a href="docs/fr/README.md"><img src="https://flagcdn.com/16x12/fr.png" alt="FR"> Français</a>
+[![Discover](https://img.shields.io/badge/Discover-start.nodyx.org-6d76f5?style=flat-square)](https://start.nodyx.org)
+[![Documentation](https://img.shields.io/badge/Documentation-nodyx.dev-6d76f5?style=flat-square)](https://nodyx.dev)
+[![Live demo](https://img.shields.io/badge/Live_demo-nodyx.org-6d76f5?style=flat-square)](https://nodyx.org)
+[![Translate](https://img.shields.io/badge/Translate-nodyx.org%2Ftranslate-2ece93?style=flat-square)](https://nodyx.org/translate)
+[![English](https://img.shields.io/badge/EN-English-12131b?style=flat-square)](README.md)
+[![Français](https://img.shields.io/badge/FR-Fran%C3%A7ais-12131b?style=flat-square)](docs/fr/README.md)
 
 </div>
 
 <div align="center">
 
-[Features](#where-each-project-shines) &nbsp;·&nbsp;
-[Security](#security) &nbsp;·&nbsp;
-[Homepage Builder](docs/en/HOMEPAGE-BUILDER.md) &nbsp;·&nbsp;
-[Streamer Hub](docs/en/STREAMER-HUB.md) &nbsp;·&nbsp;
-[Architecture](#architecture) &nbsp;·&nbsp;
-[Screenshots](#screenshots) &nbsp;·&nbsp;
-[Quick Start](#quick-start) &nbsp;·&nbsp;
-[Changelog](CHANGELOG.md) &nbsp;·&nbsp;
-[Contributing](#contributing) &nbsp;·&nbsp;
-[Full docs](docs/en/)
+[![Features](https://img.shields.io/badge/Features-12131b?style=flat-square)](#where-each-project-shines)
+[![Security](https://img.shields.io/badge/Security-12131b?style=flat-square)](#security)
+[![Homepage Builder](https://img.shields.io/badge/Homepage_Builder-12131b?style=flat-square)](docs/en/HOMEPAGE-BUILDER.md)
+[![Streamer Hub](https://img.shields.io/badge/Streamer_Hub-12131b?style=flat-square)](docs/en/STREAMER-HUB.md)
+[![Architecture](https://img.shields.io/badge/Architecture-12131b?style=flat-square)](#architecture)
+[![Screenshots](https://img.shields.io/badge/Screenshots-12131b?style=flat-square)](#screenshots)
+[![Quick Start](https://img.shields.io/badge/Quick_Start-12131b?style=flat-square)](#quick-start)
+[![Changelog](https://img.shields.io/badge/Changelog-12131b?style=flat-square)](CHANGELOG.md)
+[![Contributing](https://img.shields.io/badge/Contributing-12131b?style=flat-square)](#contributing)
+[![Translate a language](https://img.shields.io/badge/Translate_a_language-2ece93?style=flat-square)](https://nodyx.org/translate)
+[![Full docs](https://img.shields.io/badge/Full_docs-12131b?style=flat-square)](docs/en/)
 
 </div>
 
