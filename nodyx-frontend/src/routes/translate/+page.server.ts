@@ -1,6 +1,9 @@
 import type { PageServerLoad } from './$types'
-import { getLocaleActivity }  from '$lib/localeActivity.server'
+import { getLocaleActivity, getAllContributors } from '$lib/localeActivity.server'
 
 export const load: PageServerLoad = () => {
-	return { activity: getLocaleActivity() }
+	return {
+		activity:        getLocaleActivity(),
+		allContributors: getAllContributors(),
+	}
 }

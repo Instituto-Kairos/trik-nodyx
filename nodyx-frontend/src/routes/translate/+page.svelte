@@ -9,11 +9,12 @@
 	import { t, locale }              from '$lib/i18n'
 	import { getTranslationProgress } from '$lib/translationProgress'
 	import type { LocaleProgress }    from '$lib/translationProgress'
-	import type { LocaleContributor, GlobalContributor } from '$lib/localeActivity.server'
+	import type { LocaleContributor, GlobalContributor, AllContributor } from '$lib/localeActivity.server'
 
 	let { data } = $props()
-	const activity  = $derived(data.activity.locales as Record<string, { lastUpdated: string; contributors: LocaleContributor[] }>)
-	const everyone  = $derived(data.activity.contributors as GlobalContributor[])
+	const activity        = $derived(data.activity.locales as Record<string, { lastUpdated: string; contributors: LocaleContributor[] }>)
+	const everyone         = $derived(data.activity.contributors as GlobalContributor[])
+	const allContributors  = $derived(data.allContributors as AllContributor[])
 
 	const tFn = $derived($t)
 
@@ -34,7 +35,16 @@
 	let openPopup = $state<{ contributor: LocaleContributor; localeLabel: string } | null>(null)
 	function showPopup(contributor: LocaleContributor, localeLabel: string) { openPopup = { contributor, localeLabel } }
 	function closePopup() { openPopup = null }
-	function onKeydown(e: KeyboardEvent) { if (e.key === 'Escape') closePopup() }
+
+	let openAllPopup = $state<AllContributor | null>(null)
+	function showAllPopup(c: AllContributor) { openAllPopup = c }
+	function closeAllPopup() { openAllPopup = null }
+
+	function onKeydown(e: KeyboardEvent) {
+		if (e.key !== 'Escape') return
+		closePopup()
+		closeAllPopup()
+	}
 
 	const REPO    = 'https://github.com/Pokled/nodyx'
 	const LOCALES_DIR = `${REPO}/tree/main/nodyx-frontend/src/lib/locales`
@@ -329,6 +339,41 @@
 		<a class="more" href={CONTRIB} target="_blank" rel="noopener">{tFn('translate.safety_link')}</a>
 	</div>
 
+	<!-- ══ Bien au-delà des traductions ═════════════════════════════════════
+	     /translate est une porte d'entrée, pas la seule. Ces gens ont aussi
+	     corrigé des bugs, écrit des features, sauvé une nuit de prod — pour
+	     ne pas les oublier derrière la seule vitrine des langues. -->
+	{#if allContributors.length}
+		<section class="allcontrib">
+			<h2>{tFn('translate.allcontrib.title')}</h2>
+			<p class="allcontrib-sub">{tFn('translate.allcontrib.subtitle')}</p>
+			<div class="allcontrib-grid">
+				{#each allContributors as p (p.username ?? p.displayName)}
+					<button type="button" class="acard" onclick={() => showAllPopup(p)}>
+						{#if p.avatarUrl}
+							<img src={p.avatarUrl} alt="" loading="lazy" />
+						{:else}
+							<span class="cinit big">{(p.displayName || '?').slice(0, 1).toUpperCase()}</span>
+						{/if}
+						<span class="acard-name">{p.displayName}</span>
+						{#if p.starRank}
+							<span class="acard-rank">🌟 {tFn(RANK_KEY[p.starRank])}</span>
+						{/if}
+						<span class="acard-count">
+							{p.contributions.length > 1
+								? tFn('translate.allcontrib.count_many', { n: p.contributions.length })
+								: tFn('translate.allcontrib.count_one',  { n: p.contributions.length })}
+						</span>
+					</button>
+				{/each}
+			</div>
+			<a class="allcontrib-more" href={`${REPO}/blob/main/CONTRIBUTORS.md`} target="_blank" rel="noopener">
+				{tFn('translate.allcontrib.more')}
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+			</a>
+		</section>
+	{/if}
+
 	<footer>
 		<a href={REPO} target="_blank" rel="noopener">github.com/Pokled/nodyx</a>
 		<span class="dot">·</span><span>AGPL-3.0</span>
@@ -369,6 +414,45 @@
 					<a href={c.commitUrl} target="_blank" rel="noopener">{tFn('translate.contributors.view_commit')}</a>
 				{/if}
 			</div>
+		</div>
+	</div>
+{/if}
+
+{#if openAllPopup}
+	{@const p = openAllPopup}
+	<div class="pop-overlay" role="presentation" onclick={closeAllPopup}>
+		<div class="pop pop-wide" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+			<button type="button" class="pop-close" onclick={closeAllPopup} aria-label={tFn('translate.contributors.close')}>×</button>
+			<div class="pop-head">
+				{#if p.avatarUrl}
+					<img class="pop-avatar" src={p.avatarUrl} alt="" />
+				{:else}
+					<span class="cinit big">{(p.displayName || '?').slice(0, 1).toUpperCase()}</span>
+				{/if}
+				<div class="pop-id">
+					<h3>{tFn('translate.contributors.thanks', { name: p.displayName })}</h3>
+					{#if p.starRank}
+						<span class="pop-rank">🌟 {tFn(RANK_KEY[p.starRank])}</span>
+					{/if}
+				</div>
+			</div>
+			<ul class="pop-list">
+				{#each p.contributions as entry, i (i)}
+					<li>
+						<span class="pop-type">{entry.type}</span>
+						{#if entry.prUrl}
+							<a class="pop-entry-blurb" href={entry.prUrl} target="_blank" rel="noopener">{entry.blurb}</a>
+						{:else}
+							<span class="pop-entry-blurb">{entry.blurb}</span>
+						{/if}
+					</li>
+				{/each}
+			</ul>
+			{#if p.profileUrl}
+				<div class="pop-meta">
+					<a href={p.profileUrl} target="_blank" rel="noopener">{tFn('translate.contributors.view_profile')}</a>
+				</div>
+			{/if}
 		</div>
 	</div>
 {/if}
@@ -559,6 +643,30 @@
 	.info .more { color: #8b93ff; font-weight: 600; white-space: nowrap; text-decoration: none; }
 	.info .more:hover { text-decoration: underline; }
 
+	/* ── Bien au-delà des traductions ─────────────────────────────────────── */
+	.allcontrib { margin-top: 22px; }
+	.allcontrib h2 { margin: 0; font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
+	.allcontrib-sub { margin: 6px 0 16px; color: #9698ab; font-size: 13.5px; max-width: 62ch; }
+	.allcontrib-grid { display: flex; flex-wrap: wrap; gap: 10px; }
+	.acard {
+		display: flex; flex-direction: column; align-items: center; gap: 6px;
+		width: 108px; padding: 14px 10px; cursor: pointer; text-align: center;
+		border: 1px solid #1c1e28; border-radius: 10px; background: #0f1016;
+		font-family: inherit; transition: border-color 0.15s, background 0.15s;
+	}
+	.acard:hover, .acard:focus-visible { border-color: #343a5e; background: #12131b; }
+	.acard img, .acard .cinit { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; }
+	.acard .cinit { display: grid; place-items: center; background: #1c1e28; font-size: 15px; color: #9698ab; }
+	.acard-name { font-size: 12.5px; font-weight: 650; color: #e7e8ef; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+	.acard-rank { font-size: 10.5px; color: #f5c451; }
+	.acard-count { font-size: 11px; color: #61647a; }
+	.allcontrib-more {
+		display: inline-flex; align-items: center; gap: 7px; margin-top: 14px;
+		font-size: 13px; font-weight: 600; color: #8b93ff; text-decoration: none;
+	}
+	.allcontrib-more:hover { text-decoration: underline; }
+	.allcontrib-more svg { width: 14px; height: 14px; }
+
 	footer { margin-top: 30px; display: flex; gap: 16px; flex-wrap: wrap; align-items: center; color: #61647a; font: 500 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 	footer a { color: inherit; text-decoration: none; }
 	footer a:hover { color: #9698ab; }
@@ -608,6 +716,18 @@
 	.pop-meta { margin-top: 14px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12px; color: #61647a; }
 	.pop-meta a { color: #8b93ff; font-weight: 600; text-decoration: none; }
 	.pop-meta a:hover { text-decoration: underline; }
+
+	.pop-wide { max-width: 440px; }
+	.pop-list { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; max-height: 45vh; overflow-y: auto; }
+	.pop-list li { padding-bottom: 10px; border-bottom: 1px solid #1c1e28; }
+	.pop-list li:last-child { border-bottom: 0; padding-bottom: 0; }
+	.pop-type {
+		display: inline-block; margin-bottom: 4px; padding: 2px 6px; border-radius: 5px;
+		font: 600 10.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+		color: #8b93ff; background: rgb(109 118 245 / 0.1); border: 1px solid rgb(109 118 245 / 0.22);
+	}
+	.pop-entry-blurb { display: block; font-size: 13px; line-height: 1.5; color: #c5c7d6; text-decoration: none; }
+	a.pop-entry-blurb:hover { color: #e7e8ef; text-decoration: underline; }
 
 	@media (max-width: 640px) {
 		.metric { padding: 0 14px; }

@@ -115,7 +115,16 @@ function findKnownReference(message: string, rowsByPr: Map<number, ContributionR
 	return null
 }
 
-interface ContributionRow { username: string; blurb: string; prNumber: number | null }
+interface ContributionRow {
+	/** null pour un contributeur sans lien GitHub (ex. "Yannick (nodyx.org member)") — il compte quand même. */
+	username:    string | null
+	displayName: string
+	type:        string
+	blurb:       string
+	prNumber:    number | null
+	prUrl:       string | null
+	date:        string
+}
 
 /** Parsing défensif : une ligne mal formée ne casse rien, elle est juste ignorée. */
 function parseContributorsMd(): ContributionRow[] {
@@ -131,15 +140,22 @@ function parseContributorsMd(): ContributionRow[] {
 	const rows: ContributionRow[] = []
 	for (const line of raw.slice(logStart).split('\n')) {
 		if (!line.startsWith('|') || /^\|\s*-+\s*\|/.test(line)) continue
+		// Contributor | Contribution | Type | Issue/PR | Fix/polish | Date
 		const cells = line.split('|').slice(1, -1).map((c) => c.trim())
-		if (cells.length < 4) continue
-		const [contributorCell, contributionCell, , prCell] = cells
+		if (cells.length < 6) continue
+		const [contributorCell, contributionCell, typeCell, prCell, , dateCell] = cells
 		if (contributorCell === 'Contributor') continue
 
-		const userMatch = /github\.com\/([^/)\s]+)/.exec(contributorCell)
-		if (!userMatch) continue
-		const prMatch = /\/(?:pull|issues)\/(\d+)/.exec(prCell ?? '')
-		rows.push({ username: userMatch[1], blurb: contributionCell, prNumber: prMatch ? Number(prMatch[1]) : null })
+		const userMatch    = /github\.com\/([^/)\s]+)/.exec(contributorCell)
+		const username      = userMatch ? userMatch[1] : null
+		// Sans lien GitHub, le nom brut porte parfois une précision entre parenthèses
+		// ("Yannick (nodyx.org member)") : gardée pour l'affichage, pas pour la clé de dédup.
+		const displayName   = username ?? contributorCell.replace(/^\[|\]$/g, '')
+		const prMatch       = /\/(pull|issues)\/(\d+)/.exec(prCell ?? '')
+		const prNumber      = prMatch ? Number(prMatch[2]) : null
+		const prUrl         = prMatch ? `${REPO}/${prMatch[1]}/${prMatch[2]}` : null
+
+		rows.push({ username, displayName, type: typeCell.replace(/`/g, ''), blurb: contributionCell, prNumber, prUrl, date: dateCell })
 	}
 	return rows
 }
@@ -165,7 +181,7 @@ export function getLocaleActivity(): LocaleActivityResult {
 
 	const rows = parseContributorsMd()
 
-	const starCounts = new Map<string, number>()
+	const starCounts = new Map<string | null, number>()
 	for (const r of rows) starCounts.set(r.username, (starCounts.get(r.username) ?? 0) + 1)
 
 	const rowsByPr = new Map<number, ContributionRow>()
@@ -249,4 +265,63 @@ export function getLocaleActivity(): LocaleActivityResult {
 
 	cached = { locales, contributors: [...globalSeen.values()] }
 	return cached
+}
+
+/** Une contribution telle que loguée dans CONTRIBUTORS.md — pas que de la traduction. */
+export interface ContributionEntry {
+	type:    string
+	blurb:   string
+	prUrl:   string | null
+	date:    string
+}
+
+/** Une personne, toutes ses contributions au dépôt confondues (bug, feature, docs, i18n…). */
+export interface AllContributor {
+	displayName:   string
+	username:      string | null
+	avatarUrl:     string | null
+	profileUrl:    string | null
+	starRank:      string | null
+	contributions: ContributionEntry[]
+}
+
+let cachedAll: AllContributor[] | null = null
+
+/**
+ * Tout le monde qui a une ligne dans CONTRIBUTORS.md, groupé par personne —
+ * pour montrer que Nodyx se construit avec des bugs, des features, des docs,
+ * pas seulement des traductions. /translate n'en est qu'une porte d'entrée.
+ */
+export function getAllContributors(): AllContributor[] {
+	if (cachedAll) return cachedAll
+
+	const rows  = parseContributorsMd()
+	const byKey = new Map<string, AllContributor>()
+
+	for (const r of rows) {
+		const key = r.username ?? r.displayName
+		let entry = byKey.get(key)
+		if (!entry) {
+			entry = {
+				displayName: r.displayName,
+				username:    r.username,
+				avatarUrl:   r.username ? `https://github.com/${r.username}.png?size=80` : null,
+				profileUrl:  r.username ? `https://github.com/${r.username}` : null,
+				starRank:    null,
+				contributions: [],
+			}
+			byKey.set(key, entry)
+		}
+		entry.contributions.push({ type: r.type, blurb: r.blurb, prUrl: r.prUrl, date: r.date })
+	}
+
+	const list = [...byKey.values()]
+	for (const p of list) {
+		p.contributions.sort((a, b) => b.date.localeCompare(a.date))
+		p.starRank = rankFor(p.contributions.length)
+	}
+	list.sort((a, b) => b.contributions.length - a.contributions.length || a.displayName.localeCompare(b.displayName))
+
+	cachedAll = list
+	return list
 }
