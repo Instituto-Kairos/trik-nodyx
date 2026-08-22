@@ -16,7 +16,15 @@ const REPO_ROOT = path.resolve(process.cwd(), '..')
 const REPO      = 'https://github.com/Pokled/nodyx'
 
 /** Nom d'auteur git du mainteneur — cf note dans getLocaleActivity(). */
-const MAINTAINER_NAME = 'Pokled'
+const MAINTAINER_NAME     = 'Pokled'
+/**
+ * Son username GitHub réel, connu par avance (contrairement aux autres
+ * contributeurs) : certains de ses commits utilisent son adresse email
+ * personnelle plutôt que l'adresse noreply GitHub (aucun problème à ça,
+ * c'est son dépôt), ce qui ferait autrement échouer l'extraction du
+ * username et retomber sur une initiale sans avatar ni lien profil.
+ */
+const MAINTAINER_USERNAME = 'Pokled'
 const SOURCE_LOCALE: Locale = 'fr'
 
 export interface LocaleContributor {
@@ -208,7 +216,8 @@ export function getLocaleActivity(): LocaleActivityResult {
 			const subjectPr = PR_IN_SUBJECT.exec(c.subject)
 			const prNumber  = known?.prNumber ?? (subjectPr ? Number(subjectPr[1]) : null)
 
-			const gitUsername      = usernameFromEmail(c.email)
+			const gitUsername = usernameFromEmail(c.email)
+				?? (c.authorName === MAINTAINER_NAME ? MAINTAINER_USERNAME : null)
 			const effectiveUsername   = known?.row.username ?? gitUsername
 			const effectiveAuthorName = known?.row.username ?? c.authorName
 
