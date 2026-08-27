@@ -16,6 +16,9 @@ dist/
 /CLAUDE.md
 nodyx-core/.claude/
 
+# Planos de implementação internos (rascunhos de trabalho, pas de doc publique)
+/plans/
+
 # Fichiers IA/context privés
 nexus-docs/discussions.MD
 nodyx-core/CURSOR_CONTEXT.MD
