@@ -31,6 +31,27 @@
 	let openCat     = $state<string | null>(null);
 	let busy        = $state<string | null>(null); // clé de l'opération en cours (feedback UI)
 	let errorMsg    = $state<string | null>(null);
+	// Retour visuel bref après une sauvegarde silencieuse (onblur) : sans ça,
+	// rien ne distingue "enregistré" de "n'a rien fait", ce qui donne
+	// l'impression qu'un champ ne s'édite pas alors qu'il s'enregistre bien.
+	let justSaved   = $state<Set<string>>(new Set());
+	function flashSaved(key: string) {
+		const next = new Set(justSaved);
+		next.add(key);
+		justSaved = next;
+		setTimeout(() => {
+			const n = new Set(justSaved);
+			n.delete(key);
+			justSaved = n;
+		}, 1200);
+	}
+	// Entrée valide un champ mono-ligne comme un clic ailleurs (blur), au lieu
+	// de ne rien faire silencieusement : réflexe naturel après avoir tapé un titre.
+	function saveOnEnter(e: KeyboardEvent) {
+		if (e.key !== 'Enter') return;
+		e.preventDefault();
+		(e.currentTarget as HTMLInputElement).blur();
+	}
 	let settings    = $state<Settings>(data.settings ?? { title: null, subtitle: null, banner_url: null, default_license_note: null });
 	let bannerInput = $state<HTMLInputElement | null>(null);
 
@@ -79,11 +100,12 @@
 		settings = json.settings;
 	}
 
-	async function updateSettingsText(patch: { title?: string | null; subtitle?: string | null; default_license_note?: string | null }) {
+	async function updateSettingsText(patch: { title?: string | null; subtitle?: string | null; default_license_note?: string | null }, savedKey: string) {
 		busy = 'settings';
 		errorMsg = null;
 		try {
 			await patchSettings(patch);
+			flashSaved(savedKey);
 		} catch (e) {
 			errorMsg = (e as Error).message;
 		} finally {
@@ -176,7 +198,7 @@
 		}
 	}
 
-	async function updateCategoryText(cat: Category, title: string, description: string) {
+	async function updateCategoryText(cat: Category, title: string, description: string, savedKey: string) {
 		busy = `update-category-${cat.id}`;
 		errorMsg = null;
 		try {
@@ -186,6 +208,7 @@
 				body: JSON.stringify({ title, description: description || null }),
 			});
 			await refreshCategories();
+			flashSaved(savedKey);
 		} catch (e) {
 			errorMsg = (e as Error).message;
 		} finally {
@@ -203,6 +226,7 @@
 				body: JSON.stringify({ license_note: licenseNote || null }),
 			});
 			await refreshCategories();
+			flashSaved(`cat-license-${cat.id}`);
 		} catch (e) {
 			errorMsg = (e as Error).message;
 		} finally {
@@ -255,6 +279,9 @@
 	let coverInputRefs = $state<Record<string, HTMLInputElement | null>>({});
 	let audioInputRefs = $state<Record<string, HTMLInputElement | null>>({});
 	let imageInputRefs = $state<Record<string, HTMLInputElement | null>>({});
+	// Un ref par morceau existant (distinct de imageInputRefs, réservé au
+	// formulaire "nouveau morceau") pour changer sa pochette après coup.
+	let trackImageInputRefs = $state<Record<string, HTMLInputElement | null>>({});
 
 	async function addTrack(cat: Category) {
 		const title = (newTrackTitle[cat.id] ?? '').trim();
@@ -294,7 +321,7 @@
 		}
 	}
 
-	async function updateTrackText(cat: Category, track: Track, title: string, description: string) {
+	async function updateTrackText(cat: Category, track: Track, title: string, description: string, savedKey: string) {
 		busy = `update-track-${track.id}`;
 		errorMsg = null;
 		try {
@@ -302,6 +329,25 @@
 				method: 'PATCH',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ title, description: description || null }),
+			});
+			await refreshTracks(cat.id, cat.slug);
+			flashSaved(savedKey);
+		} catch (e) {
+			errorMsg = (e as Error).message;
+		} finally {
+			busy = null;
+		}
+	}
+
+	async function changeTrackImage(cat: Category, track: Track, file: File) {
+		busy = `image-track-${track.id}`;
+		errorMsg = null;
+		try {
+			const { asset_id } = await uploadFile('image', file);
+			await api(`/tracks/${track.id}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ image_asset_id: asset_id }),
 			});
 			await refreshTracks(cat.id, cat.slug);
 		} catch (e) {
@@ -420,23 +466,27 @@
 				<label for="page-title" class="block text-xs text-gray-400 mb-1">{tFn('amusic.field_title')}</label>
 				<input id="page-title" type="text" value={settings.title ?? ''} maxlength="120"
 					placeholder={tFn('music.title')}
-					onblur={(e) => { const v = (e.target as HTMLInputElement).value.trim(); if (v !== (settings.title ?? '')) updateSettingsText({ title: v || null }); }}
-					class="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-white text-sm focus:outline-none focus:border-indigo-500" />
+					onkeydown={saveOnEnter}
+					onblur={(e) => { const v = (e.target as HTMLInputElement).value.trim(); if (v !== (settings.title ?? '')) updateSettingsText({ title: v || null }, 'settings-title'); }}
+					class="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-white text-sm focus:outline-none focus:border-indigo-500"
+					class:mus-just-saved={justSaved.has('settings-title')} />
 			</div>
 			<div>
 				<label for="page-subtitle" class="block text-xs text-gray-400 mb-1">{tFn('amusic.field_subtitle')}</label>
 				<textarea id="page-subtitle" rows="2" maxlength="300"
 					placeholder={tFn('music.subtitle')}
-					onblur={(e) => { const v = (e.target as HTMLTextAreaElement).value.trim(); if (v !== (settings.subtitle ?? '')) updateSettingsText({ subtitle: v || null }); }}
-					class="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-white text-sm focus:outline-none focus:border-indigo-500">{settings.subtitle ?? ''}</textarea>
+					onblur={(e) => { const v = (e.target as HTMLTextAreaElement).value.trim(); if (v !== (settings.subtitle ?? '')) updateSettingsText({ subtitle: v || null }, 'settings-subtitle'); }}
+					class="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-white text-sm focus:outline-none focus:border-indigo-500"
+					class:mus-just-saved={justSaved.has('settings-subtitle')}>{settings.subtitle ?? ''}</textarea>
 			</div>
 			<div>
 				<label for="page-default-license" class="block text-xs text-gray-400 mb-1">{tFn('amusic.default_license_note')}</label>
 				<p class="text-[11px] text-gray-500 mb-1">{tFn('amusic.default_license_note_help')}</p>
 				<textarea id="page-default-license" rows="3" maxlength="4000"
 					placeholder={tFn('amusic.license_note_ph')}
-					onblur={(e) => { const v = (e.target as HTMLTextAreaElement).value.trim(); if (v !== (settings.default_license_note ?? '')) updateSettingsText({ default_license_note: v || null }); }}
-					class="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-white text-xs focus:outline-none focus:border-indigo-500">{settings.default_license_note ?? ''}</textarea>
+					onblur={(e) => { const v = (e.target as HTMLTextAreaElement).value.trim(); if (v !== (settings.default_license_note ?? '')) updateSettingsText({ default_license_note: v || null }, 'settings-license'); }}
+					class="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-white text-xs focus:outline-none focus:border-indigo-500"
+					class:mus-just-saved={justSaved.has('settings-license')}>{settings.default_license_note ?? ''}</textarea>
 			</div>
 			<div>
 				<p class="block text-xs text-gray-400 mb-1">{tFn('amusic.field_banner')}</p>
@@ -525,12 +575,16 @@
 
 					<div class="flex-1 min-w-0">
 						<input type="text" value={cat.title} maxlength="120"
-							onblur={(e) => { const v = (e.target as HTMLInputElement).value.trim(); if (v && v !== cat.title) updateCategoryText(cat, v, cat.description ?? ''); }}
-							class="w-full bg-transparent text-white font-semibold text-sm focus:outline-none focus:border-b focus:border-indigo-500" />
+							onkeydown={saveOnEnter}
+							onblur={(e) => { const v = (e.target as HTMLInputElement).value.trim(); if (v && v !== cat.title) updateCategoryText(cat, v, cat.description ?? '', `cat-title-${cat.id}`); }}
+							class="w-full bg-transparent text-white font-semibold text-sm focus:outline-none focus:border-b focus:border-indigo-500"
+							class:mus-just-saved={justSaved.has(`cat-title-${cat.id}`)} />
 						<input type="text" value={cat.description ?? ''} maxlength="500"
 							placeholder={tFn('amusic.field_description')}
-							onblur={(e) => { const v = (e.target as HTMLInputElement).value.trim(); if (v !== (cat.description ?? '')) updateCategoryText(cat, cat.title, v); }}
-							class="w-full bg-transparent text-gray-500 text-xs mt-1 focus:outline-none focus:border-b focus:border-indigo-500" />
+							onkeydown={saveOnEnter}
+							onblur={(e) => { const v = (e.target as HTMLInputElement).value.trim(); if (v !== (cat.description ?? '')) updateCategoryText(cat, cat.title, v, `cat-desc-${cat.id}`); }}
+							class="w-full bg-transparent text-gray-500 text-xs mt-1 focus:outline-none focus:border-b focus:border-indigo-500"
+							class:mus-just-saved={justSaved.has(`cat-desc-${cat.id}`)} />
 					</div>
 
 					<span class="text-xs text-gray-500 shrink-0">{cat.track_count} {cat.track_count === 1 ? tFn('amusic.track_singular') : tFn('amusic.track_plural')}</span>
@@ -571,6 +625,7 @@
 								placeholder={tFn('amusic.license_note_ph')}
 								onblur={(e) => { const v = (e.target as HTMLTextAreaElement).value.trim(); if (v !== (cat.license_note ?? '')) updateCategoryLicense(cat, v); }}
 								class="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-white text-xs focus:outline-none focus:border-indigo-500"
+								class:mus-just-saved={justSaved.has(`cat-license-${cat.id}`)}
 							></textarea>
 						</div>
 
@@ -592,18 +647,42 @@
 											</svg>
 										</button>
 									</div>
-									{#if track.image_url}
-										<img src={track.image_url} alt="" class="w-10 h-10 rounded object-cover shrink-0" />
-									{/if}
+									<button type="button"
+										class="relative shrink-0 w-10 h-10 rounded overflow-hidden bg-gray-800 cursor-pointer group"
+										title={tFn('amusic.change_image')}
+										onclick={() => trackImageInputRefs[track.id]?.click()}>
+										{#if track.image_url}
+											<img src={track.image_url} alt="" class="w-full h-full object-cover" />
+										{:else}
+											<div class="w-full h-full flex items-center justify-center text-gray-600 text-[9px] text-center leading-tight px-0.5">{tFn('amusic.no_image')}</div>
+										{/if}
+										<div class="absolute inset-0 bg-black/60 flex items-center justify-center transition-opacity"
+											class:opacity-100={busy === `image-track-${track.id}`}
+											class:mus-hover-reveal={busy !== `image-track-${track.id}`}>
+											{#if busy === `image-track-${track.id}`}
+												<span class="text-[9px] text-white">{tFn('common.loading')}</span>
+											{:else}
+												<svg class="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+													<path stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+												</svg>
+											{/if}
+										</div>
+										<input bind:this={trackImageInputRefs[track.id]} type="file" accept="image/jpeg,image/png,image/webp,image/gif" class="hidden"
+											onchange={(e) => { const f = (e.target as HTMLInputElement).files?.[0]; if (f) changeTrackImage(cat, track, f); (e.target as HTMLInputElement).value = ''; }} />
+									</button>
 									<div class="flex-1 min-w-0 space-y-1">
 										<input type="text" value={track.title} maxlength="150"
-											onblur={(e) => { const v = (e.target as HTMLInputElement).value.trim(); if (v && v !== track.title) updateTrackText(cat, track, v, track.description ?? ''); }}
-											class="w-full bg-transparent text-sm text-white font-medium focus:outline-none focus:border-b focus:border-indigo-500" />
+											onkeydown={saveOnEnter}
+											onblur={(e) => { const v = (e.target as HTMLInputElement).value.trim(); if (v && v !== track.title) updateTrackText(cat, track, v, track.description ?? '', `track-title-${track.id}`); }}
+											class="w-full bg-transparent text-sm text-white font-medium focus:outline-none focus:border-b focus:border-indigo-500"
+											class:mus-just-saved={justSaved.has(`track-title-${track.id}`)} />
 										<div class="flex items-center gap-2">
 											<input type="text" value={track.description ?? ''} maxlength="500"
 												placeholder={tFn('amusic.field_description')}
-												onblur={(e) => { const v = (e.target as HTMLInputElement).value.trim(); if (v !== (track.description ?? '')) updateTrackText(cat, track, track.title, v); }}
-												class="flex-1 min-w-0 bg-transparent text-xs text-gray-500 focus:outline-none focus:border-b focus:border-indigo-500" />
+												onkeydown={saveOnEnter}
+												onblur={(e) => { const v = (e.target as HTMLInputElement).value.trim(); if (v !== (track.description ?? '')) updateTrackText(cat, track, track.title, v, `track-desc-${track.id}`); }}
+												class="flex-1 min-w-0 bg-transparent text-xs text-gray-500 focus:outline-none focus:border-b focus:border-indigo-500"
+												class:mus-just-saved={justSaved.has(`track-desc-${track.id}`)} />
 											{#if formatDuration(track.duration_seconds)}
 												<span class="shrink-0 text-xs text-gray-500 font-mono">{formatDuration(track.duration_seconds)}</span>
 											{/if}
@@ -818,4 +897,19 @@
 		background: rgba(0, 0, 0, 0.55);
 	}
 	.mus-banner-remove:hover { background: rgba(0, 0, 0, 0.75); }
+
+	.mus-hover-reveal { opacity: 0; }
+	.group:hover .mus-hover-reveal { opacity: 1; }
+
+	/* Retour visuel bref apres une sauvegarde onblur reussie (titre, description,
+	   licence...) : sans ca, rien ne distingue un champ enregistre d'un champ qui
+	   n'a rien fait, ce qui donnait l'impression que l'edition ne marchait pas.
+	   border-bottom-width force a 2px : les champs de titre/description (sans
+	   bordure de base, seulement au focus) seraient sinon invisibles ici. */
+	.mus-just-saved {
+		border-bottom-width: 2px !important;
+		border-color: #34d399 !important;
+		box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.35);
+		transition: border-color 0.3s ease, box-shadow 0.3s ease;
+	}
 </style>
