@@ -462,13 +462,7 @@ export default async function authenticatorRoutes(app: FastifyInstance) {
     }
     const challengeRow = challengeRows[0]
 
-    // 2. Vérifier la signature ECDSA avec la pubkey fournie
-    const valid = await verifyEcdsaSignature(pubkey.key as JwkPublicKey, signature, challenge)
-    if (!valid) {
-      return reply.code(401).send({ error: 'Invalid signature', code: 'INVALID_SIGNATURE' })
-    }
-
-    // 3. Chercher si un device avec ce deviceId existe déjà sur cette instance
+    // 2. Chercher si un device avec ce deviceId existe déjà sur cette instance
     const { rows: existingDevice } = await db.query(
       `SELECT d.*, u.username
        FROM authenticator_devices d
@@ -477,17 +471,36 @@ export default async function authenticatorRoutes(app: FastifyInstance) {
       [deviceId]
     )
 
+    // 3. Vérifier la signature ECDSA — CONTRE LA CLÉ DÉJÀ ENREGISTRÉE quand
+    // l'appareil est connu, jamais contre la pubkey fournie dans le body.
+    // `deviceId` n'est pas un secret (il transite en clair vers chaque
+    // instance visitée, par construction du flow cross-instance) : accepter
+    // ici la pubkey du client permettrait à quiconque connaît le deviceId
+    // d'un appareil existant de se forger sa propre paire de clés, de se
+    // signer lui-même le challenge, et de se faire passer pour le
+    // propriétaire du compte — prise de compte complète, sans jamais prouver
+    // la possession de la clé privée d'origine. Trouvé en audit le 15/09.
+    const referenceKey = existingDevice[0]
+      ? (existingDevice[0].public_key as { algorithm: string; key: JwkPublicKey }).key
+      : (pubkey.key as JwkPublicKey)  // appareil inconnu : rien à comparer, la pubkey fournie EST l'identité qu'on crée
+    const valid = await verifyEcdsaSignature(referenceKey, signature, challenge)
+    if (!valid) {
+      return reply.code(401).send({ error: 'Invalid signature', code: 'INVALID_SIGNATURE' })
+    }
+
     let userId: string
     let username: string
 
     if (existingDevice[0]) {
-      // Appareil connu → login direct
+      // Appareil connu → login direct. Pas de rotation de clé ici : une
+      // rotation légitime doit passer par un flow explicitement authentifié
+      // (déjà connecté ou nouvel enrôlement via jeton admin), jamais par une
+      // simple repétition de cet endpoint anonyme.
       userId   = existingDevice[0].user_id
       username = existingDevice[0].username
-      // Mettre à jour la clé publique si elle a changé (rotation)
       await db.query(
-        `UPDATE authenticator_devices SET public_key = $1, last_used_at = NOW() WHERE id = $2`,
-        [JSON.stringify(pubkey), deviceId]
+        `UPDATE authenticator_devices SET last_used_at = NOW() WHERE id = $1`,
+        [deviceId]
       )
     } else {
       // Appareil inconnu → vérifier le rate limit de création de compte (3/IP/heure)
