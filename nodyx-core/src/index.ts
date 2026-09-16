@@ -1,4 +1,6 @@
 import Fastify, { type FastifyRequest } from 'fastify'
+import { buildLoggerOptions, journaliserAcces } from './config/logger'
+import { getClientIp } from './utils/clientIp'
 import { Server } from 'socket.io'
 import fastifyStatic from '@fastify/static'
 import fastifyMultipart from '@fastify/multipart'
@@ -38,6 +40,7 @@ import { widgetDemoRoutes }  from './routes/widgetDemo'
 import { adminBackupRoutes } from './routes/admin_backups'
 import canvasRoutes          from './routes/canvas'
 import twitchRoutes           from './routes/twitch'
+import musicRoutes            from './routes/music'
 import { streamerAdminPlugin, streamerEventsubPlugin } from './routes/streamer'
 import { startChatOutboundWorker } from './services/streamer/twitchChatBridge'
 import { startChatTimersScheduler } from './services/streamer/chatTimersService'
@@ -55,7 +58,31 @@ import { startScheduler }  from './scheduler'
 // laisserait l'attaquant dicter request.ip). On ne fait confiance qu'aux proxys
 // légitimes (loopback + privé + Cloudflare), pour que request.ip soit la vraie
 // adresse du visiteur, partout dans le code. cf src/config/trustedProxies.ts
-const server = Fastify({ logger: true, trustProxy: getTrustProxy() })
+// `logger: buildLoggerOptions()` et non `true` : le sérialiseur par défaut de
+// Fastify écrit `socket.remoteAddress`, donc `127.0.0.1` derrière Cloudflare.
+// Ces journaux sont la source prévue de la détection comportementale ; aveugles,
+// ils n'auraient permis de bannir personne. cf src/config/logger.ts
+// `disableRequestLogging` : Fastify journalise DEUX lignes par requete, dont
+// aucune n'est exploitable seule (l'une a l'URL sans le statut, l'autre le
+// statut sans l'URL). On emet une ligne unique et complete a la reponse, via le
+// crochet plus bas. GoAccess et les scenarios CrowdSec deviennent utilisables,
+// et le volume est divise par deux. cf src/config/logger.ts
+const server = Fastify({
+  logger: buildLoggerOptions(),
+  trustProxy: getTrustProxy(),
+  disableRequestLogging: true,
+})
+
+// Duree de la requete, mesuree ici plutot que reconstruite : `reply.elapsedTime`
+// n'existe pas dans toutes les versions.
+server.addHook('onRequest', async (request) => {
+  ;(request as unknown as { _debut: bigint })._debut = process.hrtime.bigint()
+})
+server.addHook('onResponse', async (request, reply) => {
+  const debut = (request as unknown as { _debut?: bigint })._debut
+  const ms = debut ? Number(process.hrtime.bigint() - debut) / 1e6 : 0
+  journaliserAcces(request, reply, ms)
+})
 
 // ── CORS (pour les appels fetch client-side : upload, chat, mentions) ────────
 const corsOrigin = process.env.FRONTEND_URL
@@ -155,7 +182,7 @@ server.addHook('onRequest', async (request, reply) => {
     url.startsWith('/api/directory/blocklist')
   ) return
 
-  const ip = request.ip
+  const ip = getClientIp(request)
   if (!ip || ip === '127.0.0.1' || ip === '::1' ||
       ip.startsWith('192.168.') || ip.startsWith('10.') ||
       ip.startsWith('::ffff:127.') || ip.startsWith('172.16.')) return
@@ -213,6 +240,7 @@ server.register(widgetDemoRoutes,     { prefix: '/api/v1' })
 server.register(adminBackupRoutes,    { prefix: '/api/v1' })
 server.register(canvasRoutes,         { prefix: '/api/v1/canvas' })
 server.register(twitchRoutes,         { prefix: '/api/v1/twitch' })
+server.register(musicRoutes,          { prefix: '/api/v1/music' })
 
 // ── Streamer Hub (spec 015, Phase 1) ─────────────────────────────────────────
 // Deux scopes : admin OAuth + viewer feed sous /streamer, webhook EventSub

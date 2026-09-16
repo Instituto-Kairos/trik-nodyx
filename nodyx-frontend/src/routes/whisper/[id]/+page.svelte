@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { PageData } from './$types'
 	import { onMount, onDestroy, tick, untrack } from 'svelte'
-	import { page } from '$app/stores'
+	import { page } from '$app/state'
 	import { goto } from '$app/navigation'
 	import { getSocket } from '$lib/socket'
 	import { PUBLIC_API_URL } from '$env/static/public'
@@ -12,9 +12,9 @@
 
 	let { data }: { data: PageData } = $props()
 
-	const roomId  = $derived($page.params.id)
-	const me      = $derived(($page.data as any).user)
-	const token   = $derived(($page.data as any).token as string | null)
+	const roomId  = $derived(page.params.id)
+	const me      = $derived((page.data as any).user)
+	const token   = $derived((page.data as any).token as string | null)
 
 	// ── State ────────────────────────────────────────────────────────────────
 	interface WMessage {
@@ -174,7 +174,7 @@
 	<title>{tFn('whisper.meta_title')}</title>
 </svelte:head>
 
-<div class="flex flex-col h-[calc(100vh-64px)] max-w-2xl mx-auto px-2 py-4">
+<div class="flex flex-col h-[calc(100dvh-64px)] max-w-2xl mx-auto px-2 py-4">
 
 	<!-- Header -->
 	<div class="flex items-center gap-3 mb-3 px-2">

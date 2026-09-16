@@ -17,7 +17,7 @@
     // l'éditeur riche s'ouvre en plein écran sur mobile, en carte sur desktop.
 
     import { socket } from '$lib/socket'
-    import { page } from '$app/stores'
+    import { page } from '$app/state'
     import { linkifyHtml } from '$lib/linkify'
     import { renderCustomEmojis, customEmojisStore } from '$lib/customEmojis'
     import NodyxEditor from '$lib/components/editor/NodyxEditor.svelte'
@@ -29,7 +29,25 @@
         channelId,
         channelName = '',
         oncollapse,
-    }: { channelId: string; channelName?: string; oncollapse?: () => void } = $props()
+        // Reserver la hauteur de la barre de navigation mobile sous la zone de
+        // saisie. VRAI dans un salon vocal, ou la barre est visible et opaque et
+        // recouvrait entierement le champ (mesure : champ a 801-821, barre a
+        // partir de 787, soit 34px de recouvrement, defaut du 17/08).
+        // FAUX dans la Scene, qui est un plein ecran RECOUVRANT la barre :
+        // y reserver la place gacherait 56px pour rien.
+        //
+        // `calc(--bottom-nav-h + 0.75rem)` et non `max(...)` : un `max` donnait
+        // EXACTEMENT la hauteur de la barre, donc zero respiration. Mesure du
+        // 17/08 : boite de saisie finissant a 788, barre commencant a 787,
+        // elles se touchaient a un pixel pres. La marge est en plus, pas au
+        // lieu de.
+        reserverBarreBasse = false,
+    }: {
+        channelId: string
+        channelName?: string
+        oncollapse?: () => void
+        reserverBarreBasse?: boolean
+    } = $props()
 
     type StageMessage = {
         id:              string
@@ -56,7 +74,7 @@
     let editorKey   = $state(0)                     // remonte l'éditeur à chaque ouverture
 
     // ── Qui suis-je (pour la modération) ──────────────────────────────────────
-    const me      = $derived(($page.data as { user?: { id?: string; role?: string } })?.user)
+    const me      = $derived((page.data as { user?: { id?: string; role?: string } })?.user)
     const userId  = $derived(me?.id ?? '')
     const isAdmin = $derived(me?.role === 'owner' || me?.role === 'admin')
     const canActOn = (m: StageMessage) => m.author_id === userId || isAdmin
@@ -259,7 +277,8 @@
     </div>
 
     <!-- Composeur -->
-    <div class="shrink-0 p-3" style="border-top: 1px solid rgba(255,255,255,0.05)">
+    <div class="shrink-0 p-3"
+         style="border-top: 1px solid rgba(255,255,255,0.05); {reserverBarreBasse ? 'padding-bottom: calc(var(--bottom-nav-h) + 0.75rem)' : ''}">
         <div class="flex items-center gap-2 rounded-lg px-3 py-2"
              style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.07)">
             <button

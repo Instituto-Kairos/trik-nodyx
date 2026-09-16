@@ -4,7 +4,7 @@
 	import ReputationRings from '$lib/components/ReputationRings.svelte'
 	import GenerativeBanner from '$lib/components/GenerativeBanner.svelte'
 	import ActivityHeatmap from '$lib/components/ActivityHeatmap.svelte'
-	import { page } from '$app/stores'
+	import { page } from '$app/state'
 	import { goto } from '$app/navigation'
 	import { resolveTheme, themeToStyle } from '$lib/profileThemes'
 	import { socket } from '$lib/socket'
@@ -18,7 +18,7 @@
 	const profile = $derived(data.profile)
 
 	// Logged-in user — from parent layout
-	const me = $derived(($page.data as any).user)
+	const me = $derived((page.data as any).user)
 	const isOwnProfile = $derived(me?.username === profile.username)
 
 	// Initials fallback
@@ -182,7 +182,7 @@
 	)
 
 	// ── Follow system ──────────────────────────────────────────────
-	const token = $derived(($page.data as any).token as string | null)
+	const token = $derived((page.data as any).token as string | null)
 
 	let following      = $state(untrack(() => data.isFollowing ?? false))
 	let followersCount = $state(untrack(() => Number(profile.followers_count ?? 0)))
@@ -329,7 +329,18 @@
 
 	<!-- Identity passport — anchored at banner bottom -->
 	<div class="absolute bottom-0 inset-x-0 z-10">
-		<div class="max-w-[1600px] mx-auto px-6 flex items-end gap-6 pb-6">
+		<!-- `lg:px-12` : la banniere est PLEIN-CADRE, elle deborde de 24px sous les
+		     barres laterales. Un `px-6` (24px) annulait donc exactement ce
+		     debordement et laissait ZERO gouttiere. Mesure a 1920 : couloir libre
+		     276..1700, avatar a 276 et dernier bouton a 1700, les deux collaient
+		     la barre. Les cartes en dessous s'en sortent grace a leur `p-5`
+		     interne ; cette rangee n'en a pas.
+
+		     `flex-wrap` : a 502px, avatar (128) + boutons (209) + 2 gouttieres ne
+		     laissaient que 101px au bloc du nom. Resultat, « Pokled » tronque en
+		     « Pok… » et la rangee des abonnes passant SOUS les boutons. Les
+		     boutons descendent donc sur leur propre ligne sous `md`. -->
+		<div class="max-w-[1600px] mx-auto px-6 lg:px-12 flex flex-wrap items-end gap-6 pb-6">
 
 			<!-- Avatar with frame -->
 			<div class="relative shrink-0 translate-y-10" style="width:128px;height:128px;overflow:visible">
@@ -433,7 +444,7 @@
 			</div>
 
 			<!-- Action button — inside max-w-6xl, aligned bottom-right -->
-			<div class="ml-auto pb-2 shrink-0">
+			<div class="ml-auto pb-2 shrink-0 flex justify-end max-md:w-full max-md:mt-3">
 				{#if isOwnProfile}
 					<div class="flex items-center gap-2">
 						<a href="/users/{profile.username}/card" target="_blank" class="profile-action-btn"
@@ -542,7 +553,15 @@
      MAIN — 2-column layout
      ═══════════════════════════════════════════════════════════════ -->
 <div class="max-w-[1600px] mx-auto px-6 pb-16">
-	<div class="flex flex-col sm:flex-row gap-5 items-start">
+	<!-- `items-stretch` sur mobile, `items-start` seulement à partir de `sm`.
+	     Piège corrigé le 2026-08-15 : en `flex-col`, l'axe TRANSVERSAL est
+	     horizontal, et `items-start` demande aux enfants de ne PAS s'étirer. Le
+	     `<main>` prenait donc la largeur de son contenu, 1358px dans un
+	     conteneur de 374px, et tout le profil était rogné. Son `min-w-0` n'y
+	     changeait rien, et `flex-1` ne gouverne que l'axe principal, ici la
+	     hauteur. En `sm:flex-row`, `items-start` retrouve son sens : aligner les
+	     deux colonnes en haut. -->
+	<div class="flex flex-col sm:flex-row gap-5 items-stretch sm:items-start">
 
 		<!-- ─── LEFT SIDEBAR ─────────────────────────────────────────── -->
 		<aside class="w-full sm:w-64 sm:shrink-0 space-y-3">

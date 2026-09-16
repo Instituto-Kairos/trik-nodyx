@@ -16,9 +16,9 @@
     import { onMount } from 'svelte'
     import { t } from '$lib/i18n'
     import { voicePanelTarget } from '$lib/voicePanel'
-    import { page } from '$app/stores'
+    import { page } from '$app/state'
 
-    const userRole = $derived(($page.data as any)?.user?.role as string | undefined)
+    const userRole = $derived((page.data as any)?.user?.role as string | undefined)
     const canModerate = $derived(
         userRole === 'owner' || userRole === 'admin' || userRole === 'moderator'
     )
@@ -892,37 +892,47 @@
 
                 <!-- ── VoiceSettings popup ────────────────────────────────────── -->
                 {#if showVoiceSettings}
-                    <div class="fixed inset-0 sm:absolute sm:inset-auto sm:bottom-full sm:mb-2 sm:right-0 sm:w-[340px] z-[200]
+                    <!-- PORTAL OBLIGATOIRE, mesure du 17/08 chez l'utilisateur (500x996).
+                         Cette fenetre est `z-[200]`, et elle etait quand meme RECOUVERTE
+                         par l'entete de l'application (`NAV.sticky top-0 z-50`, 48px), qui
+                         mangeait les 31 premiers pixels de la croix de fermeture sur 44 :
+
+                             y=4  -> NAV.sticky top-0 z-50 h-12   <- l'entete
+                             y=52 -> LA CROIX                     <- enfin
+
+                         La chaine des ancetres dit pourquoi :
+
+                             panneau            z:200
+                             barre vocale       z:40
+                             DIV.fixed top-12   z:10   <- le plafond
+
+                         Chaque `z-index` sur un `fixed` cree un contexte d'empilement. Le
+                         200 ne vaut que dans celui de la barre, qui ne vaut que dans celui
+                         a z:10. Face au z-50 de l'entete, c'est 10 contre 50 : perdu. J'ai
+                         d'abord monte la barre de 40 a 60 (#576) : INERTE, mesure a
+                         l'appui, le plafond etait un cran plus haut.
+
+                         Le portal sort la fenetre a la racine : plus aucun contexte
+                         intermediaire, le 200 compte pour de vrai. C'est deja la parade
+                         employee trois fois dans ce fichier.
+
+                         Consequence : `sm:absolute ... bottom-full right-0` n'a plus de
+                         parent auquel s'accrocher. On passe donc en `fixed` centre au
+                         dessus de la barre, comme la variante laterale. -->
+                    <div use:portal class="fixed inset-0 sm:inset-auto sm:left-1/2 sm:-translate-x-1/2 sm:w-[340px]
+                                sm:bottom-[calc(var(--bottom-nav-h)+5.5rem)] z-[200]
                                 flex flex-col sm:block animate-in fade-in slide-in-from-bottom-4 duration-300"
                          style="pointer-events: auto;">
+                        <!-- Sous `sm` le panneau occupe tout l'ecran et defile deja. A
+                             partir de `sm` il pousse vers le HAUT (`bottom-full`) : sans
+                             borne il deborde d'une fenetre courte, meme defaut qu'en bas. -->
                         <div class="relative flex-1 sm:flex-none bg-gradient-to-b from-gray-900 to-gray-950
                                     border border-amber-500/30 sm:rounded-2xl shadow-2xl shadow-amber-500/10
-                                    overflow-hidden backdrop-blur-md flex flex-col">
+                                    sm:max-h-[calc(100dvh-8rem)] overflow-hidden backdrop-blur-md flex flex-col">
                             <div class="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-amber-500 to-transparent"></div>
-                            <!-- Header fermeture mobile-only -->
-                            <div class="sm:hidden flex items-center justify-between px-4 py-3 border-b border-gray-800 bg-gray-900/95 shrink-0">
-                                <span class="text-sm font-semibold text-white">{tFn('voice.audio_settings_title')}</span>
-                                <button onclick={() => showVoiceSettings = false}
-                                        aria-label={tFn('voice_panel.close_settings')}
-                                        class="min-w-[44px] min-h-[44px] flex items-center justify-center text-gray-400 hover:text-white">
-                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
-                                    </svg>
-                                </button>
+                            <div class="flex-1 overflow-y-auto sm:flex-none sm:overflow-y-auto">
+                                <VoiceSettings onclose={() => showVoiceSettings = false} />
                             </div>
-                            <div class="flex-1 overflow-y-auto sm:flex-none sm:overflow-visible">
-                                <VoiceSettings />
-                            </div>
-                            <button
-                                onclick={() => showVoiceSettings = false}
-                                class="hidden sm:flex absolute top-4 right-4 text-gray-500 hover:text-white
-                                       bg-black/40 w-7 h-7 rounded-full items-center justify-center
-                                       backdrop-blur-sm border border-gray-700 hover:border-amber-500/50
-                                       transition-all duration-200 hover:scale-110"
-                                style="pointer-events: auto; z-index: 201;"
-                            >
-                                <span class="text-sm">✕</span>
-                            </button>
                         </div>
                     </div>
                 {/if}
@@ -1076,18 +1086,17 @@
                 </div>
                 <div use:portal class="fixed bottom-24 left-1/2 -translate-x-1/2 w-[360px] z-[200]
                             animate-in fade-in slide-in-from-bottom-4 duration-300">
+                    <!-- BORNE A L'ECRAN. Sans `max-h`, ce panneau mesurait 619px de haut
+                         sur un ecran de 600px. Ancre en bas (`bottom-24`), son sommet
+                         tombait a -115px, et `overflow-hidden` interdisait tout
+                         defilement : l'excedent etait purement AMPUTE par le haut, avec
+                         l'en-tete et la croix de fermeture dedans. Mesure du 17/08. -->
                     <div class="relative bg-gradient-to-b from-gray-900 to-gray-950
                                 border border-amber-500/30 rounded-2xl shadow-2xl shadow-amber-500/10
-                                overflow-hidden backdrop-blur-md">
+                                max-h-[calc(100dvh-7rem)] overflow-y-auto backdrop-blur-md">
                         <div class="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-amber-500 to-transparent"></div>
-                        <VoiceSettings />
-                        <button onclick={() => showVoiceSettings = false}
-                            class="absolute top-4 right-4 text-gray-500 hover:text-white
-                                   bg-black/40 w-7 h-7 rounded-full flex items-center justify-center
-                                   backdrop-blur-sm border border-gray-700 hover:border-amber-500/50
-                                   transition-all duration-200 hover:scale-110">
-                            <span class="text-sm">✕</span>
-                        </button>
+
+                        <VoiceSettings onclose={() => showVoiceSettings = false} />
                     </div>
                 </div>
             {/if}
