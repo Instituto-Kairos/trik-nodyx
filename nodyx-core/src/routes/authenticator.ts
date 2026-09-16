@@ -19,7 +19,6 @@ import crypto, { webcrypto } from 'crypto'
 import jwt from 'jsonwebtoken'
 import { db, redis } from '../config/database'
 import { requireAuth } from '../middleware/auth'
-import { adminOnly }  from '../middleware/adminOnly'
 import { trackSession } from './auth'
 import { getClientIp } from '../utils/clientIp'
 
@@ -118,6 +117,20 @@ async function enrollRateLimit(request: FastifyRequest, reply: FastifyReply) {
   }
 }
 
+// N'existait pas avant l'audit du 15/09 : ce endpoint est public par nécessité
+// (le navigateur qui initie une connexion n'est pas encore authentifié), mais
+// sans aucune limite il devenait un levier de harcèlement (flood de demandes
+// d'approbation vers l'appareil d'un `username` ciblé, qui fait sonner la PWA
+// à chaque appel) et de croissance de table non bornée.
+async function createChallengeRateLimit(request: FastifyRequest, reply: FastifyReply) {
+  const key = `auth_create_challenge_rate:${getClientIp(request)}`
+  const count = await redis.incr(key)
+  if (count === 1) await redis.expire(key, 60)
+  if (count > 15) {  // 15/min, large pour l'usage normal (polling de reconnexion inclus)
+    return reply.code(429).send({ error: 'Trop de tentatives', code: 'RATE_LIMITED' })
+  }
+}
+
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
 const RegisterDeviceBody = z.object({
@@ -169,9 +182,13 @@ export default async function authenticatorRoutes(app: FastifyInstance) {
     })
   })
 
-  // ── Enrollment tokens — admin uniquement ──────────────────────────────────
+  // ── Enrollment tokens ────────────────────────────────────────────────────
+  // Tout utilisateur connecté peut s'en générer un pour enrôler SON PROPRE
+  // nouvel appareil (le token est lié à `request.user!.userId`, jamais à un
+  // id fourni par la requête), ce n'est PAS une action admin, le commentaire
+  // précédent l'affirmait à tort alors que le code ne l'a jamais imposé.
 
-  /** Génère un token d'enregistrement à usage unique (15 min) — admin uniquement */
+  /** Génère un token d'enregistrement à usage unique (15 min), pour son propre compte */
   app.post('/enrollment-tokens', {
     preHandler: [requireAuth]
   }, async (request: FastifyRequest, reply: FastifyReply) => {
@@ -199,36 +216,47 @@ export default async function authenticatorRoutes(app: FastifyInstance) {
     }
     const { deviceId, deviceLabel, publicKey, enrollmentToken } = parsed.data
 
-    // Valider le token d'enregistrement
-    const { rows: tokenRows } = await db.query(
-      `SELECT * FROM authenticator_enrollment_tokens
-       WHERE token = $1 AND expires_at > NOW() AND used_at IS NULL`,
-      [enrollmentToken]
-    )
-    if (!tokenRows[0]) {
-      return reply.code(401).send({ error: 'Invalid or expired enrollment token', code: 'INVALID_TOKEN' })
-    }
-
-    const userId = tokenRows[0].user_id
-
     // Générer le device_token (secret utilisé par l'app pour les appels suivants)
     const deviceToken = crypto.randomBytes(32).toString('hex')
 
-    // Marquer le token d'enregistrement comme utilisé
-    await db.query(
-      `UPDATE authenticator_enrollment_tokens SET used_at = NOW() WHERE token = $1`,
+    // Valider ET consommer le token d'enregistrement, geste atomique
+    // (UPDATE ... WHERE used_at IS NULL RETURNING) plutôt qu'un SELECT puis un
+    // UPDATE séparés : deux requêtes concurrentes avec le même token ne
+    // doivent pas pouvoir consommer le même jeton deux fois (TOCTOU trouvé en
+    // audit le 15/09, même geste déjà correct sur reset-password dans auth.ts).
+    const { rows: consumed } = await db.query(
+      `UPDATE authenticator_enrollment_tokens SET used_at = NOW()
+       WHERE token = $1 AND used_at IS NULL AND expires_at > NOW()
+       RETURNING user_id`,
       [enrollmentToken]
     )
+    if (!consumed[0]) {
+      return reply.code(401).send({ error: 'Invalid or expired enrollment token', code: 'INVALID_TOKEN' })
+    }
+    const userId = consumed[0].user_id
 
-    await db.query(
+    // `deviceId` est choisi par le CLIENT (UUID libre) : sans le `WHERE`,
+    // enregistrer un deviceId qui appartient DÉJÀ à quelqu'un d'autre écrase
+    // sa clé publique et son device_token tout en laissant la ligne rattachée
+    // à SON compte à lui, prise de compte complète (même racine que le bug
+    // de approve-cross, trouvée dans le même audit du 15/09, sur ce même
+    // fichier). Le `WHERE` fait que sur collision avec un autre propriétaire,
+    // l'UPDATE ne touche aucune ligne : on le détecte via `rowCount` et on
+    // refuse, on ne raconte JAMAIS un succès sur une ligne qui n'est pas
+    // devenue la nôtre.
+    const { rowCount } = await db.query(
       `INSERT INTO authenticator_devices (id, user_id, label, public_key, device_token)
        VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (id) DO UPDATE
          SET label = EXCLUDED.label,
              public_key = EXCLUDED.public_key,
-             device_token = EXCLUDED.device_token`,
+             device_token = EXCLUDED.device_token
+         WHERE authenticator_devices.user_id = EXCLUDED.user_id`,
       [deviceId, userId, deviceLabel, JSON.stringify(publicKey), deviceToken]
     )
+    if (!rowCount) {
+      return reply.code(409).send({ error: 'This device ID is already registered to a different account', code: 'DEVICE_ID_CONFLICT' })
+    }
 
     return reply.code(201).send({ success: true, deviceToken })
   })
@@ -277,7 +305,7 @@ export default async function authenticatorRoutes(app: FastifyInstance) {
   // ── Challenges ────────────────────────────────────────────────────────────
 
   /** Créé un challenge — appelé par le browser lors du login (flux sans mot de passe) */
-  app.post('/challenges/create', async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post('/challenges/create', { preHandler: createChallengeRateLimit }, async (request: FastifyRequest, reply: FastifyReply) => {
     const parsed = CreateChallengeBody.safeParse(request.body)
     if (!parsed.success) {
       return reply.code(400).send({ error: 'Invalid payload' })
@@ -462,13 +490,7 @@ export default async function authenticatorRoutes(app: FastifyInstance) {
     }
     const challengeRow = challengeRows[0]
 
-    // 2. Vérifier la signature ECDSA avec la pubkey fournie
-    const valid = await verifyEcdsaSignature(pubkey.key as JwkPublicKey, signature, challenge)
-    if (!valid) {
-      return reply.code(401).send({ error: 'Invalid signature', code: 'INVALID_SIGNATURE' })
-    }
-
-    // 3. Chercher si un device avec ce deviceId existe déjà sur cette instance
+    // 2. Chercher si un device avec ce deviceId existe déjà sur cette instance
     const { rows: existingDevice } = await db.query(
       `SELECT d.*, u.username
        FROM authenticator_devices d
@@ -477,17 +499,36 @@ export default async function authenticatorRoutes(app: FastifyInstance) {
       [deviceId]
     )
 
+    // 3. Vérifier la signature ECDSA — CONTRE LA CLÉ DÉJÀ ENREGISTRÉE quand
+    // l'appareil est connu, jamais contre la pubkey fournie dans le body.
+    // `deviceId` n'est pas un secret (il transite en clair vers chaque
+    // instance visitée, par construction du flow cross-instance) : accepter
+    // ici la pubkey du client permettrait à quiconque connaît le deviceId
+    // d'un appareil existant de se forger sa propre paire de clés, de se
+    // signer lui-même le challenge, et de se faire passer pour le
+    // propriétaire du compte — prise de compte complète, sans jamais prouver
+    // la possession de la clé privée d'origine. Trouvé en audit le 15/09.
+    const referenceKey = existingDevice[0]
+      ? (existingDevice[0].public_key as { algorithm: string; key: JwkPublicKey }).key
+      : (pubkey.key as JwkPublicKey)  // appareil inconnu : rien à comparer, la pubkey fournie EST l'identité qu'on crée
+    const valid = await verifyEcdsaSignature(referenceKey, signature, challenge)
+    if (!valid) {
+      return reply.code(401).send({ error: 'Invalid signature', code: 'INVALID_SIGNATURE' })
+    }
+
     let userId: string
     let username: string
 
     if (existingDevice[0]) {
-      // Appareil connu → login direct
+      // Appareil connu → login direct. Pas de rotation de clé ici : une
+      // rotation légitime doit passer par un flow explicitement authentifié
+      // (déjà connecté ou nouvel enrôlement via jeton admin), jamais par une
+      // simple repétition de cet endpoint anonyme.
       userId   = existingDevice[0].user_id
       username = existingDevice[0].username
-      // Mettre à jour la clé publique si elle a changé (rotation)
       await db.query(
-        `UPDATE authenticator_devices SET public_key = $1, last_used_at = NOW() WHERE id = $2`,
-        [JSON.stringify(pubkey), deviceId]
+        `UPDATE authenticator_devices SET last_used_at = NOW() WHERE id = $1`,
+        [deviceId]
       )
     } else {
       // Appareil inconnu → vérifier le rate limit de création de compte (3/IP/heure)
@@ -498,9 +539,14 @@ export default async function authenticatorRoutes(app: FastifyInstance) {
         return reply.code(429).send({ error: 'Trop de créations de compte. Réessayez dans une heure.', code: 'RATE_LIMITED' })
       }
 
-      // Créer un compte automatiquement
-      // Générer un username unique basé sur les 8 premiers chars du deviceId
-      const baseUsername = `user_${deviceId.replace(/-/g, '').slice(0, 8)}`
+      // Créer un compte automatiquement.
+      // Le username est tiré au hasard, PAS dérivé du deviceId : celui-ci est
+      // le même sur toutes les instances visitées par cet appareil (par
+      // construction du flow cross-instance), donc publier 32 de ses bits
+      // dans un pseudo public le rendrait cherchable/corrélable d'une
+      // communauté à l'autre à la simple lecture d'une liste de membres
+      // (trouvé en audit le 15/09).
+      const baseUsername = `user_${crypto.randomBytes(4).toString('hex')}`
       let finalUsername = baseUsername
       let suffix = 0
       while (true) {
