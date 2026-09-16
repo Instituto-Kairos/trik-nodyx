@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { goto } from '$app/navigation'
 	import { onMount } from 'svelte'
-	import { generateKeyPair, exportPublicKey, encryptPrivateKey } from '$lib/crypto'
-	import { saveDevice, generateDeviceId } from '$lib/storage'
+	import { decryptSeed, deriveIdentity, encryptPrivateKey, encryptSeed, exportPublicKey, generateMasterSeed } from '$lib/crypto'
+	import { getMasterSeed, hasMasterSeed, saveDevice, saveMasterSeed } from '$lib/storage'
 	import { registerDevice, pingHub } from '$lib/hub'
 
 	type Step = 'welcome' | 'hub' | 'passphrase' | 'generating' | 'done'
@@ -17,8 +17,16 @@
 	let error = $state('')
 	let loading = $state(false)
 
+	// Une graine maître existe déjà sur cet appareil (au moins une instance déjà
+	// configurée) : la passphrase à saisir est celle qui la protège déjà, pas
+	// une nouvelle à choisir. Une seule passphrase par appareil physique, cf
+	// SPECS/NODYX_SIGNET_CLOISONNEMENT_IDENTITE_CDC.md.
+	let hasExistingIdentity = $state(false)
+
 	// Pré-remplissage depuis le QR code (?hub=...&token=...)
 	onMount(async () => {
+		hasExistingIdentity = await hasMasterSeed()
+
 		const params = new URLSearchParams(window.location.search)
 		const hub   = params.get('hub')
 		const token = params.get('token')
@@ -68,7 +76,7 @@
 			error = 'La passphrase doit faire au moins 8 caractères.'
 			return
 		}
-		if (passphrase !== passphraseConfirm) {
+		if (!hasExistingIdentity && passphrase !== passphraseConfirm) {
 			error = 'Les deux passphrases ne correspondent pas.'
 			return
 		}
@@ -77,13 +85,26 @@
 		step = 'generating'
 
 		try {
-			// 1. Générer la paire de clés
-			const keyPair = await generateKeyPair()
+			// 1. Graine maître : réutiliser celle qui existe déjà sur cet appareil
+			// (une seule identité Signet par appareil physique), ou en créer une
+			// la toute première fois. Une identité DIFFÉRENTE et non corrélable
+			// est ensuite dérivée pour CETTE instance précisément (jamais la même
+			// paire de clés réutilisée d'une instance à l'autre), cf
+			// SPECS/NODYX_SIGNET_CLOISONNEMENT_IDENTITE_CDC.md.
+			const existingSeed = await getMasterSeed()
+			const masterSeed = existingSeed
+				? await decryptSeed(existingSeed.encryptedSeed, passphrase)
+				: generateMasterSeed()
+			if (!existingSeed) {
+				await saveMasterSeed(await encryptSeed(masterSeed, passphrase))
+			}
+
+			const origin = new URL(hubUrl).origin
+			const { deviceId, keyPair } = await deriveIdentity(masterSeed, origin)
 			const exportedPublicKey = await exportPublicKey(keyPair.publicKey)
 			const encryptedPrivateKey = await encryptPrivateKey(keyPair.privateKey, passphrase)
 
 			// 2. Enregistrer sur Hub
-			const deviceId = generateDeviceId()
 			const res = await registerDevice(hubUrl, {
 				deviceId,
 				deviceLabel,
@@ -99,7 +120,8 @@
 				encryptedPrivateKey,
 				createdAt: Date.now(),
 				hubUrl,
-				deviceToken: res.deviceToken
+				deviceToken: res.deviceToken,
+				derived: true
 			})
 
 			step = 'done'
@@ -214,7 +236,7 @@
 		<!-- ── Passphrase ──────────────────────────────────────────────────────── -->
 		<div class="w-full max-w-sm flex flex-col gap-6">
 			<div class="flex flex-col gap-1">
-				<h2 class="text-xl font-bold">Choisissez une passphrase</h2>
+				<h2 class="text-xl font-bold">{hasExistingIdentity ? 'Votre passphrase' : 'Choisissez une passphrase'}</h2>
 				<p class="text-sm" style="color: var(--color-text-muted)">
 					Communauté : <span style="color: var(--color-accent)">{hubName || hubUrl}</span>
 				</p>
@@ -224,13 +246,23 @@
 				<p style="color: var(--color-text)">
 					<strong>Ce n'est pas votre mot de passe Nodyx.</strong>
 				</p>
-				<p style="color: var(--color-text-muted)">
-					C'est un code secret propre à cet appareil, qui protège votre clé de connexion stockée ici.<br/>
-					Vous le saisirez chaque fois que vous approuverez une connexion depuis ce téléphone.
-				</p>
-				<p class="text-xs" style="color: var(--color-text-muted); opacity: 0.6">
-					Il n'est jamais envoyé à votre communauté. Notez-le — il est impossible à récupérer.
-				</p>
+				{#if hasExistingIdentity}
+					<p style="color: var(--color-text-muted)">
+						Cet appareil a déjà une identité Nodyx Signet. Entrez la même passphrase
+						que la première fois : une identité dédiée à cette nouvelle communauté
+						sera dérivée automatiquement, distincte de celles utilisées ailleurs.
+					</p>
+				{:else}
+					<p style="color: var(--color-text-muted)">
+						C'est un code secret propre à cet appareil, qui protège votre identité
+						Nodyx Signet stockée ici.<br/>
+						Vous le saisirez chaque fois que vous approuverez une connexion depuis ce
+						téléphone, y compris pour de futures communautés.
+					</p>
+					<p class="text-xs" style="color: var(--color-text-muted); opacity: 0.6">
+						Il n'est jamais envoyé à votre communauté. Notez-le — il est impossible à récupérer.
+					</p>
+				{/if}
 			</div>
 
 			<div class="flex flex-col gap-3">
@@ -253,16 +285,18 @@
 				{/if}
 				<div class="flex flex-col gap-1.5">
 					<label class="text-xs font-medium uppercase tracking-wider" style="color: var(--color-text-muted)">
-						Votre passphrase (min. 8 caractères)
+						{hasExistingIdentity ? 'Votre passphrase' : 'Votre passphrase (min. 8 caractères)'}
 					</label>
 					<input
 						type="password"
 						bind:value={passphrase}
-						placeholder="Choisissez un code secret pour cet appareil"
+						placeholder={hasExistingIdentity ? 'La passphrase de cet appareil' : 'Choisissez un code secret pour cet appareil'}
 						class="w-full px-4 py-3 rounded-xl text-sm outline-none"
 						style="background: var(--color-surface); border: 1px solid var(--color-border); color: var(--color-text)"
+						onkeydown={(e) => hasExistingIdentity && e.key === 'Enter' && generateAndRegister()}
 					/>
 				</div>
+				{#if !hasExistingIdentity}
 				<div class="flex flex-col gap-1.5">
 					<label class="text-xs font-medium uppercase tracking-wider" style="color: var(--color-text-muted)">
 						Confirmer la passphrase
@@ -276,6 +310,7 @@
 						onkeydown={(e) => e.key === 'Enter' && generateAndRegister()}
 					/>
 				</div>
+				{/if}
 			</div>
 
 			{#if error}
@@ -284,10 +319,10 @@
 
 			<button
 				onclick={generateAndRegister}
-				disabled={!passphrase || !passphraseConfirm}
+				disabled={!passphrase || (!hasExistingIdentity && !passphraseConfirm)}
 				class="w-full py-3 rounded-xl font-semibold text-white transition-opacity disabled:opacity-50"
 				style="background: var(--color-accent)">
-				Générer mes clés et m'enregistrer
+				{hasExistingIdentity ? 'Créer mon identité pour cette communauté' : 'Générer mes clés et m\'enregistrer'}
 			</button>
 
 			<button onclick={() => step = 'hub'} class="text-sm text-center" style="color: var(--color-text-muted)">

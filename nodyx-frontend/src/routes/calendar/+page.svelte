@@ -42,7 +42,7 @@
 </script>
 
 <svelte:head>
-	<title>Calendrier · {data.communityName ?? 'Nodyx'}</title>
+	<title>{tFn('calendar.page_title')} · {data.communityName ?? 'Nodyx'}</title>
 </svelte:head>
 
 <div class="cal-root">
@@ -165,7 +165,7 @@
 
 <style>
 .cal-root {
-	min-height: 100vh;
+	min-height: 100dvh;
 	background: #09090f;
 	display: flex;
 	flex-direction: column;

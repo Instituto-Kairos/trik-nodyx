@@ -68,7 +68,12 @@ const HOST_PAGE = `<!doctype html><meta charset="utf-8"><title>hote</title>
   f.src = '/frame';
   f.width = 400; f.height = 200;
   window.__results = null;
-  window.addEventListener('message', (e) => {
+
+  // L'hote ecoute EN RETARD, expres. C'est ce qui arrive dans le builder,
+  // dont l'apercu se redessine : sans rappels de la poignee de main, la frame
+  // reste bloquee et le banc doit le voir.
+  const RETARD_MS = 1200;
+  const brancher = () => window.addEventListener('message', (e) => {
     if (e.data?.type === 'nodyx:hello' && e.source === f.contentWindow) {
       const ch = new MessageChannel();
       // L'hote repond, sinon une promesse du pont reste suspendue et le
@@ -91,6 +96,7 @@ const HOST_PAGE = `<!doctype html><meta charset="utf-8"><title>hote</title>
     if (e.data?.type === 'evil:results') window.__results = e.data.results;
   });
   document.body.append(f);
+  setTimeout(brancher, RETARD_MS);
 </script>
 </body>`
 
@@ -167,22 +173,28 @@ console.log('\nBanc de confinement, extension hostile\n')
 console.log(pad('tentative', 38), pad('attendu', 26), 'resultat')
 console.log('-'.repeat(96))
 
+// Une tentative dont l'attendu commence par « autorisee » doit REUSSIR : c'est
+// le cas des styles, qu'une extension doit pouvoir injecter pour dessiner.
+// Sans cette distinction, le banc serait vert en interdisant tout, y compris
+// ce qui est necessaire.
 let leaks = 0
 for (const r of results) {
+  const doitPasser = r.expectation.startsWith('autorisee')
+  const conforme = doitPasser ? !r.blocked : r.blocked
   const verdict = r.blocked ? 'BLOQUEE (' + r.reason + ')' : 'PASSEE >>> ' + r.leaked
-  if (!r.blocked) leaks++
-  console.log(pad(r.name, 38), pad(r.expectation, 26), verdict)
+  if (!conforme) leaks++
+  console.log(pad(r.name, 38), pad(r.expectation, 26), (conforme ? '' : 'NON CONFORME : ') + verdict)
 }
 
-console.log('\n' + results.length + ' tentatives, ' + (results.length - leaks) + ' bloquees, ' + leaks + ' passees')
+console.log('\n' + results.length + ' tentatives, ' + (results.length - leaks) + ' conformes, ' + leaks + ' non conformes')
 if (cspViolations.length) {
   console.log('\nRefus de la politique de securite (extraits) :')
   for (const v of [...new Set(cspViolations)].slice(0, 6)) console.log('  ' + v)
 }
 
 if (leaks > 0) {
-  console.error('\nECHEC : ' + leaks + ' tentative(s) hostile(s) ont abouti.')
+  console.error('\nECHEC : ' + leaks + ' tentative(s) non conforme(s).')
   if (CHECK) process.exit(1)
 } else {
-  console.log('\nOK : aucune tentative hostile n\'a abouti.')
+  console.log('\nOK : le confinement tient, et une extension peut dessiner.')
 }

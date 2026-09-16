@@ -1,9 +1,11 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
-	import { t } from '$lib/i18n';
-	import Table        from '$lib/components/Table.svelte';
-	import NodyxCanvas  from '$lib/components/NodyxCanvas.svelte';
-	import VoiceJukebox from '$lib/components/VoiceJukebox.svelte';
+	import { t, locale } from '$lib/i18n';
+	import Table          from '$lib/components/Table.svelte';
+	import NodyxCanvas    from '$lib/components/NodyxCanvas.svelte';
+	import ActivitySurface from '$lib/components/ActivitySurface.svelte';
+	import ActivityGallery from '$lib/components/ActivityGallery.svelte';
+	import VoiceJukebox   from '$lib/components/VoiceJukebox.svelte';
 	import { localScreenStore, remoteScreenStore, screenShareStore } from '$lib/voice';
 	import { openStage, stageOpenStore } from '$lib/stageStore';
 	import StageChat from './StageChat.svelte';
@@ -22,6 +24,7 @@
 		socket = null as Socket | null,
 		userId = '',
 		canvasRecapChannelId = null as string | null,
+		activities = [] as ActivityEntry[],
 		onjoinCurrentVoice,
 	}: {
 		selectedChannel: any;
@@ -33,8 +36,15 @@
 		socket: Socket | null;
 		userId: string;
 		canvasRecapChannelId: string | null;
+		activities?: ActivityEntry[];
 		onjoinCurrentVoice: () => Promise<void>;
 	} = $props();
+
+	type ActivityEntry = {
+		id: string; version: string; surfaceId: string; appUrl: string; label: string;
+		tagline: string | null; description: string | null; icon: string | null;
+		screenshots: string[]; family: string; author: { name: string; url?: string } | null;
+	};
 
 	const localScreen      = $derived($localScreenStore);
 	const remoteScreens    = $derived($remoteScreenStore);
@@ -44,10 +54,23 @@
 	// ── Chat du salon vocal ───────────────────────────────────────────────────
 	// Un canal VOCAL n'avait tout simplement pas de chat : la page n'affiche le
 	// fil de discussion que pour les canaux TEXTE (`{:else}` côté +page.svelte).
-	// On l'ajoute ici, à droite, OUVERT par défaut et repliable d'une flèche.
-	let showChatPanel = $state(
-		!browser || localStorage.getItem('nodyx:voice:chat') !== '0',
-	);
+	// On l'ajoute ici, à droite, repliable.
+	//
+	// OUVERT par défaut sur grand écran, FERMÉ sur mobile : sur un téléphone il
+	// mangeait la moitié de la page d'un salon VOCAL, où l'on vient d'abord pour
+	// rejoindre la voix. Un choix explicite de l'utilisateur, lui, est toujours
+	// respecté, quelle que soit la taille d'écran.
+	//
+	// Rendu SSR à `false` puis corrigé au montage : partir fermé évite qu'un
+	// téléphone affiche brièvement un panneau qui va disparaître.
+	let showChatPanel = $state(false);
+	$effect(() => {
+		if (!browser) return;
+		const choix = localStorage.getItem('nodyx:voice:chat');
+		showChatPanel = choix !== null
+			? choix === '1'
+			: window.matchMedia('(min-width: 1024px)').matches;
+	});
 	$effect(() => {
 		if (browser) {
 			localStorage.setItem('nodyx:voice:chat', showChatPanel ? '1' : '0');
@@ -143,6 +166,24 @@
 
 	const connected = $derived(voiceState.active && voiceState.channelId === selectedChannel.id);
 	const peerCount = $derived(connected ? voiceState.peers.length + 1 : 0);
+
+	// ── Activités (jeux dans le canal vocal) ─────────────────────────────────
+	// Le bouton « Jeux » ouvre la galerie ; on y choisit le jeu à lancer.
+	let showGames = $state(false);
+	let selectedActivity = $state<ActivityEntry | null>(null);
+	// Le roster de l'activité = les membres du canal vocal, avec leur siège.
+	// L'arbitre (host) est déterministe côté activité : le plus petit seatIndex.
+	const activityMembers = $derived(
+		connected
+			? [
+				{ id: userId, name: myUsername, avatar_url: myAvatar ?? '', seatIndex: voiceState.mySeatIndex ?? 0, speaking: !!voiceState.mySpeaking },
+				...voiceState.peers.map((p: any) => ({
+					id: p.userId, name: p.username, avatar_url: p.avatar ?? '', seatIndex: p.seatIndex ?? 99, speaking: false,
+				})),
+			]
+			: [],
+	);
+	$effect(() => { if (!connected) { showGames = false; selectedActivity = null; } });
 
 	// ⚠ Ne JAMAIS réassigner srcObject sans avoir vérifié qu'il change vraiment.
 	// Assigner srcObject déclenche l'algorithme de chargement du média MÊME quand on
@@ -286,13 +327,30 @@
 		<span>Fichiers</span>
 	</button>
 
-	<!-- Jeux (stub) -->
-	<button disabled title={tFn('voice_room.games_soon')}
-		class="toolbar-btn opacity-25 cursor-not-allowed">
-		<svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-			<path stroke-linecap="round" stroke-linejoin="round" d="M14.25 6.087c0-.355.186-.676.401-.959.221-.29.349-.634.349-1.003 0-1.036-1.007-1.875-2.25-1.875s-2.25.84-2.25 1.875c0 .369.128.713.349 1.003.215.283.401.604.401.959v0a.64.64 0 01-.657.643 48.39 48.39 0 01-4.163-.3c.186 1.613.293 3.25.315 4.907a.656.656 0 01-.658.663v0c-.355 0-.676-.186-.959-.401a1.647 1.647 0 00-1.003-.349c-1.036 0-1.875 1.007-1.875 2.25s.84 2.25 1.875 2.25c.369 0 .713-.128 1.003-.349.283-.215.604-.401.959-.401v0c.31 0 .555.26.532.57a48.039 48.039 0 01-.642 5.056c1.518.19 3.058.309 4.616.354a.64.64 0 00.657-.643v0c0-.355-.186-.676-.401-.959a1.647 1.647 0 01-.349-1.003c0-1.035 1.008-1.875 2.25-1.875 1.243 0 2.25.84 2.25 1.875 0 .369-.128.713-.349 1.003-.215.283-.401.604-.401.959v0c0 .333.277.599.61.58a48.1 48.1 0 005.427-.63 48.05 48.05 0 00.582-4.717.532.532 0 00-.533-.57v0c-.355 0-.676.186-.959.401-.29.221-.634.349-1.003.349-1.035 0-1.875-1.007-1.875-2.25s.84-2.25 1.875-2.25c.37 0 .713.128 1.003.349.283.215.604.401.959.401v0a.656.656 0 00.658-.663 48.422 48.422 0 00-.37-5.36c-1.886.342-3.81.574-5.766.689a.578.578 0 01-.61-.58v0z"/>
-		</svg>
-		<span>Jeux</span>
+	<!-- Jeux (galerie d'activités) -->
+	<button
+		onclick={() => {
+			if (!activities.length || !connected) return;
+			showGames = !showGames;
+			if (!showGames) selectedActivity = null;
+		}}
+		disabled={!activities.length || !connected}
+		class="toolbar-btn {showGames ? 'active-emerald' : ''} {!activities.length || !connected ? 'opacity-35' : ''}"
+		title={!activities.length
+			? tFn('voice_room.games_none')
+			: !connected ? tFn('voice_room.games_join_first') : tFn('voice_room.games')}
+	>
+		{#if showGames}
+			<span class="relative flex w-1.5 h-1.5 shrink-0">
+				<span class="absolute inline-flex h-full w-full rounded-full bg-emerald-400/60 animate-ping"></span>
+				<span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400"></span>
+			</span>
+		{:else}
+			<svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" d="M14.25 6.087c0-.355.186-.676.401-.959.221-.29.349-.634.349-1.003 0-1.036-1.007-1.875-2.25-1.875s-2.25.84-2.25 1.875c0 .369.128.713.349 1.003.215.283.401.604.401.959v0a.64.64 0 01-.657.643 48.39 48.39 0 01-4.163-.3c.186 1.613.293 3.25.315 4.907a.656.656 0 01-.658.663v0c-.355 0-.676-.186-.959-.401a1.647 1.647 0 00-1.003-.349c-1.036 0-1.875 1.007-1.875 2.25s.84 2.25 1.875 2.25c.369 0 .713-.128 1.003-.349.283-.215.604-.401.959-.401v0c.31 0 .555.26.532.57a48.039 48.039 0 01-.642 5.056c1.518.19 3.058.309 4.616.354a.64.64 0 00.657-.643v0c0-.355-.186-.676-.401-.959a1.647 1.647 0 01-.349-1.003c0-1.035 1.008-1.875 2.25-1.875 1.243 0 2.25.84 2.25 1.875 0 .369-.128.713-.349 1.003-.215.283-.401.604-.401.959v0c0 .333.277.599.61.58a48.1 48.1 0 005.427-.63 48.05 48.05 0 00.582-4.717.532.532 0 00-.533-.57v0c-.355 0-.676.186-.959.401-.29.221-.634.349-1.003.349-1.035 0-1.875-1.007-1.875-2.25s.84-2.25 1.875-2.25c.37 0 .713.128 1.003.349.283.215.604.401.959.401v0a.656.656 0 00.658-.663 48.422 48.422 0 00-.37-5.36c-1.886.342-3.81.574-5.766.689a.578.578 0 01-.61-.58v0z"/>
+			</svg>
+		{/if}
+		<span>{tFn('voice_room.games')}</span>
 	</button>
 </div>
 
@@ -426,17 +484,44 @@
 	></button>
 {/if}
 
-<!-- ── Stage (participants) ────────────────────────────────────────────────── -->
+<!-- ── Zone de contenu : participants, OU la galerie/le jeu (entre les sidebars,
+     avec un bouton plein écran) quand « Jeux » est ouvert. ─────────────────── -->
 <div class="flex-1 overflow-hidden">
-	<Table
-		channelName={selectedChannel.name}
-		channelId={selectedChannel.id}
-		me={{ username: myUsername, avatar: myAvatar }}
-		{token}
-		joined={voiceState.active && voiceState.channelId === selectedChannel.id}
-		onjoin={onjoinCurrentVoice}
-		socket={socket}
-	/>
+	{#if showGames && connected && !selectedActivity}
+		<ActivityGallery
+			activities={activities}
+			onselect={(a) => selectedActivity = a}
+			onclose={() => showGames = false}
+		/>
+	{:else if showGames && selectedActivity && connected && voiceState.channelId}
+		<ActivitySurface
+			activityId={selectedActivity.id}
+			surfaceId={selectedActivity.surfaceId}
+			version={selectedActivity.version}
+			appUrl={selectedActivity.appUrl}
+			label={selectedActivity.label}
+			channelId={voiceState.channelId}
+			socket={socket}
+			{token}
+			{userId}
+			username={myUsername}
+			userAvatar={myAvatar}
+			members={activityMembers}
+			locale={$locale}
+			onclose={() => selectedActivity = null}
+			onexit={() => { selectedActivity = null; showGames = false; }}
+		/>
+	{:else}
+		<Table
+			channelName={selectedChannel.name}
+			channelId={selectedChannel.id}
+			me={{ username: myUsername, avatar: myAvatar }}
+			{token}
+			joined={voiceState.active && voiceState.channelId === selectedChannel.id}
+			onjoin={onjoinCurrentVoice}
+			socket={socket}
+		/>
+	{/if}
 </div>
 
 </div><!-- /colonne contenu vocal -->
@@ -445,6 +530,7 @@
 {#if showChatPanel}
 	<div class="w-72 shrink-0 min-h-0 xl:w-80">
 		<StageChat
+			reserverBarreBasse
 			channelId={selectedChannel.id}
 			channelName={selectedChannel.name}
 			oncollapse={() => (showChatPanel = false)}
@@ -453,13 +539,16 @@
 {:else}
 	<button
 		onclick={() => (showChatPanel = true)}
-		class="flex w-8 shrink-0 items-center justify-center transition-colors hover:bg-white/5"
+		class="flex w-11 shrink-0 items-center justify-center transition-colors hover:bg-white/5 lg:w-8"
 		style="background: rgba(6,6,12,0.75); border-left: 1px solid rgba(255,255,255,0.05); color: rgb(148,163,184)"
 		title={tFn('voice_room.show_chat')}
 		aria-label={tFn('voice_room.show_chat')}
 	>
-		<svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-			<path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+		<!-- Une bulle de discussion, pas un chevron : le chevron ne disait pas ce
+		     qu'il ouvrait. Meme icone que l'entree « Chat » de la barre du bas,
+		     pour qu'on la reconnaisse. -->
+		<svg class="h-5 w-5 lg:h-4 lg:w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+			<path stroke-linecap="round" stroke-linejoin="round" d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
 		</svg>
 	</button>
 {/if}

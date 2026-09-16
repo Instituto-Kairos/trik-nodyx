@@ -12,7 +12,7 @@
 	import { onMount, onDestroy } from 'svelte'
 	import { browser } from '$app/environment'
 	import { t } from '$lib/i18n'
-	import { createHostHandler, buildBootPayload, frameUrl, createStorageCaller, type HostSurface } from '$lib/extensions/host'
+	import { createHostHandler, buildBootPayload, frameUrl, createStorageCaller, createFetchCaller, type HostSurface } from '$lib/extensions/host'
 
 	const tFn = $derived($t)
 
@@ -64,7 +64,10 @@
 			// déjà « pas encore » avec un code explicite, ce qui vaut mieux qu'un
 			// silence pour qui développe une extension.
 		},
-		{ storage: createStorageCaller({ extensionId, version, surface }, () => token) },
+		{
+			storage: createStorageCaller({ extensionId, version, surface }, () => token),
+			fetch:   createFetchCaller({ extensionId, version, surface }, () => token),
+		},
 	)
 
 	/** Frappe le jeton de surface et récupère l'identité projetée. */
@@ -91,6 +94,13 @@
 		if (!frame || e.source !== frame.contentWindow) return
 		if (e.data?.type !== 'nodyx:hello') return
 
+		// Un `hello` qui arrive alors qu'on avait abandonné veut dire que la
+		// frame a redémarré : on repart proprement plutôt que de rester bloqué
+		// sur une erreur. Vu dans le builder, dont l'aperçu se redessine à
+		// chaque interaction.
+		if (status === 'error') status = 'loading'
+		channel?.port1.close()
+
 		channel = new MessageChannel()
 		channel.port1.onmessage = async (ev) => {
 			if (ev.data?.event === 'ready') { status = 'ready'; clearBootTimer(); return }
@@ -100,8 +110,20 @@
 		}
 		channel.port1.start()
 
+		// `postMessage` clone la charge, et le clonage structuré NE SAIT PAS
+		// cloner un proxy `$state` de Svelte 5 : il lève un DataCloneError.
+		// Sur la page d'accueil la configuration vient du serveur, donc c'est un
+		// objet ordinaire et tout passe ; dans le builder, c'est de l'état
+		// réactif, et la frame ne démarrait jamais. Le même piège avait déjà
+		// coûté un correctif sur le jukebox.
 		const boot = buildBootPayload(ref, window.location.origin, entry, {
-			config, messages, locale, theme, instance, user: grantedUser, route: '/',
+			config:   $state.snapshot(config)   as Record<string, unknown>,
+			messages: $state.snapshot(messages) as Record<string, string>,
+			theme:    $state.snapshot(theme)    as Record<string, string>,
+			instance: $state.snapshot(instance) as Record<string, unknown>,
+			user:     grantedUser,
+			locale,
+			route: '/',
 		})
 		// Cible '*' : la frame est en origine opaque, aucune autre valeur ne
 		// correspondrait. Ce n'est pas une faiblesse, le message ne contient rien
@@ -116,7 +138,10 @@
 	onMount(() => {
 		if (!browser) return
 		window.addEventListener('message', onWindowMessage)
-		bootTimer = setTimeout(() => { if (status === 'loading') status = 'error' }, 5000)
+		// Le délai laisse la place aux rappels de la poignée de main : abandonner
+		// plus tôt que la frame n'a le droit d'insister produirait une erreur
+		// alors que tout allait bien.
+		bootTimer = setTimeout(() => { if (status === 'loading') status = 'error' }, 10000)
 		// Sans jeton la surface s'affiche quand même : elle n'aura simplement
 		// aucune capacité, ce que le pont lui dira avec un code explicite.
 		void openSession()

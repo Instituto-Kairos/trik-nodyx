@@ -43,6 +43,7 @@ export interface BootPayload {
  */
 export interface HostRuntime {
 	storage?: (op: 'get' | 'set' | 'delete' | 'list', payload: Record<string, unknown>) => Promise<unknown>
+	fetch?:   (payload: Record<string, unknown>) => Promise<unknown>
 }
 
 export interface HostActions {
@@ -60,7 +61,7 @@ export type Envelope =
 	| { p: number; id: string; ok: false; error: { code: string; message: string } }
 
 const RE_REQ_ID  = /^[A-Za-z0-9_-]{1,64}$/
-const RE_SURFACE = /^(page|widget:[a-z][a-z0-9-]{0,30})$/
+const RE_SURFACE = /^(page|(widget|activity):[a-z][a-z0-9-]{0,30})$/
 
 /**
  * Chemins internes acceptés pour le routeur d'une extension.
@@ -117,7 +118,7 @@ export class RequestLedger {
  * et un développeur doit le lire dans la console au lieu de le deviner.
  */
 const RUNTIME_API_TYPES = new Set([
-	'net.fetch', 'core.get', 'session.renew',
+	'core.get', 'session.renew',
 ])
 
 /** Erreur portant le code rendu par le coeur, pour le retransmettre tel quel. */
@@ -136,18 +137,28 @@ export class RuntimeCallError extends Error {
  * coeur, dont le jeton est lie a une surface precise.
  */
 export function createStorageCaller(surface: HostSurface, getToken: () => string | null) {
-	return async function callStorage(op: string, payload: Record<string, unknown>): Promise<unknown> {
+	return createRuntimeCaller(surface, getToken, 'storage')
+}
+
+/** Appelle le proxy reseau du coeur au nom d'une surface. */
+export function createFetchCaller(surface: HostSurface, getToken: () => string | null) {
+	const call = createRuntimeCaller(surface, getToken, 'fetch')
+	return (payload: Record<string, unknown>) => call('', payload)
+}
+
+function createRuntimeCaller(surface: HostSurface, getToken: () => string | null, route: 'storage' | 'fetch') {
+	return async function callRuntime(op: string, payload: Record<string, unknown>): Promise<unknown> {
 		const token = getToken()
 		if (!token) throw new RuntimeCallError('SESSION_EXPIRED', 'aucun jeton d\'extension')
 
-		const res = await fetch(`/api/v1/extensions/${surface.extensionId}/storage`, {
+		const res = await fetch(`/api/v1/extensions/${surface.extensionId}/${route}`, {
 			method:  'POST',
 			headers: {
 				'content-type':    'application/json',
 				'authorization':   `Bearer ${token}`,
 				'x-nodyx-surface': surface.surface,
 			},
-			body: JSON.stringify({ op, ...payload }),
+			body: JSON.stringify(op ? { op, ...payload } : payload),
 		})
 
 		const body = await res.json().catch(() => ({}))
@@ -218,6 +229,16 @@ export function createHostHandler(surface: HostSurface, actions: HostActions = {
 				return null
 			}
 
+			case 'net.fetch': {
+				if (!runtime.fetch) return err(id, 'NOT_IMPLEMENTED', 'le réseau n\'est pas branché sur cet hôte')
+				try {
+					return ok(id, await runtime.fetch(payload))
+				} catch (e) {
+					const code = (e as { code?: string })?.code ?? 'UNKNOWN'
+					return err(id, code, (e as Error)?.message ?? 'appel réseau en échec')
+				}
+			}
+
 			case 'storage.get':
 			case 'storage.set':
 			case 'storage.delete':
@@ -268,4 +289,97 @@ export function buildBootPayload(
 export function frameUrl(surface: HostSurface, origin = ''): string {
 	const q = encodeURIComponent(surface.surface)
 	return `${origin}/api/v1/extensions/${surface.extensionId}/${surface.version}/frame?surface=${q}`
+}
+
+// ── Activités ────────────────────────────────────────────────────────────────
+//
+// Une surface `activity` est une iframe cross-origin montée dans un canal
+// vocal. Elle n'a ni jeton ni session : l'hôte relaie pour elle, via le socket
+// authentifié de la page, uniquement dans la room `voice:<channelId>` que
+// l'utilisateur a rejointe (cf SPECS/NODYX_ACTIVITIES_CDC.md §3).
+//
+// Le pont est plus petit que celui des widgets : tous les messages de l'activité
+// sont des notifications (aucune réponse), et il n'y a que quatre types.
+
+/** Plafonds de garde côté hôte, avant l'émission socket. Le serveur re-plafonne. */
+const ACTIVITY_MSG_MAX  = 8 * 1024
+const ACTIVITY_SNAP_MAX = 16 * 1024
+
+export interface ActivityMember {
+	id:          string
+	name:        string
+	avatar_url:  string
+	/** Avatar réduit en PNG 64x64, base64 sans préfixe. Résolu par l'hôte pour
+	 *  que l'activité (CSP verrouillée) n'ait pas à faire un fetch cross-origin. */
+	avatar_png?: string | null
+	seatIndex:   number
+	speaking:    boolean
+}
+
+export interface ActivityBootPayload {
+	p:        typeof PROTOCOL
+	type:     'nodyx:activity-boot'
+	activity: string
+	version:  string
+	user:     { id: string; name: string; avatar: string }
+	members:  ActivityMember[]
+	locale:   string
+	theme:    Record<string, string>
+	/** Persistance : la frame est same-origin, elle appelle `url` directement
+	 *  (jamais par le port). `token` court, ré-émis via l'event `session`. */
+	storage?: { url: string; surface: string; token: string | null }
+}
+
+export interface ActivityActions {
+	room: {
+		send:        (payload: unknown, opts: { to: string; reliable: boolean }) => void
+		snapshot:    (blob: string) => void
+		requestSync: () => void
+	}
+	toast?: (message: string) => void
+}
+
+export function buildActivityBootPayload(
+	activityId: string,
+	version: string,
+	ctx: Omit<ActivityBootPayload, 'p' | 'type' | 'activity' | 'version'>,
+): ActivityBootPayload {
+	return { p: PROTOCOL, type: 'nodyx:activity-boot', activity: activityId, version, ...ctx }
+}
+
+/**
+ * Pont hôte d'une activité. Toutes les entrées sont des notifications : la
+ * fonction ne renvoie rien. Gardes ceinture (payload sérialisable + borné) en
+ * plus du re-plafonnement serveur.
+ */
+export function createActivityHostHandler(actions: ActivityActions) {
+	return function handle(raw: unknown): void {
+		if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return
+		const m = raw as Record<string, unknown>
+		if (m.p !== PROTOCOL || typeof m.type !== 'string') return
+
+		switch (m.type) {
+			case 'room.send': {
+				let serialized: string
+				try { serialized = JSON.stringify(m.payload ?? null) } catch { return }
+				if (serialized.length > ACTIVITY_MSG_MAX) return
+				actions.room.send(m.payload, {
+					to:       typeof m.to === 'string' ? m.to : '',
+					reliable: m.reliable !== false,
+				})
+				return
+			}
+			case 'room.snapshot': {
+				if (typeof m.blob !== 'string' || m.blob.length > ACTIVITY_SNAP_MAX) return
+				actions.room.snapshot(m.blob)
+				return
+			}
+			case 'room.sync':
+				actions.room.requestSync()
+				return
+			case 'ui.toast':
+				if (typeof m.message === 'string') actions.toast?.(m.message.slice(0, 200))
+				return
+		}
+	}
 }

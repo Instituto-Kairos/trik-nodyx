@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms'
 	import type { PageData } from './$types'
-	import { page } from '$app/stores'
+	import { page } from '$app/state'
 	import { PUBLIC_API_URL } from '$env/static/public'
 	import { untrack } from 'svelte'
 	import { t } from '$lib/i18n'
@@ -20,7 +20,7 @@
 		resetLinkError = ''
 		resetLinkResult = null
 		try {
-			const token = ($page.data as any).token as string | null
+			const token = (page.data as any).token as string | null
 			const res = await fetch(`${PUBLIC_API_URL}/api/v1/admin/members/${userId}/reset-link`, {
 				method:  'POST',
 				headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -51,6 +51,23 @@
 		)
 	)
 
+	// Adresses revelees pendant cette session d'ecran, jamais persistees.
+	let revealed:  Record<string, string>  = $state({})
+	let revealing: Record<string, boolean> = $state({})
+
+	async function revealEmail(userId: string) {
+		if (revealed[userId] || revealing[userId]) return
+		revealing[userId] = true
+		try {
+			const res = await fetch(`/api/v1/admin/members/${userId}/email`, {
+				headers: { Authorization: `Bearer ${page.data.token}` },
+			})
+			if (res.ok) revealed[userId] = (await res.json()).email
+		} finally {
+			revealing[userId] = false
+		}
+	}
+
 	const bans: Array<{ user_id: string; username: string; email: string; reason: string | null; banned_at: string; banned_by_username: string | null }> = untrack(() => data.bans ?? [])
 	const ipBans: Array<{ ip: string; reason: string | null; banned_at: string; banned_by_username: string | null }> = untrack(() => data.ipBans ?? [])
 	const emailBans: Array<{ email: string; reason: string | null; banned_at: string; banned_by_username: string | null }> = untrack(() => data.emailBans ?? [])
@@ -60,6 +77,8 @@
 	let banReason  = $state('')
 	let banIp      = $state(false)
 	let banEmail   = $state(false)
+	// Message affiché après un ban : dit si l'IP a réellement été bannie.
+	let banNotice  = $state<{ kind: 'ok' | 'warn'; text: string } | null>(null)
 
 	const ROLE_COLORS: Record<string, string> = {
 		owner:     'bg-yellow-900/50 text-yellow-400 border-yellow-800/50',
@@ -79,6 +98,15 @@
 <svelte:head><title>{tFn('amem.page_title')}</title></svelte:head>
 
 <div>
+	{#if banNotice}
+		<div class="mb-4 flex items-start justify-between gap-3 rounded-lg border px-4 py-2.5 text-sm
+			{banNotice.kind === 'ok'
+				? 'bg-green-900/30 border-green-800 text-green-300'
+				: 'bg-amber-900/30 border-amber-800 text-amber-300'}">
+			<span>{banNotice.text}</span>
+			<button onclick={() => banNotice = null} class="text-lg leading-none opacity-70 hover:opacity-100">✕</button>
+		</div>
+	{/if}
 	<div class="flex items-center justify-between mb-6">
 		<div>
 			<h1 class="text-2xl font-bold text-white">{tFn('amem.title')}</h1>
@@ -93,8 +121,8 @@
 		/>
 	</div>
 
-	<div class="rounded-xl border border-gray-800 overflow-hidden">
-		<table class="w-full text-sm">
+	<div class="rounded-xl border border-gray-800 overflow-x-auto">
+		<table class="tableau-cartes w-full text-sm md:min-w-[720px]">
 			<thead class="bg-gray-900 border-b border-gray-800 text-xs text-gray-500 uppercase tracking-wider">
 				<tr>
 					<th class="px-4 py-3 text-left">{tFn('amem.col_member')}</th>
@@ -110,7 +138,7 @@
 				{#each filtered as member}
 					<tr class="bg-gray-900/30 hover:bg-gray-900/60 transition-colors">
 						<!-- Member -->
-						<td class="px-4 py-3">
+						<td class="px-4 py-3" data-label={tFn('amem.col_member')}>
 							<div class="flex items-center gap-2.5">
 								<div class="w-8 h-8 rounded-full bg-indigo-800 flex items-center justify-center text-xs font-bold text-indigo-200 shrink-0">
 									{member.username.charAt(0).toUpperCase()}
@@ -119,13 +147,27 @@
 									<a href="/users/{member.username}" class="font-medium text-white hover:text-indigo-300 transition-colors">
 										{member.username}
 									</a>
-									<div class="text-xs text-gray-600">{member.email}</div>
+									<!-- Adresse masquée par défaut, révélée par un geste explicite qui
+									     laisse une trace dans le journal d'audit. Un mode discret à
+									     activer ne protégerait personne : c'est le soir où on oublie
+									     de l'allumer que ça se voit. -->
+									<div class="text-xs text-gray-600 flex items-center gap-1.5">
+										<span>{revealed[member.user_id] ?? member.email}</span>
+										{#if !revealed[member.user_id]}
+											<button
+												type="button"
+												class="text-[10px] text-gray-500 hover:text-gray-300 underline underline-offset-2"
+												onclick={() => revealEmail(member.user_id)}
+												disabled={revealing[member.user_id]}
+											>{revealing[member.user_id] ? tFn('amem.revealing') : tFn('amem.reveal_email')}</button>
+										{/if}
+									</div>
 								</div>
 							</div>
 						</td>
 
 						<!-- Role (editable) -->
-						<td class="px-4 py-3">
+						<td class="px-4 py-3" data-label={tFn('amem.col_role')}>
 							{#if member.role === 'owner'}
 								<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border {ROLE_COLORS.owner}">
 									owner
@@ -157,7 +199,7 @@
 						</td>
 
 						<!-- Grade -->
-						<td class="px-4 py-3">
+						<td class="px-4 py-3" data-label={tFn('amem.col_grade')}>
 							{#if member.grade_name && member.grade_color}
 								<span
 									class="inline-block rounded px-2 py-0.5 text-xs font-medium"
@@ -171,11 +213,11 @@
 						</td>
 
 						<!-- Counts -->
-						<td class="px-4 py-3 text-center text-gray-400 tabular-nums">{member.thread_count}</td>
-						<td class="px-4 py-3 text-center text-gray-400 tabular-nums">{member.post_count}</td>
+						<td class="px-4 py-3 text-center text-gray-400 tabular-nums" data-label={tFn('amem.col_threads')}>{member.thread_count}</td>
+						<td class="px-4 py-3 text-center text-gray-400 tabular-nums" data-label={tFn('amem.col_messages')}>{member.post_count}</td>
 
 						<!-- Date -->
-						<td class="px-4 py-3 text-xs text-gray-500">
+						<td class="px-4 py-3 text-xs text-gray-500" data-label={tFn('amem.col_joined')}>
 							{new Date(member.joined_at).toLocaleDateString('fr-FR')}
 						</td>
 
@@ -205,7 +247,7 @@
 										</button>
 									</form>
 									<button
-										onclick={() => { banTarget = { userId: member.user_id, username: member.username }; banReason = ''; banIp = false; banEmail = false }}
+										onclick={() => { banTarget = { userId: member.user_id, username: member.username }; banReason = ''; banIp = false; banEmail = false; banNotice = null }}
 										class="text-xs text-red-500 hover:text-red-400 font-medium"
 									>
 										{tFn('amem.ban')}
@@ -230,8 +272,8 @@
 		<div class="mt-10">
 			<h2 class="text-base font-semibold text-white mb-1">{tFn('amem.banned_members')} <span class="text-gray-600 font-normal text-sm">({bans.length})</span></h2>
 			<p class="text-xs text-gray-600 mb-4">{tFn('amem.banned_hint')}</p>
-			<div class="rounded-xl border border-red-900/40 overflow-hidden">
-				<table class="w-full text-sm">
+			<div class="rounded-xl border border-red-900/40 overflow-x-auto">
+				<table class="tableau-cartes w-full text-sm md:min-w-[620px]">
 					<thead class="bg-red-950/30 border-b border-red-900/40 text-xs text-red-400/70 uppercase tracking-wider">
 						<tr>
 							<th class="px-4 py-3 text-left">{tFn('amem.col_member')}</th>
@@ -244,22 +286,34 @@
 					<tbody class="divide-y divide-red-900/20">
 						{#each bans as ban}
 							<tr class="bg-red-950/10 hover:bg-red-950/20 transition-colors">
-								<td class="px-4 py-3">
+								<td class="px-4 py-3" data-label={tFn('amem.col_member')}>
 									<div class="flex items-center gap-2.5">
 										<div class="w-8 h-8 rounded-full bg-red-900/50 flex items-center justify-center text-xs font-bold text-red-400 shrink-0">
 											{ban.username.charAt(0).toUpperCase()}
 										</div>
 										<div>
 											<p class="font-medium text-gray-300">{ban.username}</p>
-											<p class="text-xs text-gray-600">{ban.email}</p>
+											<!-- Même masquage par défaut que la liste des membres (#540) :
+											     ce panneau s'ouvre parfois en direct/partage d'écran. -->
+											<div class="text-xs text-gray-600 flex items-center gap-1.5">
+												<span>{revealed[ban.user_id] ?? ban.email}</span>
+												{#if !revealed[ban.user_id]}
+													<button
+														type="button"
+														class="text-[10px] text-gray-500 hover:text-gray-300 underline underline-offset-2"
+														onclick={() => revealEmail(ban.user_id)}
+														disabled={revealing[ban.user_id]}
+													>{revealing[ban.user_id] ? tFn('amem.revealing') : tFn('amem.reveal_email')}</button>
+												{/if}
+											</div>
 										</div>
 									</div>
 								</td>
-								<td class="px-4 py-3 text-xs text-gray-500 max-w-[200px] truncate" title={ban.reason ?? ''}>
+								<td class="px-4 py-3 text-xs text-gray-500 max-w-[200px] truncate" title={ban.reason ?? ''} data-label={tFn('amem.col_reason')}>
 									{#if ban.reason}{ban.reason}{:else}<span class="text-gray-700 italic">·</span>{/if}
 								</td>
-								<td class="px-4 py-3 text-xs text-gray-500">{ban.banned_by_username ?? '·'}</td>
-								<td class="px-4 py-3 text-xs text-gray-500">{new Date(ban.banned_at).toLocaleDateString('fr-FR')}</td>
+								<td class="px-4 py-3 text-xs text-gray-500" data-label={tFn('amem.col_banned_by')}>{ban.banned_by_username ?? '·'}</td>
+								<td class="px-4 py-3 text-xs text-gray-500" data-label={tFn('amem.col_date')}>{new Date(ban.banned_at).toLocaleDateString('fr-FR')}</td>
 								<td class="px-4 py-3 text-right">
 									<form method="POST" action="?/unban" use:enhance class="inline">
 										<input type="hidden" name="user_id" value={ban.user_id} />
@@ -312,8 +366,8 @@
 		<div class="mt-8">
 			<h2 class="text-base font-semibold text-white mb-1">{tFn('amem.banned_ips')} <span class="text-gray-600 font-normal text-sm">({ipBans.length})</span></h2>
 			<p class="text-xs text-gray-600 mb-4">{tFn('amem.banned_ips_hint')}</p>
-			<div class="rounded-xl border border-orange-900/40 overflow-hidden">
-				<table class="w-full text-sm">
+			<div class="rounded-xl border border-orange-900/40 overflow-x-auto">
+				<table class="tableau-cartes w-full text-sm md:min-w-[620px]">
 					<thead class="bg-orange-950/20 border-b border-orange-900/40 text-xs text-orange-400/70 uppercase tracking-wider">
 						<tr>
 							<th class="px-4 py-3 text-left">{tFn('amem.col_ip')}</th>
@@ -326,12 +380,12 @@
 					<tbody class="divide-y divide-orange-900/20">
 						{#each ipBans as ban}
 							<tr class="bg-orange-950/10 hover:bg-orange-950/20 transition-colors">
-								<td class="px-4 py-3 font-mono text-sm text-orange-300">{ban.ip}</td>
-								<td class="px-4 py-3 text-xs text-gray-500">
+								<td class="px-4 py-3 font-mono text-sm text-orange-300" data-label={tFn('amem.col_ip')}>{ban.ip}</td>
+								<td class="px-4 py-3 text-xs text-gray-500" data-label={tFn('amem.col_reason')}>
 									{#if ban.reason}{ban.reason}{:else}<span class="text-gray-700 italic">·</span>{/if}
 								</td>
-								<td class="px-4 py-3 text-xs text-gray-500">{ban.banned_by_username ?? '·'}</td>
-								<td class="px-4 py-3 text-xs text-gray-500">{new Date(ban.banned_at).toLocaleDateString('fr-FR')}</td>
+								<td class="px-4 py-3 text-xs text-gray-500" data-label={tFn('amem.col_banned_by')}>{ban.banned_by_username ?? '·'}</td>
+								<td class="px-4 py-3 text-xs text-gray-500" data-label={tFn('amem.col_date')}>{new Date(ban.banned_at).toLocaleDateString('fr-FR')}</td>
 								<td class="px-4 py-3 text-right">
 									<form method="POST" action="?/unbanIp" use:enhance class="inline">
 										<input type="hidden" name="ip" value={ban.ip} />
@@ -386,8 +440,8 @@
 		<div class="mt-8">
 			<h2 class="text-base font-semibold text-white mb-1">{tFn('amem.banned_emails')} <span class="text-gray-600 font-normal text-sm">({emailBans.length})</span></h2>
 			<p class="text-xs text-gray-600 mb-4">{tFn('amem.banned_emails_hint')}</p>
-			<div class="rounded-xl border border-yellow-900/40 overflow-hidden">
-				<table class="w-full text-sm">
+			<div class="rounded-xl border border-yellow-900/40 overflow-x-auto">
+				<table class="tableau-cartes w-full text-sm md:min-w-[620px]">
 					<thead class="bg-yellow-950/20 border-b border-yellow-900/40 text-xs text-yellow-400/70 uppercase tracking-wider">
 						<tr>
 							<th class="px-4 py-3 text-left">{tFn('amem.col_email_domain')}</th>
@@ -400,12 +454,12 @@
 					<tbody class="divide-y divide-yellow-900/20">
 						{#each emailBans as ban}
 							<tr class="bg-yellow-950/10 hover:bg-yellow-950/20 transition-colors">
-								<td class="px-4 py-3 font-mono text-sm text-yellow-300">{ban.email}</td>
-								<td class="px-4 py-3 text-xs text-gray-500">
+								<td class="px-4 py-3 font-mono text-sm text-yellow-300" data-label={tFn('amem.col_email_domain')}>{ban.email}</td>
+								<td class="px-4 py-3 text-xs text-gray-500" data-label={tFn('amem.col_reason')}>
 									{#if ban.reason}{ban.reason}{:else}<span class="text-gray-700 italic">·</span>{/if}
 								</td>
-								<td class="px-4 py-3 text-xs text-gray-500">{ban.banned_by_username ?? '·'}</td>
-								<td class="px-4 py-3 text-xs text-gray-500">{new Date(ban.banned_at).toLocaleDateString('fr-FR')}</td>
+								<td class="px-4 py-3 text-xs text-gray-500" data-label={tFn('amem.col_banned_by')}>{ban.banned_by_username ?? '·'}</td>
+								<td class="px-4 py-3 text-xs text-gray-500" data-label={tFn('amem.col_date')}>{new Date(ban.banned_at).toLocaleDateString('fr-FR')}</td>
 								<td class="px-4 py-3 text-right">
 									<form method="POST" action="?/unbanEmail" use:enhance class="inline">
 										<input type="hidden" name="email" value={ban.email} />
@@ -450,9 +504,17 @@
 			<p class="text-sm text-gray-400 mb-4">
 				{tFn('amem.ban_modal_desc')}
 			</p>
-			<form method="POST" action="?/ban" use:enhance={({ cancel }) => {
+			<form method="POST" action="?/ban" use:enhance={() => {
 					return async ({ result, update }) => {
 						await update()
+						if (result.type === 'success') {
+							const d = result.data as { ipBanRequested?: boolean; ipBanApplied?: string | null } | undefined
+							if (d?.ipBanRequested) {
+								banNotice = d.ipBanApplied
+									? { kind: 'ok',   text: tFn('amem.ip_ban_applied', { ip: d.ipBanApplied }) }
+									: { kind: 'warn', text: tFn('amem.ip_ban_unavailable') }
+							}
+						}
 						if (result.type !== 'failure') banTarget = null
 					}
 				}}>

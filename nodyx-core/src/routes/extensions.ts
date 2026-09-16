@@ -21,10 +21,14 @@ import { storageGet, storageSet, storageDelete, storageList } from '../extension
 import { projectUser, columnsFor } from '../extensions/identity'
 import { parseSize } from '../extensions/manifest'
 import { STORAGE } from '../extensions/limits'
+import { proxyFetch } from '../extensions/netFetch'
+import { downloadFromRegistry, configuredRegistries } from '../extensions/registry'
+import { classifyHost } from '../extensions/manifest'
+import type { GrantedNetwork } from '../extensions/net'
 import { PACKAGE, SURFACE }      from '../extensions/limits'
 
 const RE_ID      = /^[a-z][a-z0-9-]{2,38}$/
-const RE_SURFACE = /^(page|widget:[a-z][a-z0-9-]{0,30})$/
+const RE_SURFACE = /^(page|(widget|activity):[a-z][a-z0-9-]{0,30})$/
 
 interface InstalledRow {
   id:       string
@@ -117,6 +121,73 @@ export async function extensionRoutes(app: FastifyInstance) {
     })
   })
 
+  // ── POST /admin/extensions/from-registry ────────────────────────────────
+  //
+  // Installation depuis un registre. En deux temps, delibere : `dryRun` lit et
+  // rend ce que l'extension demande SANS rien ecrire, l'appel sans `dryRun`
+  // installe ce que l'admin a accepte. Sans ce premier temps, l'ecran de
+  // permissions n'aurait rien a afficher et le consentement serait decoratif.
+  app.post('/admin/extensions/from-registry', { preHandler: [rateLimit, adminOnly] }, async (request, reply) => {
+    const { registry, id, version, dryRun, accept } = (request.body ?? {}) as {
+      registry?: unknown; id?: unknown; version?: unknown; dryRun?: unknown; accept?: unknown
+    }
+
+    if (typeof id !== 'string' || !RE_ID.test(id))                return reply.code(400).send({ error: 'Identifiant invalide', code: 'INVALID_ID' })
+    if (typeof version !== 'string' || !/^\d+\.\d+\.\d+$/.test(version)) return reply.code(400).send({ error: 'Version invalide', code: 'INVALID_VERSION' })
+
+    const downloaded = await downloadFromRegistry(registry, id, version, globalThis.fetch as never)
+    if (!downloaded.ok) {
+      const status = downloaded.code === 'REGISTRY_NOT_ALLOWED' ? 403 : 502
+      return reply.code(status).send({
+        error: downloaded.message,
+        code:  downloaded.code,
+        // On dit lesquels sont acceptes : un admin doit pouvoir comprendre le
+        // refus sans aller lire une variable d'environnement.
+        registries: downloaded.code === 'REGISTRY_NOT_ALLOWED' ? configuredRegistries() : undefined,
+      })
+    }
+
+    const { readExtensionPackage }  = await import('../extensions/package')
+    const { requestedCapabilities } = await import('../extensions/capabilities')
+
+    // Venir d'un registre n'accorde AUCUNE faveur : meme lecteur, meme
+    // validateur, meme assainissement qu'un televersement.
+    const read = readExtensionPackage(downloaded.value.archive)
+    if (!read.ok) return reply.code(400).send({ error: 'Paquet refusé', code: 'PACKAGE_REJECTED', issues: read.issues })
+
+    if (read.pkg.manifest.id !== id) {
+      return reply.code(400).send({ error: 'Le paquet ne porte pas l\'identifiant annoncé par le registre', code: 'ID_MISMATCH' })
+    }
+
+    if (dryRun) {
+      return reply.send({
+        manifest:            read.pkg.manifest,
+        messages:            read.pkg.messages[read.pkg.manifest.default_locale] ?? {},
+        requested:           requestedCapabilities(read.pkg.manifest),
+        sensitive:           sensitiveCapabilities(read.pkg.manifest),
+        privateNetworkHosts: read.pkg.privateNetworkHosts,
+        sanitized:           read.pkg.sanitized,
+        version:             read.pkg.manifest.version,
+      })
+    }
+
+    const grant = Array.isArray(accept) && accept.every((v) => typeof v === 'string')
+      ? { accept: accept as string[] }
+      : undefined
+
+    const result = await installExtension(
+      {
+        archive:     downloaded.value.archive,
+        origin:      `registry:${String(registry).toLowerCase()}`,
+        installedBy: request.user?.userId ?? null,
+        grant,
+      },
+      { query },
+    )
+    if (!result.ok) return reply.code(400).send({ error: 'Paquet refusé', code: 'PACKAGE_REJECTED', issues: result.issues })
+    return reply.code(201).send(result.result)
+  })
+
   // ── PATCH /admin/extensions/:id ─────────────────────────────────────────
   app.patch('/admin/extensions/:id', { preHandler: [rateLimit, adminOnly] }, async (request, reply) => {
     const { id }      = request.params as { id: string }
@@ -186,11 +257,16 @@ export async function extensionRoutes(app: FastifyInstance) {
           version:     row.version,
           label:       tr(m.label),
           description: tr(m.description),
+          tagline:     tr(m.tagline) ?? null,
           icon:        m.icon ? `/api/v1/extensions/${m.id}/${row.version}/assets/${m.icon}` : null,
+          screenshots: (m.screenshots ?? []).map((p) => `/api/v1/extensions/${m.id}/${row.version}/assets/${p}`),
+          author:      m.author ?? null,
+          source:      m.source ?? null,
           family:      m.family ?? 'content',
           messages:    dict,
-          surfaces:    m.surfaces.map((s) => s.type === 'widget'
-            ? {
+          surfaces:    m.surfaces.map((s) => {
+            if (s.type === 'widget') {
+              return {
                 type:  'widget' as const,
                 id:    s.id,
                 entry: s.entry,
@@ -204,13 +280,30 @@ export async function extensionRoutes(app: FastifyInstance) {
                   options: f.options?.map((o) => ({ ...o, label: tr(o.label) })),
                 })),
               }
-            : {
-                type:  'page' as const,
-                path:  s.path,
-                entry: s.entry,
-                label: tr(s.label) ?? tr(m.label),
-                nav:   s.nav ? { label: tr(s.nav.label), icon: s.nav.icon ?? null } : null,
-              }),
+            }
+            if (s.type === 'activity') {
+              return {
+                type:        'activity' as const,
+                id:          s.id,
+                // Servi par l'instance elle-même : plus aucune dépendance externe.
+                // `?v=` : le chemin porte déjà la version, mais le paramètre
+                // garantit qu'un navigateur qui aurait mis en cache une ancienne
+                // réponse (en-têtes compris) refait la requête sur une nouvelle
+                // version.
+                appUrl:      `/api/v1/extensions/${m.id}/${row.version}/app/${s.entry}?v=${row.version}`,
+                label:       tr(s.label) ?? tr(m.label),
+                description: tr(s.description),
+                aspect:      s.default_aspect ?? '16:9',
+              }
+            }
+            return {
+              type:  'page' as const,
+              path:  s.path,
+              entry: s.entry,
+              label: tr(s.label) ?? tr(m.label),
+              nav:   s.nav ? { label: tr(s.nav.label), icon: s.nav.icon ?? null } : null,
+            }
+          }),
         }
       })
       .filter((e) => e !== null)
@@ -294,6 +387,76 @@ export async function extensionRoutes(app: FastifyInstance) {
     return reply.send({ result: result.value })
   })
 
+  // ── POST /extensions/:id/fetch ──────────────────────────────────────────
+  //
+  // Le seul chemin par lequel une extension atteint un service tiers. Le
+  // navigateur du visiteur ne parle jamais directement a personne d'autre qu'a
+  // sa communaute : c'est la traduction technique du « zero analytics ».
+  app.post('/extensions/:id/fetch', { preHandler: [rateLimit] }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    const surface = request.headers['x-nodyx-surface']
+    const header  = request.headers.authorization
+
+    if (!RE_ID.test(id) || typeof surface !== 'string' || !RE_SURFACE.test(surface)) {
+      return reply.code(400).send({ error: 'Requête invalide', code: 'INVALID_REQUEST' })
+    }
+    if (!header?.startsWith('Bearer ')) return reply.code(401).send({ error: 'Jeton absent', code: 'TOKEN_MISSING' })
+    if (!appSecret) return reply.code(500).send({ error: 'Instance mal configurée', code: 'MISSING_SECRET' })
+
+    const revoked = await redis.exists(`ext:revoked:${id}`).catch(() => 0)
+    const verified = verifyExtensionToken(header.slice(7), { instanceId, extensionId: id, surface }, appSecret, () => revoked === 1)
+    if (!verified.ok) {
+      return reply.code(verified.code === 'SESSION_EXPIRED' ? 401 : 403).send({ error: verified.message, code: verified.code })
+    }
+
+    const { rows } = await db.query(
+      `SELECT manifest, enabled, granted FROM installed_extensions WHERE id = $1`, [id],
+    )
+    const row = rows[0] as { manifest: Record<string, unknown>; enabled: boolean; granted: string[] } | undefined
+    if (!row)         return reply.code(404).send({ error: 'Extension introuvable', code: 'EXTENSION_NOT_FOUND' })
+    if (!row.enabled) return reply.code(403).send({ error: 'Extension désactivée', code: 'EXTENSION_DISABLED' })
+
+    // Ce qui est joignable = ce que le manifeste declare ET que l'admin a
+    // accorde. L'intersection, jamais l'un des deux seul.
+    const declared = (row.manifest as { permissions?: { network?: GrantedNetwork } }).permissions?.network ?? {}
+    const grantedCaps = new Set(Array.isArray(row.granted) ? row.granted : [])
+    const granted: GrantedNetwork = {}
+    const allowPrivate = new Set<string>()
+    for (const [host, rule] of Object.entries(declared)) {
+      if (!grantedCaps.has(`net:${host}`)) continue
+      granted[host] = rule
+      // Un reseau prive n'est joignable que parce que l'admin a accepte CET
+      // hote la, ce que l'ecran de permissions lui a montre a part.
+      if (classifyHost(host) === 'private') allowPrivate.add(host)
+    }
+    if (Object.keys(granted).length === 0) {
+      return reply.code(403).send({ error: 'Aucun accès réseau accordé', code: 'PERMISSION_DENIED' })
+    }
+
+    // Les secrets ne quittent JAMAIS le serveur : ils sont injectes par le
+    // proxy selon une recette que l'extension ne choisit pas.
+    const { rows: secretRows } = await db.query(
+      `SELECT name, value FROM extension_secrets WHERE extension_id = $1`, [id],
+    )
+    const secrets: Record<string, string> = {}
+    for (const r of secretRows as Array<{ name: string; value: string }>) secrets[r.name] = r.value
+
+    const body = (request.body ?? {}) as Record<string, unknown>
+    const result = await proxyFetch(
+      { url: body.url, method: body.method, headers: body.headers, body: body.body },
+      { granted, allowPrivate, secrets },
+    )
+
+    if (!result.ok) {
+      const status = result.code === 'UPSTREAM_TIMEOUT'   ? 504
+                   : result.code === 'RESPONSE_TOO_LARGE' ? 502
+                   : result.code === 'UPSTREAM_ERROR'     ? 502
+                   : 403
+      return reply.code(status).send({ error: result.message, code: result.code })
+    }
+    return reply.send({ result: result.response })
+  })
+
   // ── POST /extensions/:id/session ────────────────────────────────────────
   // Frappe le jeton court d'une surface. Appelé par l'HÔTE, avec la session
   // réelle de l'utilisateur, jamais par la frame : la frame n'a pas de session
@@ -320,7 +483,9 @@ export async function extensionRoutes(app: FastifyInstance) {
     if (!parsed.ok) return reply.code(500).send({ error: 'Manifeste installé invalide', code: 'MANIFEST_CORRUPT' })
 
     const known = parsed.manifest.surfaces.some(s =>
-      s.type === 'page' ? surface === 'page' : surface === `widget:${s.id}`,
+      s.type === 'page'     ? surface === 'page'
+      : s.type === 'activity' ? surface === `activity:${s.id}`
+      :                         surface === `widget:${s.id}`,
     )
     if (!known) return reply.code(404).send({ error: 'Surface inconnue', code: 'SURFACE_NOT_FOUND' })
 

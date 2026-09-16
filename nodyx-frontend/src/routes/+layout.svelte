@@ -4,7 +4,7 @@
 	import { fade, fly } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import type { LayoutData } from './$types';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { browser } from '$app/environment';
 	import { goto, beforeNavigate } from '$app/navigation';
 	import { initSocket, unreadCountStore, chatMentionStore, dmUnreadStore, onlineMembersStore, getSocket } from '$lib/socket';
@@ -44,8 +44,10 @@
 		'/users/[username]',
 		'/users/[username]/card',
 		'/calendar/[id]',
+		'/musique',
+		'/musique/[slug]',
 	]);
-	const ownsOgImage = $derived(PAGES_WITH_OWN_OG.has($page.route.id ?? ''));
+	const ownsOgImage = $derived(PAGES_WITH_OWN_OG.has(page.route.id ?? ''));
 
 	const user            = $derived(data.user);
 	const isBanned        = $derived(data.user?.is_banned === true);
@@ -95,7 +97,7 @@
 
 	// Reset chat mention badge when user is on /chat
 	$effect(() => {
-		if ($page.url.pathname.startsWith('/chat') && $chatMentionStore > 0) {
+		if (page.url.pathname.startsWith('/chat') && $chatMentionStore > 0) {
 			chatMentionStore.set(0)
 		}
 	})
@@ -104,7 +106,7 @@
 	let _lastMentionCount = 0
 	$effect(() => {
 		const c = $chatMentionStore
-		if (c > _lastMentionCount && !$page.url.pathname.startsWith('/chat')) {
+		if (c > _lastMentionCount && !page.url.pathname.startsWith('/chat')) {
 			playMention()
 		}
 		_lastMentionCount = c
@@ -140,8 +142,8 @@
 
 	const isActive = (href: string) =>
 		href === '/'
-			? $page.url.pathname === '/'
-			: $page.url.pathname.startsWith(href)
+			? page.url.pathname === '/'
+			: page.url.pathname.startsWith(href)
 
 	// App-wide theme — cascade : défaut → thème d'INSTANCE (owner, son univers) → thème du MEMBRE (override perso)
 	const appVars = $derived(themeToVars(resolveTheme((data as any).appTheme, (data as any).instanceTheme)))
@@ -153,16 +155,54 @@
 	// On ne recharge pas brutalement : on attend la PROCHAINE navigation de l'user
 	// pour faire un full reload vers sa destination -> il récupère la version fraîche
 	// sans jamais avoir à hard-refresh. Plus de "5-6 refresh après une mise à jour".
+	// ── Pourquoi un rechargement IMMÉDIAT et non plus « à la prochaine
+	//    navigation » (corrigé le 2026-08-15) ────────────────────────────────
+	// Le service worker fait `skipWaiting()` + `clients.claim()` : le NOUVEAU
+	// service worker prend donc le contrôle d'une page qui exécute encore
+	// l'ANCIEN JavaScript. Il lui sert alors les chunks de la nouvelle version,
+	// dont les noms hachés ne correspondent plus à ce que ce code attend :
+	// l'hydratation Svelte casse et plus AUCUN clic ne répond. La page a l'air
+	// normale, elle est morte.
+	//
+	// Attendre une navigation ne suffit pas : cliquer sur le menu burger n'en
+	// est pas une, et l'utilisateur reste bloqué indéfiniment. Symptôme constaté
+	// sur téléphone, y compris en « mode ordinateur », alors que tout
+	// fonctionnait en navigation privée, c'est-à-dire sans service worker.
+	//
+	// On recharge donc dès la prise de contrôle. Un rechargement automatique
+	// juste après un déploiement est infiniment préférable à une application
+	// figée.
 	let swUpdateReady = false;
+	let swReloading   = false;
 	onMount(() => {
 		if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
-		const markReady = () => { swUpdateReady = true; };
-		const onMessage = (e: MessageEvent) => { if ((e.data as any)?.type === 'sw:updated') markReady(); };
+
+		/** L'utilisateur est-il en train d'écrire ? On ne lui vole pas son texte. */
+		function enTrainDEcrire(): boolean {
+			const el = document.activeElement as HTMLInputElement | HTMLTextAreaElement | null;
+			if (!el) return false;
+			const editable = el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' || el.isContentEditable;
+			return editable && !!(el.value?.trim() || el.textContent?.trim());
+		}
+
+		function rechargerPourNouvelleVersion() {
+			// Garde-fou : `controllerchange` peut se déclencher plus d'une fois,
+			// et un rechargement en boucle serait pire que le bug d'origine.
+			if (swReloading) return;
+			swUpdateReady = true;
+			if (enTrainDEcrire()) return;   // le beforeNavigate ci-dessous prendra le relais
+			swReloading = true;
+			window.location.reload();
+		}
+
+		const onMessage = (e: MessageEvent) => {
+			if ((e.data as any)?.type === 'sw:updated') rechargerPourNouvelleVersion();
+		};
 		navigator.serviceWorker.addEventListener('message', onMessage);
-		navigator.serviceWorker.addEventListener('controllerchange', markReady);
+		navigator.serviceWorker.addEventListener('controllerchange', rechargerPourNouvelleVersion);
 		return () => {
 			navigator.serviceWorker.removeEventListener('message', onMessage);
-			navigator.serviceWorker.removeEventListener('controllerchange', markReady);
+			navigator.serviceWorker.removeEventListener('controllerchange', rechargerPourNouvelleVersion);
 		};
 	});
 	beforeNavigate((nav) => {
@@ -401,8 +441,45 @@
 
 	// Ferme le drawer sur changement de page (navigation SvelteKit)
 	$effect(() => {
-		const _ = $page.url.pathname
+		const _ = page.url.pathname
 		gallerySidebarOpen = false
+	})
+
+	// ── Diagnostic : « écran flouté sans sidebar » ───────────────────────────
+	// Symptôme signalé le 2026-08-16, intermittent et jamais reproduit ici : au
+	// clic sur le burger, le voile apparaît mais le panneau non. Le voile est
+	// désormais monté sous la MÊME condition que le panneau, ce qui rend ce cas
+	// impossible par construction. Ce garde-fou reste pour le cas où le panneau
+	// serait présent mais invisible pour une AUTRE raison (transform figé,
+	// z-index, contexte d'empilement) : il rend alors l'état lisible en console
+	// au lieu de laisser l'utilisateur face à un écran flou muet.
+	$effect(() => {
+		if (!gallerySidebarOpen || typeof document === 'undefined') return
+		const t = setTimeout(() => {
+			const tous = [...document.querySelectorAll<HTMLElement>('.nodyx-sb .panel')]
+			if (tous.length === 0) { console.warn('[nodyx] drawer ouvert, panneau ABSENT du DOM'); return }
+			const panneau = tous[tous.length - 1]
+			const r = panneau.getBoundingClientRect()
+			const st = getComputedStyle(panneau)
+			// Hors de l'écran, invisible ou derrière le voile : on le dit.
+			if (r.right <= 0 || r.left >= window.innerWidth || st.visibility === 'hidden' || st.display === 'none') {
+				console.warn('[nodyx] drawer ouvert mais panneau invisible', {
+					x: Math.round(r.x), largeur: Math.round(r.width),
+					transform: st.transform, display: st.display,
+					visibility: st.visibility, zIndex: st.zIndex,
+					// Les trois informations qui manquaient pour trancher :
+					// la classe est-elle encore la ? l'etat Svelte dit-il ouvert ?
+					// et la media query mobile s'applique-t-elle vraiment ?
+					nbPanneaux: tous.length,
+					classe: panneau.className,
+					etatSvelte: gallerySidebarOpen,
+					largeurEcran: window.innerWidth,
+					mobileActif: window.matchMedia('(max-width: 1023px)').matches,
+					styleInline: panneau.getAttribute('style'),
+				})
+			}
+		}, 400)   // après la transition d'ouverture
+		return () => clearTimeout(t)
 	})
 
 	// Bloque le scroll du body quand le drawer est ouvert
@@ -425,7 +502,7 @@
 	// mounted over the new page until the user clicks "back".
 	let skipLangReset = false
 	$effect(() => {
-		$page.url.pathname
+		page.url.pathname
 		if (skipLangReset) { skipLangReset = false; return }
 		langView = false
 	})
@@ -505,9 +582,9 @@
 	}
 	const showChannelSidebar = $derived(
 		!isBanned &&
-		!$page.url.pathname.startsWith('/admin') &&
-		!$page.url.pathname.startsWith('/auth') &&
-		$page.url.pathname !== '/banned'
+		!page.url.pathname.startsWith('/admin') &&
+		!page.url.pathname.startsWith('/auth') &&
+		page.url.pathname !== '/banned'
 	)
 
 	// Routes /overlay/* sont des pages OBS browser source : fullscreen
@@ -518,13 +595,13 @@
 	// porte sa propre barre d'application, le chrome de l'app ferait doublon.
 	// On bypass complètement le rendu du layout pour ces routes.
 	const isBareRoute = $derived(
-		$page.url.pathname.startsWith('/overlay/') ||
-		$page.url.pathname.startsWith('/deck/') ||
-		$page.url.pathname === '/translate',
+		page.url.pathname.startsWith('/overlay/') ||
+		page.url.pathname.startsWith('/deck/') ||
+		page.url.pathname === '/translate',
 	)
 
 	// Active channel ID from URL (used on /chat to highlight the current channel)
-	const activeChatChannelId = $derived($page.url.searchParams.get('channel') ?? null)
+	const activeChatChannelId = $derived(page.url.searchParams.get('channel') ?? null)
 
 	// ── Voice state (for member roster in sidebar) ─────────────────────────────
 	const voiceState       = $derived($voiceStore)
@@ -642,8 +719,8 @@
 
 	// ── Contextual breadcrumb ──────────────────────────────────────────────────
 	const breadcrumbs = $derived((() => {
-		const path = $page.url.pathname;
-		const d = $page.data as any;
+		const path = page.url.pathname;
+		const d = page.data as any;
 		if (path === '/') return [];
 		const crumbs: { label: string; href?: string }[] = [];
 		if (path.startsWith('/forum')) {
@@ -655,7 +732,7 @@
 			if (d?.thread?.title) crumbs.push({ label: d.thread.title });
 		} else if (path.startsWith('/chat')) {
 			crumbs.push({ label: tFn('nav.chat') });
-			const chId = $page.url.searchParams.get('channel');
+			const chId = page.url.searchParams.get('channel');
 			if (chId) {
 				const ch = layoutChannels.find(c => c.id === chId);
 				if (ch) crumbs.push({ label: (ch.type === 'voice' ? '🔊 ' : '# ') + ch.name });
@@ -673,6 +750,7 @@
 		} else if (path.startsWith('/tasks'))        { crumbs.push({ label: tFn('nav.tasks') });
 		} else if (path.startsWith('/wiki'))         { crumbs.push({ label: tFn('nav.wiki') });
 		} else if (path.startsWith('/library'))      { crumbs.push({ label: tFn('nav.library') });
+		} else if (path.startsWith('/musique'))      { crumbs.push({ label: tFn('nav.music') });
 		} else if (path.startsWith('/search'))       { crumbs.push({ label: tFn('nav.search') });
 		} else if (path.startsWith('/garden'))       { crumbs.push({ label: tFn('nav.garden') });
 		} else {
@@ -723,10 +801,10 @@
 	     s'affichait jamais dans les partages). Les pages qui définissent
 	     leur propre og:image (threads) ajoutent la leur en plus. -->
 	{#if !ownsOgImage}
-		<meta property="og:image" content="{$page.url.origin}/og-image.jpg" />
+		<meta property="og:image" content="{page.url.origin}/og-image.jpg" />
 		<meta property="og:image:width"  content="1200" />
 		<meta property="og:image:height" content="630" />
-		<meta name="twitter:image" content="{$page.url.origin}/og-image.jpg" />
+		<meta name="twitter:image" content="{page.url.origin}/og-image.jpg" />
 	{/if}
 	<meta name="twitter:card" content="summary_large_image" />
 	<meta name="theme-color" content="var(--nx-accent)" />
@@ -746,7 +824,7 @@
 	{@render children()}
 {:else}
 {#if hasMatrix}<MatrixRain />{/if}
-<div class="min-h-screen flex flex-col" style="{appVars}; background: {hasMatrix ? 'transparent' : 'var(--p-bg)'}; color: var(--p-text)">
+<div class="min-h-dvh flex flex-col" style="{appVars}; background: {hasMatrix ? 'transparent' : 'var(--p-bg)'}; color: var(--p-text)">
 
 	<!-- Listener Streamer Hub : joue les sons de notif pour les admins/owners. -->
 	{#if data.user?.role}
@@ -763,16 +841,26 @@
 		<!-- Mobile hamburger : ne s'affiche que si le panneau qu'il ouvre existe -->
 		{#if !isBanned && showChannelSidebar}
 		<button
-			class="lg:hidden shrink-0 p-1.5 flex items-center justify-center transition-colors"
+			class="lg:hidden shrink-0 p-2.5 -m-1 flex items-center justify-center transition-colors"
 			style="color: {gallerySidebarOpen ? '#fff' : '#6b7280'}"
-			onclick={() => gallerySidebarOpen = !gallerySidebarOpen}
+			onclick={() => {
+				gallerySidebarOpen = !gallerySidebarOpen;
+				// Ouvrir le tiroir doit AUSSI le deplier. `panelCollapsed` est un
+				// etat de BUREAU (replier le panneau sur le rail), mais la regle
+				// `.panel.collapsed` pose son propre `translateX(-100%)`, qui
+				// survit sur mobile. Or la croix du panneau pose
+				// `panelCollapsed = true` en fermant : au clic suivant sur le
+				// burger, le voile revenait SANS le panneau, reste hors ecran.
+				// Bug du 16/08, reproduit puis corrige.
+				if (gallerySidebarOpen) panelCollapsed = false;
+			}}
 			aria-label={tFn('nav.community_menu')} aria-expanded={gallerySidebarOpen} aria-controls="galaxy-sidebar">
 			{#if gallerySidebarOpen}
-				<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+				<svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 					<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
 				</svg>
 			{:else}
-				<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+				<svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 					<path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/>
 				</svg>
 			{/if}
@@ -997,7 +1085,13 @@
 	     class:layout-dragging={isDraggingLeft || isDraggingRight}>
 
 		<!-- ── Backdrop Channel Sidebar — mobile ──────────────────────────────── -->
-		{#if !isBanned && gallerySidebarOpen}
+		<!-- Le voile est monte sous la MEME condition que le panneau, `showChannelSidebar`
+		     comprise. Avant, le voile ne dependait que de `gallerySidebarOpen` et le
+		     panneau aussi de `showChannelSidebar` : des que la seconde devenait fausse
+		     (routes /admin, /auth, /banned), on obtenait un ECRAN FLOUTE SANS SIDEBAR,
+		     exactement le symptome signale le 16/08. Les lier rend ce cas impossible,
+		     quelle que soit la sequence qui y menait. -->
+		{#if !isBanned && showChannelSidebar && gallerySidebarOpen}
 		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 		<div class="lg:hidden fixed inset-0 bg-black/60 z-[54] backdrop-blur-xs"
 		     role="button" tabindex="-1" aria-label={tFn('common.close_menu')}
@@ -1136,6 +1230,7 @@
 						{ href: '/tasks',    label: tFn('nav.tasks'),       icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4',                                                                                                                                                    show: mods.tasks !== false },
 						{ href: '/wiki',     label: tFn('nav.wiki'),         icon: 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253',                                             show: !!mods.wiki },
 						{ href: '/library',  label: tFn('nav.library'), icon: 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253',                                             show: true },
+						{ href: '/musique',  label: tFn('nav.music'),   icon: 'M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z',                                                                                                                                                              show: true },
 						{ href: '/garden',   label: tFn('nav.garden'),       icon: 'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z',                                                                                                                                            show: true },
 						{ href: '/discover', label: tFn('nav.discover'),    icon: 'M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z',                                                                                         show: true },
 					].filter(i => i.show) as item}
@@ -1309,7 +1404,7 @@
 		     moindre debordement (ex: banniere full-bleed -mx-6 du profil, +24px)
 		     faisait apparaitre une scrollbar horizontale + du contenu glissant
 		     sous les sidebars. On clippe l'horizontal, plus jamais de scrollbar. -->
-		<main class="app-shell-main {langView ? 'h-[calc(100vh-48px)] overflow-hidden' : 'h-full overflow-y-auto overflow-x-hidden'} min-w-0 pb-[var(--bottom-nav-h)]"
+		<main class="app-shell-main {langView ? 'h-[calc(100dvh-48px)] overflow-hidden' : 'h-full overflow-y-auto overflow-x-hidden'} min-w-0 pb-[var(--bottom-nav-h)]"
 		      class:panel-collapsed={isBanned || !showChannelSidebar || panelCollapsed}
 		      class:members-collapsed={membersCollapsed}>
 
@@ -1341,7 +1436,7 @@
             {/if}
 
 
-            <div class="w-full flex-1 flex flex-col {langView ? 'lang-view-wrap h-full' : ($page.url.pathname === '/' || $page.url.pathname.startsWith('/chat') || $page.url.pathname.startsWith('/admin') || $page.url.pathname.startsWith('/users/') || $page.url.pathname.startsWith('/feed') || $page.url.pathname.startsWith('/settings') || $page.url.pathname.startsWith('/garden') || $page.url.pathname.startsWith('/calendar') || $page.url.pathname.startsWith('/discover') || $page.url.pathname.startsWith('/wiki') || $page.url.pathname.startsWith('/library') || $page.url.pathname.startsWith('/dm') || $page.url.pathname.startsWith('/auth/') ? 'h-full' : ($page.url.pathname.startsWith('/forum') || $page.url.pathname.startsWith('/tasks')) ? 'px-4 sm:px-6 py-8' : 'max-w-5xl mx-auto px-4 py-8')}">
+            <div class="w-full flex-1 flex flex-col {langView ? 'lang-view-wrap h-full' : (page.url.pathname === '/' || page.url.pathname.startsWith('/chat') || page.url.pathname.startsWith('/admin') || page.url.pathname.startsWith('/users/') || page.url.pathname.startsWith('/feed') || page.url.pathname.startsWith('/settings') || page.url.pathname.startsWith('/garden') || page.url.pathname.startsWith('/calendar') || page.url.pathname.startsWith('/discover') || page.url.pathname.startsWith('/wiki') || page.url.pathname.startsWith('/library') || page.url.pathname.startsWith('/musique') || page.url.pathname.startsWith('/dm') || page.url.pathname.startsWith('/auth/') ? 'h-full' : (page.url.pathname.startsWith('/forum') || page.url.pathname.startsWith('/tasks')) ? 'px-4 sm:px-6 py-8' : 'max-w-5xl mx-auto px-4 py-8')}">
                 {#if langView}
                     <!-- svelte-ignore a11y_no_static_element_interactions -->
                     <div class="fixed inset-0 bg-black/40 backdrop-blur-xs z-40" onclick={() => langView = false} transition:fade={{ duration: 200 }}></div>
@@ -1649,8 +1744,15 @@
 
 	<!-- ══ BOTTOM NAV mobile (lg:hidden) — hidden for banned users ═════════ -->
 	{#if !isBanned}
+	<!-- Fond OPAQUE, et surtout pas `--p-card-bg`. Celui-ci est un fond de CARTE :
+	     six thèmes sur sept sont translucides par construction, dont un à 5%
+	     d'opacité. Une carte translucide posée sur un fond de page est voulue,
+	     une barre FIXE avec du contenu qui défile dessous devient du verre. Le
+	     2026-08-15, on lisait « Dernier message » et « Pokled » au travers, par
+	     dessus les icônes. `--p-bg` est opaque sur les sept thèmes.
+	     Gardé par tests/responsive/bottom-nav.spec.ts. -->
 	<nav class="lg:hidden fixed bottom-0 left-0 right-0 z-45 border-t border-gray-800 flex items-stretch"
-	     style="background: var(--p-card-bg); border-color: var(--p-card-border); padding-bottom: env(safe-area-inset-bottom, 0px)">
+	     style="background: var(--p-bg); border-color: var(--p-card-border); padding-bottom: env(safe-area-inset-bottom, 0px)">
 
 		<!-- Fil d'actu (si connecté) -->
 		{#if user}
@@ -1658,7 +1760,7 @@
 			<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" d="M3 12h18M3 6h18M3 18h12"/>
 			</svg>
-			<span class="text-[10px] font-medium">Actu</span>
+			<span class="text-xs font-medium">{tFn('nav.bar_feed')}</span>
 		</a>
 		{/if}
 
@@ -1668,7 +1770,7 @@
 				<path stroke-linecap="round" stroke-linejoin="round" d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
 				<polyline stroke-linecap="round" stroke-linejoin="round" points="9 22 9 12 15 12 15 22"/>
 			</svg>
-			<span class="text-[10px] font-medium">Forum</span>
+			<span class="text-xs font-medium">{tFn('nav.bar_forum')}</span>
 		</a>
 
 		<!-- Chat (si connecté) -->
@@ -1682,7 +1784,7 @@
 					{unreadCount > 9 ? '9+' : unreadCount}
 				</span>
 			{/if}
-			<span class="text-[10px] font-medium">Chat</span>
+			<span class="text-xs font-medium">{tFn('nav.bar_chat')}</span>
 		</a>
 		{/if}
 
@@ -1697,7 +1799,7 @@
 					{dmUnread > 9 ? '9+' : dmUnread}
 				</span>
 			{/if}
-			<span class="text-[10px] font-medium">DMs</span>
+			<span class="text-xs font-medium">{tFn('nav.bar_dm')}</span>
 		</a>
 		{/if}
 
@@ -1707,7 +1809,7 @@
 				<path stroke-linecap="round" stroke-linejoin="round" d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
 				<path stroke-linecap="round" stroke-linejoin="round" d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
 			</svg>
-			<span class="text-[10px] font-medium">Biblio</span>
+			<span class="text-xs font-medium">{tFn('nav.bar_library')}</span>
 		</a>
 
 		<!-- Annuaire -->
@@ -1717,13 +1819,13 @@
 				<line x1="2" y1="12" x2="22" y2="12"/>
 				<path stroke-linecap="round" stroke-linejoin="round" d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
 			</svg>
-			<span class="text-[10px] font-medium">Annuaire</span>
+			<span class="text-xs font-medium">{tFn('nav.bar_directory')}</span>
 		</a>
 
 		<!-- Profil / Connexion -->
 		{#if user}
 		<a href="/users/{user.username}"
-		   class="flex-1 flex flex-col items-center justify-center py-2 min-h-14 gap-0.5 {$page.url.pathname.startsWith('/users/') ? 'text-indigo-400' : 'text-gray-500'}">
+		   class="flex-1 flex flex-col items-center justify-center py-2 min-h-14 gap-0.5 {page.url.pathname.startsWith('/users/') ? 'text-indigo-400' : 'text-gray-500'}">
 			{#if user.avatar}
 				<img src={user.avatar} class="w-5 h-5 rounded-full object-cover" alt="" />
 			{:else}
@@ -1731,7 +1833,7 @@
 					{user.username.charAt(0).toUpperCase()}
 				</div>
 			{/if}
-			<span class="text-[10px] font-medium">Profil</span>
+			<span class="text-xs font-medium">{tFn('nav.bar_profile')}</span>
 		</a>
 		{:else}
 		<a href="/auth/login" class="flex-1 flex flex-col items-center justify-center py-2 min-h-14 gap-0.5 text-gray-500">
@@ -1740,7 +1842,7 @@
 				<polyline stroke-linecap="round" stroke-linejoin="round" points="10 17 15 12 10 7"/>
 				<line x1="15" y1="12" x2="3" y2="12"/>
 			</svg>
-			<span class="text-[10px] font-medium">{tFn("common.login")}</span>
+			<span class="text-xs font-medium">{tFn("common.login")}</span>
 		</a>
 		{/if}
 	</nav>
@@ -1921,8 +2023,12 @@
 }
 
 /* ── Sketch 001: Discord two-tier sidebar — exact sketch CSS, scoped ────── */
+/* Sur mobile le rail et le panneau forment un TIROIR qui recouvre la page.
+   Les 48px reserves a la barre du haut y sont une bande morte : le tiroir a
+   sa propre croix de fermeture, il n'a pas besoin de laisser voir la barre.
+   Au-dessus de lg ils redeviennent des colonnes, sous la barre. */
 .nodyx-sb .rail {
-  position: fixed; top: 48px; bottom: 0; left: 0; width: 56px;
+  position: fixed; top: 0; bottom: 0; left: 0; width: 56px;
   background: #000; border-right: 1px solid #111;
   display: flex; flex-direction: column; align-items: center; padding: 8px 0; gap: 4px; z-index: 40;
 }
@@ -1948,11 +2054,21 @@
 .nodyx-sb .rail .icon.docs:hover { background: #111; color: #818cf8; border-radius: 8px; }
 
 .nodyx-sb .panel {
-  position: fixed; top: 48px; bottom: 0; left: 56px;
+  position: fixed; top: 0; bottom: 0; left: 56px;
   width: var(--left-panel-width, 220px);
   background: #0a0a0a; border-right: 1px solid #111;
   z-index: 39; display: flex; flex-direction: column;
   transform: translateX(0); transition: transform .25s cubic-bezier(.4,0,.2,1), width .25s cubic-bezier(.4,0,.2,1);
+}
+
+/* Au-dessus de lg le rail et le panneau ne sont plus un tiroir mais deux
+   colonnes permanentes : ils reprennent leur place SOUS la barre du haut,
+   qui doit rester visible et cliquable. Cette regle DOIT venir apres les
+   deux definitions ci-dessus : a specificite egale, c'est l'ordre qui
+   tranche, et placee avant elle etait purement et simplement annulee. */
+@media (min-width: 1024px) {
+  .nodyx-sb .rail,
+  .nodyx-sb .panel { top: 48px; }
 }
 .nodyx-sb .panel.collapsed { transform: translateX(-100%); }
 .nodyx-sb .panel.dragging {
@@ -2557,12 +2673,21 @@ a.nx-icon-btn[class*="active"],
   pointer-events: none;
 }
 
+/* Poignee de redimensionnement des panneaux.
+   MASQUEE sous lg : redimensionner n'a de sens que pour des COLONNES, or sous ce
+   point de rupture le panneau est un TIROIR. Elle y restait pourtant, invisible,
+   large de 6px et haute de tout l'ecran, a intercepter les touchers au bord.
+   L'audit du 15/08 la remontait comme la pire cible tactile du produit
+   (6 x 752px). Au doigt, elle est de toute facon inattrapable.
+   Elargie a 10px sur grand ecran : 6px se rate a la souris, et comme elle est
+   transparente, l'elargir ne change rien a l'apparence. */
 .panel .edge-handle,
 .members-c .edge-handle {
+  display: none;
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 6px;
+  width: 10px;
   cursor: ew-resize;
   z-index: 10;
   background: transparent;
@@ -2577,6 +2702,15 @@ a.nx-icon-btn[class*="active"],
 
 .members-c .edge-handle {
   left: 0;
+}
+
+/* La poignee ne sert que sur de vraies COLONNES. Cette reprise DOIT venir
+   apres la regle `display: none` ci-dessus : a specificite egale c'est
+   l'ordre qui tranche, et placee avant elle etait purement annulee (piege
+   deja rencontre le 15/08 sur le `top` du tiroir, dans cette meme feuille). */
+@media (min-width: 1024px) {
+  .panel .edge-handle,
+  .members-c .edge-handle { display: block; }
 }
 
 .panel .edge-handle:hover,
