@@ -333,6 +333,10 @@ export function registerVoiceSfuHandlers(socket: Socket, server: Server): void {
   socket.on('voice:sfu_leave', async (channelId: unknown, cb: unknown) => {
     const ack: Ack = isAck(cb) ? cb : () => {}
     if (!sfuUrl()) { ack({ ok: false, error: 'sfu_disabled' }); return }
+    // Limité (pas de guard() complet : on garde la garantie "toujours pouvoir
+    // sortir"), sans quoi cet appel pouvait épuiser le daemon SFU en boucle
+    // sans aucun frein (trouvé en audit le 16/09).
+    if (checkRateLimit(userId, 'voice:sfu_leave')) { ack({ ok: false, error: 'rate_limited' }); return }
     if (!isUuid(channelId)) { ack({ ok: false, error: 'bad_channel' }); return }
     // Pas de check de rôle au leave : on doit toujours pouvoir sortir.
     joined.delete(channelId)

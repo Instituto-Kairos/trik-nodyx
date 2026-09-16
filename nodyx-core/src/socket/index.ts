@@ -358,6 +358,7 @@ export function registerSocketIO(server: Server): void {
     // (see services/streamer/streamerHubService.ts ingestEvent). The role check
     // happens once on join so subsequent emits don't need to re-verify.
     socket.on('streamer-hub:join', async () => {
+      if (checkRateLimit(userId, 'streamer-hub:join')) return
       const { rows } = await db.query<{ role: string }>(
         `SELECT role FROM community_members WHERE user_id = $1 LIMIT 1`,
         [userId],
@@ -406,6 +407,7 @@ export function registerSocketIO(server: Server): void {
     // ── chat:watch ────────────────────────────────────────────────────────────
     // Join a channel room silently (no history) — used for unread notifications
     socket.on('chat:watch', async (channelIds: string | string[]) => {
+      if (checkRateLimit(userId, 'chat:watch')) return
       const ids = Array.isArray(channelIds) ? channelIds : [channelIds]
       const validIds = ids.filter(id => isUuid(id)).slice(0, 50)
       if (!validIds.length) return
@@ -438,12 +440,12 @@ export function registerSocketIO(server: Server): void {
       // Contrôle d'accès : le socket doit avoir rejoint ce canal via chat:join (qui vérifie membership)
       // Double-check DB pour éviter les races après expulsion de la communauté
       if (!socket.rooms.has(`channel:${channelId}`)) return
-      const { rows: memberCheck } = await db.query<{ role: string; is_system_managed: boolean; grade_id: string | null }>(
-        `SELECT cm.role, c.is_system_managed, cm.grade_id FROM channels c
+      const { rows: memberCheck } = await db.query<{ role: string; is_system_managed: boolean; grade_id: string | null; community_id: string }>(
+        `SELECT cm.role, c.is_system_managed, cm.grade_id, c.community_id FROM channels c
          JOIN community_members cm ON c.community_id = cm.community_id
          WHERE c.id = $1 AND cm.user_id = $2 LIMIT 1`,
         [channelId, userId]
-      ).catch(() => ({ rows: [] as { role: string; is_system_managed: boolean; grade_id: string | null }[] }))
+      ).catch(() => ({ rows: [] as { role: string; is_system_managed: boolean; grade_id: string | null; community_id: string }[] }))
       if (!memberCheck.length) return
 
       // Channel system-managed (ex: #streamer-events auto-créé) : seuls
@@ -579,7 +581,7 @@ export function registerSocketIO(server: Server): void {
         }
 
         // Push notifications for @mentions
-        const mentionedIds = await resolveMentions(sanitized).catch(() => [])
+        const mentionedIds = await resolveMentions(sanitized, memberCheck[0].community_id).catch(() => [])
         for (const notifiedUserId of mentionedIds) {
           if (notifiedUserId === userId) continue
           // Déjà en train de regarder ce channel (onglet actif) ? Il lit le message
@@ -704,6 +706,7 @@ export function registerSocketIO(server: Server): void {
 
     // ── chat:delete ───────────────────────────────────────────────────────────
     socket.on('chat:delete', async (data: { messageId: string }) => {
+      if (checkRateLimit(userId, 'chat:delete')) return
       const { messageId } = data ?? {}
       if (!isUuid(messageId)) return
 
@@ -732,18 +735,32 @@ export function registerSocketIO(server: Server): void {
     })
     // ── chat:pin ──────────────────────────────────────────────────────────────
     socket.on('chat:pin', async (data: { channelId: string; messageId: string | null }) => {
+      if (checkRateLimit(userId, 'chat:pin')) return
       const { channelId, messageId } = data ?? {}
       if (!isUuid(channelId)) return
       if (messageId !== null && !isUuid(messageId)) return
 
       try {
+        // Rôle scopé à la COMMUNAUTÉ DE CE CANAL, pas admin/owner de n'importe
+        // quelle communauté (trouvé en audit le 16/09 : la requête précédente
+        // ne joignait jamais sur le canal ciblé).
         const { rows: roleRows } = await db.query(
-          `SELECT 1 FROM community_members WHERE user_id = $1 AND role IN ('admin', 'owner') LIMIT 1`,
-          [userId]
+          `SELECT 1 FROM channels c
+           JOIN community_members cm ON cm.community_id = c.community_id
+           WHERE c.id = $1 AND cm.user_id = $2 AND cm.role IN ('admin', 'owner') LIMIT 1`,
+          [channelId, userId]
         )
         if (roleRows.length === 0) {
           console.warn(`[chat:pin] Denied for userId=${userId}`)
           return
+        }
+
+        // Le message épinglé doit appartenir à CE canal : sans ce contrôle, un
+        // admin pouvait épingler dans un canal le contenu d'un message venu
+        // d'un tout autre canal (trouvé en audit le 16/09).
+        if (messageId !== null) {
+          const msgInfo = await ChannelModel.findMessageById(messageId)
+          if (!msgInfo || msgInfo.channel_id !== channelId) return
         }
 
         await ChannelModel.setPinnedMessage(channelId, messageId ?? null)
@@ -764,6 +781,7 @@ export function registerSocketIO(server: Server): void {
     // Utile quand le client navigue vers la page chat alors que le socket était
     // déjà connecté (le snapshot initial a été envoyé avant que le listener soit monté).
     socket.on('voice:request_snapshot', async () => {
+      if (checkRateLimit(userId, 'voice:request_snapshot')) return
       await sendVoiceSnapshot(socket, server)
     })
 
@@ -1039,6 +1057,7 @@ export function registerSocketIO(server: Server): void {
 
     // dm:read — marquer comme lu et confirmer
     socket.on('dm:read', async (conversationId: string) => {
+      if (checkRateLimit(userId, 'dm:read')) return
       if (!isUuid(conversationId)) return
       try {
         await db.query(

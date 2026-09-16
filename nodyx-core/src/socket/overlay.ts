@@ -13,6 +13,7 @@
 
 import type { Server, Socket } from 'socket.io'
 import { findOverlayByToken, touchOverlayLastSeen, type OverlayType } from '../services/streamer/overlayService'
+import { checkRateLimit } from './rateLimiter'
 
 export const OVERLAY_NS = '/overlay'
 
@@ -70,6 +71,11 @@ export function registerOverlayNamespace(server: Server): void {
     // si l'overlay crash en plein son, l'admin peut skip via l'UI admin.
     if (overlayType === 'soundboard' && createdBy) {
       socket.on('audio:ended', async () => {
+        // Ce namespace authentifie par token d'URL (page OBS publique), pas
+        // par JWT : plus exposé qu'un socket utilisateur classique. Sans
+        // limite, chaque appel vidait la file et redéclenchait un audio pour
+        // quiconque détient le token (trouvé en audit le 16/09).
+        if (checkRateLimit(createdBy, 'overlay:audio_ended')) return
         try {
           const [{ popNext }, { redis }, { resolveTrackForPlay }] = await Promise.all([
             import('../services/streamer/soundboardQueueService'),

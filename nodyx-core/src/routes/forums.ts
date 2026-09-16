@@ -378,8 +378,11 @@ app.get('/threads', {
             io.to(`user:${thread.author_id}`).emit('notification:new', { unreadCount: count })
           }
         }
-        // Notify mentioned users
-        const mentionedIds = await resolveMentions(sanitized)
+        // Notify mentioned users (scopé à la communauté du fil : cf resolveMentions)
+        const { rows: catRows2 } = await db.query<{ community_id: string }>(
+          `SELECT community_id FROM categories WHERE id = $1`, [thread.category_id]
+        )
+        const mentionedIds = catRows2[0] ? await resolveMentions(sanitized, catRows2[0].community_id) : []
         for (const mentionedId of mentionedIds) {
           if (mentionedId !== userId) {
             await NotificationModel.create({

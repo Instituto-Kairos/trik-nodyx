@@ -21,6 +21,11 @@ import { db } from '../config/database'
 import { checkRateLimit } from './rateLimiter'
 
 const MAX_CONTENT_LENGTH = 2000
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function isUuid(v: unknown): v is string {
+  return typeof v === 'string' && UUID_RE.test(v)
+}
 
 function sanitize(raw: string): string {
   return sanitizeHtml(raw, { allowedTags: [], allowedAttributes: {} }).trim()
@@ -31,7 +36,11 @@ export function registerWhisperHandlers(io: Server, socket: Socket): void {
 
   // ── whisper:join ────────────────────────────────────────────────────────────
   socket.on('whisper:join', async ({ roomId }: { roomId: string }) => {
-    if (!roomId) return
+    if (checkRateLimit(userId, 'whisper:join')) return
+    // Sans ce garde, un roomId non-UUID part tel quel dans une requête sur une
+    // colonne UUID : une erreur Postgres à chaque appel (trouvé en audit le
+    // 16/09), inondation de logs et d'aller-retours DB sans aucun coût pour l'appelant.
+    if (!isUuid(roomId)) return
 
     try {
       const { rows } = await db.query(
@@ -46,20 +55,26 @@ export function registerWhisperHandlers(io: Server, socket: Socket): void {
       }
 
       const room = rows[0]
-      if (new Date(room.expires_at) < new Date()) {
-        await db.query('DELETE FROM whisper_rooms WHERE id = $1', [roomId])
-        socket.emit('whisper:expired', { roomId }); return
-      }
 
-      // Contrôle d'accès : seul le créateur ou un participant existant peut accéder
-      if (room.creator_id !== userId) {
+      // Contrôle d'accès AVANT toute autre action, y compris la purge d'un
+      // salon expiré : sans ça, n'importe qui connaissant l'UUID d'un salon
+      // expiré pouvait le supprimer sans jamais y avoir eu accès (trouvé en
+      // audit le 16/09).
+      let authorized = room.creator_id === userId
+      if (!authorized) {
         const { rows: wasParticipant } = await db.query(
           `SELECT 1 FROM whisper_messages WHERE room_id = $1 AND user_id = $2 LIMIT 1`,
           [roomId, userId]
         )
-        if (!wasParticipant.length) {
-          socket.emit('whisper:expired', { roomId }); return
-        }
+        authorized = wasParticipant.length > 0
+      }
+      if (!authorized) {
+        socket.emit('whisper:expired', { roomId }); return
+      }
+
+      if (new Date(room.expires_at) < new Date()) {
+        await db.query('DELETE FROM whisper_rooms WHERE id = $1', [roomId])
+        socket.emit('whisper:expired', { roomId }); return
       }
 
       socket.join(`whisper:${roomId}`)
@@ -83,7 +98,11 @@ export function registerWhisperHandlers(io: Server, socket: Socket): void {
 
   // ── whisper:leave ───────────────────────────────────────────────────────────
   socket.on('whisper:leave', ({ roomId }: { roomId: string }) => {
-    if (!roomId) return
+    if (!isUuid(roomId)) return
+    // Sans ce garde, n'importe qui connaissant l'UUID d'un salon pouvait
+    // injecter un faux "X a quitté" sans jamais y avoir eu accès (trouvé en
+    // audit le 16/09).
+    if (!socket.rooms.has(`whisper:${roomId}`)) return
     socket.leave(`whisper:${roomId}`)
     socket.to(`whisper:${roomId}`).emit('whisper:user_leave', { roomId, userId, username })
   })

@@ -13,6 +13,7 @@
 
 import type { Server, Socket } from 'socket.io'
 import { db } from '../config/database'
+import { checkRateLimit } from './rateLimiter'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -89,6 +90,12 @@ const flushTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 const FLUSH_DELAY_MS = 10_000   // 10 s d'inactivité → flush DB
 const MAX_ELEMENTS   = 5_000    // limite par board
+// Sans plafond, `data` (non typé au-delà de `typeof === 'object'`) pouvait
+// porter jusqu'à maxHttpBufferSize de Socket.IO (1 Mo, jamais réduit) par
+// élément, jusqu'à plusieurs Go en mémoire et en JSONB pour un board plein
+// (trouvé en audit le 16/09). Un board réel (formes, texte, collants) tient
+// très large dans cette limite.
+const MAX_OP_DATA_BYTES = 64_000
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -167,13 +174,20 @@ const VALID_KINDS = new Set(['pen','sticky','rect','circle','text','arrow','imag
 function isValidOp(op: unknown): op is CanvasElement {
   if (!op || typeof op !== 'object') return false
   const o = op as Record<string, unknown>
-  return (
+  if (!(
     isUuid(o.id) &&
     typeof o.ts === 'number' &&
     isUuid(o.author) &&
     typeof o.kind === 'string' && VALID_KINDS.has(o.kind) &&
-    typeof o.data === 'object'
-  )
+    // `typeof null === 'object'` : exclu explicitement, `data` doit être un
+    // vrai objet de contenu.
+    typeof o.data === 'object' && o.data !== null
+  )) return false
+  try {
+    return JSON.stringify(o.data).length <= MAX_OP_DATA_BYTES
+  } catch {
+    return false
+  }
 }
 
 // ── Registration ──────────────────────────────────────────────────────────────
@@ -249,6 +263,7 @@ export function registerCanvasHandlers(io: Server, socket: Socket): void {
 
   // ── canvas:op ──────────────────────────────────────────────────────────────
   socket.on('canvas:op', async (payload: unknown) => {
+    if (checkRateLimit(userId, 'canvas:op')) return
     if (!payload || typeof payload !== 'object') return
     const { boardId, op } = payload as Record<string, unknown>
     if (!isUuid(boardId) || !isValidOp(op)) return
@@ -282,6 +297,7 @@ export function registerCanvasHandlers(io: Server, socket: Socket): void {
 
   // ── canvas:clear ───────────────────────────────────────────────────────────
   socket.on('canvas:clear', async (payload: unknown) => {
+    if (checkRateLimit(userId, 'canvas:clear')) return
     if (!payload || typeof payload !== 'object') return
     const { boardId, ts } = payload as Record<string, unknown>
     if (!isUuid(boardId) || typeof ts !== 'number') return
@@ -306,6 +322,7 @@ export function registerCanvasHandlers(io: Server, socket: Socket): void {
   // ── canvas:cursor ──────────────────────────────────────────────────────────
   // Curseurs : pas de persistance, juste relay aux pairs.
   socket.on('canvas:cursor', (payload: unknown) => {
+    if (checkRateLimit(userId, 'canvas:cursor')) return
     if (!payload || typeof payload !== 'object') return
     const { boardId, x, y, speaking } = payload as Record<string, unknown>
     if (!isUuid(boardId)) return
