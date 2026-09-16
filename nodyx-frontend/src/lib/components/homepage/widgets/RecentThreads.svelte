@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte'
+	import { replyCount } from '$lib/forumCounts';
 	import { t, locale } from '$lib/i18n'
 
 	const tFn = $derived($t)
@@ -120,7 +121,7 @@
 								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 									<path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
 								</svg>
-								{t.post_count}
+								{replyCount(t.post_count)}
 							</span>
 						{/if}
 					</div>
@@ -159,12 +160,12 @@
 							{#if showDate}
 								<span class="rt-meta-date">{timeAgo(t.last_post_at ?? t.created_at)}</span>
 							{/if}
-							{#if showReplies && t.post_count > 0}
+							{#if showReplies && replyCount(t.post_count) > 0}
 								<span class="rt-meta-replies">
 									<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 										<path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
 									</svg>
-									{t.post_count}
+									{replyCount(t.post_count)}
 								</span>
 							{/if}
 						</div>
@@ -197,17 +198,17 @@
 	.rt-heading-line {
 		flex: 1;
 		height: 1px;
-		background: linear-gradient(to right, rgba(167,139,250,.3), transparent);
+		background: linear-gradient(to right, rgb(var(--np-rgb, 167 139 250) / .3), transparent);
 	}
 	.rt-heading-line--r {
-		background: linear-gradient(to left, rgba(167,139,250,.3), transparent);
+		background: linear-gradient(to left, rgb(var(--np-rgb, 167 139 250) / .3), transparent);
 	}
 	.rt-heading-text {
 		font-size: 10px;
 		font-weight: 800;
 		text-transform: uppercase;
 		letter-spacing: .2em;
-		color: var(--np, var(--nx-accent-2-soft));
+		color: var(--np, #a78bfa);
 		white-space: nowrap;
 	}
 
@@ -225,7 +226,7 @@
 	.rt-empty {
 		padding: 1.5rem 1rem;
 		font-size: 13px;
-		color: #4b5563;
+		color: var(--ntm, #4b5563);
 		text-align: center;
 	}
 
@@ -233,15 +234,15 @@
 	.rt-avatar {
 		width: 36px; height: 36px;
 		flex-shrink: 0;
-		background: rgba(167,139,250,.15);
-		border: 1px solid rgba(167,139,250,.2);
+		background: rgb(var(--np-rgb, 167 139 250) / .15);
+		border: 1px solid rgb(var(--np-rgb, 167 139 250) / .2);
 		border-radius: 4px;
 		overflow: hidden;
 		display: flex; align-items: center; justify-content: center;
 	}
 	.rt-avatar--sm { width: 20px; height: 20px; border-radius: 2px; }
 	.rt-avatar img  { width: 100%; height: 100%; object-fit: cover; }
-	.rt-avatar span { font-size: 13px; font-weight: 700; color: var(--nx-accent-2-soft); }
+	.rt-avatar span { font-size: 13px; font-weight: 700; color: var(--np, #a78bfa); }
 	.rt-avatar--sm span { font-size: 9px; }
 
 	/* ── LIST style ─────────────────────────────────────────────────────────── */
@@ -255,7 +256,7 @@
 		text-decoration: none;
 		transition: background .15s;
 	}
-	.rt-item:hover { background: rgba(167,139,250,.05); }
+	.rt-item:hover { background: rgb(var(--np-rgb, 167 139 250) / .05); }
 
 	.rt-item-body { flex: 1; min-width: 0; }
 
@@ -277,10 +278,10 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
-	.rt-item:hover .rt-item-title { color: var(--nx-accent-2-soft2); }
-	.rt-item-title--locked { color: #6b7280 !important; }
+	.rt-item:hover .rt-item-title { color: var(--nl, var(--np)); }
+	.rt-item-title--locked { color: var(--ntm, #6b7280) !important; }
 
-	.rt-lock { width: 11px; height: 11px; flex-shrink: 0; color: #4b5563; }
+	.rt-lock { width: 11px; height: 11px; flex-shrink: 0; color: var(--ntm, #4b5563); }
 
 	.rt-item-meta {
 		display: flex;
@@ -292,24 +293,24 @@
 	.rt-cat-badge {
 		font-size: 10px;
 		font-weight: 600;
-		color: var(--np, var(--nx-accent-2-soft));
-		background: rgba(167,139,250,.1);
-		border: 1px solid rgba(167,139,250,.18);
+		color: var(--np, #a78bfa);
+		background: rgb(var(--np-rgb, 167 139 250) / .1);
+		border: 1px solid rgb(var(--np-rgb, 167 139 250) / .18);
 		padding: 0 5px;
 		border-radius: 2px;
 		white-space: nowrap;
 	}
-	.rt-meta-date { font-size: 11px; color: #4b5563; }
-	.rt-meta-dot  { font-size: 11px; color: #374151; }
+	.rt-meta-date { font-size: 11px; color: var(--ntm, #4b5563); }
+	.rt-meta-dot  { font-size: 11px; color: var(--ntm, #374151); }
 	.rt-meta-replies {
 		display: flex; align-items: center; gap: 3px;
-		font-size: 11px; color: #4b5563;
+		font-size: 11px; color: var(--ntm, #4b5563);
 	}
 	.rt-meta-replies svg { width: 11px; height: 11px; }
 
 	.rt-divider {
 		height: 1px;
-		background: rgba(255,255,255,.04);
+		background: var(--nborder, rgba(255,255,255,.04));
 		margin: 0 1rem;
 	}
 
@@ -333,8 +334,8 @@
 		transition: border-color .15s, background .15s;
 	}
 	.rt-card:hover {
-		border-color: rgba(167,139,250,.35);
-		background: rgba(167,139,250,.07);
+		border-color: rgb(var(--np-rgb, 167 139 250) / .35);
+		background: rgb(var(--np-rgb, 167 139 250) / .07);
 	}
 
 	.rt-card-cat {
@@ -342,7 +343,7 @@
 		font-weight: 700;
 		text-transform: uppercase;
 		letter-spacing: .12em;
-		color: var(--np, var(--nx-accent-2-soft));
+		color: var(--np, #a78bfa);
 	}
 
 	.rt-card-title {
@@ -358,7 +359,7 @@
 		margin: 0;
 		flex: 1;
 	}
-	.rt-card:hover .rt-card-title { color: var(--nx-accent-2-soft2); }
+	.rt-card:hover .rt-card-title { color: var(--nl, var(--np)); }
 
 	.rt-card-meta {
 		display: flex;
@@ -366,7 +367,7 @@
 		gap: .35rem;
 		margin-top: .25rem;
 	}
-	.rt-meta-author { font-size: 11px; color: #6b7280; }
+	.rt-meta-author { font-size: 11px; color: var(--ntm, #6b7280); }
 
 	/* ── Responsive ─────────────────────────────────────────────────────────── */
 	@media (max-width: 639px) {

@@ -2,6 +2,7 @@ import { redirect } from '@sveltejs/kit';
 import type { LayoutServerLoad } from './$types';
 import { apiFetch } from '$lib/api';
 import { env } from '$env/dynamic/public';
+import { getLocaleFromAcceptLanguage, isKnownLocale } from '$lib/i18n';
 
 const DIRECTORY_URL = (env.PUBLIC_DIRECTORY_URL ?? 'https://nodyx.org') + '/api/directory';
 
@@ -48,10 +49,34 @@ function normalizeUrl(url: string | null): string | null {
 	return url;
 }
 
+/**
+ * Largeur de panneau lue depuis un cookie.
+ *
+ * Le cookie est écrit par le navigateur, donc modifiable à la main : on le borne
+ * ici avec les mêmes limites que le glisser côté client (voir +layout.svelte),
+ * sinon une valeur farfelue s'applique au rendu serveur et la mise en page reste
+ * cassée jusqu'à ce que l'utilisateur vide ses cookies.
+ */
+const PANEL_WIDTH_MIN = 160;
+const PANEL_WIDTH_MAX = 500;
+const PANEL_WIDTH_DEFAULT = 220;
+
+function panelWidthFromCookie(raw: string | undefined): number {
+	const n = parseInt(raw ?? '', 10);
+	if (!Number.isFinite(n)) return PANEL_WIDTH_DEFAULT;
+	return Math.max(PANEL_WIDTH_MIN, Math.min(PANEL_WIDTH_MAX, n));
+}
+
 export const load: LayoutServerLoad = async ({ fetch, cookies, request, url }) => {
 	const token = cookies.get('token');
+	const cookieLocale = cookies.get('nodyx_locale');
+	const ssrLocale = (isKnownLocale(cookieLocale) ? cookieLocale : getLocaleFromAcceptLanguage(request.headers.get('accept-language'))) || 'fr';
+	const panelCollapsed = cookies.get('nodyx_panel_collapsed') === 'true';
+	const membersCollapsed = cookies.get('nodyx_members_collapsed') === 'true';
+	const leftPanelWidth = panelWidthFromCookie(cookies.get('nodyx_left_panel_width'));
+	const rightPanelWidth = panelWidthFromCookie(cookies.get('nodyx_right_panel_width'));
 
-	const [infoRes, userRes, directoryJson, announcementRes, modulesRes] = await Promise.all([
+	const [infoRes, userRes, directoryJson, announcementRes, modulesRes, channelsRes] = await Promise.all([
 		apiFetch(fetch, '/instance/info'),
 		token
 			? apiFetch(fetch, '/users/me', { headers: { Authorization: `Bearer ${token}` } })
@@ -59,7 +84,13 @@ export const load: LayoutServerLoad = async ({ fetch, cookies, request, url }) =
 		fetchDirectoryCached(),
 		apiFetch(fetch, '/instance/announcement').catch(() => null),
 		apiFetch(fetch, '/admin/modules/public').catch(() => null),
+		token
+			? apiFetch(fetch, '/chat/channels', { headers: { Authorization: `Bearer ${token}` } }).catch(() => null)
+			: Promise.resolve(null),
 	]);
+
+	const channelsJson = channelsRes?.ok ? await channelsRes.json().catch(() => null) : null;
+	const channels: Array<{ id: string; name: string; type: string; icon_emoji?: string | null }> = channelsJson?.channels ?? [];
 
 	const infoJson = infoRes.ok ? await infoRes.json() : null;
 
@@ -83,6 +114,11 @@ export const load: LayoutServerLoad = async ({ fetch, cookies, request, url }) =
 	const instanceTheme: Record<string, unknown> | null = infoJson?.theme_vars ?? null;
 	// Effet de fond optionnel posé par l'owner (ex 'matrix' = pluie de caractères)
 	const instanceEffect: string | null = infoJson?.theme_effect ?? null;
+	// Fond d'image de la sidebar membres (#members-c), visible sur toutes les pages
+	const rawSidebarBg = infoJson?.sidebar_bg as { background_image_url?: string; background_offset_x?: number; background_offset_y?: number; background_scale?: number; overlay_opacity?: number; visibility?: 'all' | 'guests' | 'members' } | null | undefined;
+	const sidebarBg = rawSidebarBg?.background_image_url
+		? { ...rawSidebarBg, background_image_url: normalizeUrl(rawSidebarBg.background_image_url) }
+		: null;
 
 	// Toutes les instances du réseau (directory), filtre l'instance courante
 	const allInstances: Array<{
@@ -91,7 +127,7 @@ export const load: LayoutServerLoad = async ({ fetch, cookies, request, url }) =
 	}> = (((directoryJson as any)?.instances) ?? []).filter((i: { slug: string }) => i.slug !== currentSlug);
 
 	if (!token || !userRes?.ok) {
-		return { user: null, communityName, communityLogoUrl, communityBannerUrl, memberCount, unreadCount: 0, token: null, networkInstances: [], directoryInstances: allInstances, activeAnnouncement, modules, demoMode, nodyxVersion, themeCss, instanceTheme, instanceEffect };
+		return { user: null, communityName, communityLogoUrl, communityBannerUrl, memberCount, unreadCount: 0, token: null, networkInstances: [], directoryInstances: allInstances, activeAnnouncement, modules, channels: [], demoMode, nodyxVersion, themeCss, instanceTheme, instanceEffect, sidebarBg, ssrLocale, panelCollapsed, membersCollapsed, leftPanelWidth, rightPanelWidth };
 	}
 
 	const { user } = await userRes.json();
@@ -121,5 +157,5 @@ export const load: LayoutServerLoad = async ({ fetch, cookies, request, url }) =
 	const linkedSlugs: string[] = user.linked_instances ?? [];
 	const networkInstances = allInstances.filter(i => linkedSlugs.includes(i.slug));
 
-	return { user, communityName, communityLogoUrl, communityBannerUrl, memberCount, unreadCount, token: token || null, appTheme, networkInstances, directoryInstances: allInstances, activeAnnouncement, modules, demoMode, nodyxVersion, themeCss, instanceTheme, instanceEffect };
+	return { user, communityName, communityLogoUrl, communityBannerUrl, memberCount, unreadCount, token: token || null, appTheme, networkInstances, directoryInstances: allInstances, activeAnnouncement, modules, channels, demoMode, nodyxVersion, themeCss, instanceTheme, instanceEffect, sidebarBg, ssrLocale, panelCollapsed, membersCollapsed, leftPanelWidth, rightPanelWidth };
 };

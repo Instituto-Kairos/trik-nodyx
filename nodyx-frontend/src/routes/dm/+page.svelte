@@ -113,7 +113,12 @@
 <div class="h-full flex">
 
 	<!-- ── Sidebar gauche ─────────────────────────────────────────────────── -->
-	<div class="w-72 shrink-0 flex flex-col border-r border-white/[0.06] bg-gray-950/60">
+	<!-- Pleine largeur sous `md`, largeur fixe au-delà. Avant le 2026-08-15 elle
+	     était figée à `w-72 shrink-0` à TOUTES les largeurs : sur un écran de
+	     502px, les 288px de la liste ne laissaient que 214px au panneau de
+	     droite, dont le contenu est prévu en `max-w-sm` (384px). Il était donc
+	     rogné, et la page n'avait aucun point de rupture responsive. -->
+	<div class="w-full md:w-72 shrink-0 flex flex-col md:border-r border-white/[0.06] bg-gray-950/60">
 
 		<!-- Header -->
 		<div class="px-4 pt-5 pb-3">
@@ -178,11 +183,11 @@
 						<svg class="w-3 h-3 shrink-0 text-indigo-400/60" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 							<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
 						</svg>
-						Continue à taper… (encore 1 caractère)
+						{tFn('dm.keep_typing')}
 					</div>
 				{:else if searchQuery.trim().length >= 2 && !searching}
 					<div class="absolute top-full mt-1.5 left-0 right-0 bg-gray-900/95 border border-white/[0.08] rounded-xl shadow-2xl z-20 px-3 py-2.5 text-[11px] text-gray-500">
-						Aucun membre ne correspond à <span class="text-gray-300 font-mono">"{searchQuery.trim()}"</span>
+						{@html tFn('dm.no_match', { query: searchQuery.trim() })}
 					</div>
 				{/if}
 			</div>
@@ -254,7 +259,7 @@
 								<p class="text-[11px] truncate mt-0.5 {conv.unread_count > 0 ? 'text-gray-400 font-medium' : 'text-gray-600'}">
 									{#if conv.last_message_content}
 										{#if conv.last_message_encrypted}
-											<span class="opacity-60">🔒 Message chiffré</span>
+											<span class="opacity-60">{tFn('dm.encrypted')}</span>
 										{:else}
 											{conv.last_message_sender_id === currentUserId ? tFn('dm.you_prefix') : ''}{truncate(conv.last_message_content)}
 										{/if}
@@ -271,7 +276,12 @@
 	</div>
 
 	<!-- ── Zone vide / Sélection ───────────────────────────────────────────── -->
-	<div class="flex-1 flex flex-col items-center justify-center bg-gray-950/20">
+	<!-- Masquée sous `md` : sur mobile la liste occupe tout l'écran, et une
+	     conversation s'ouvre sur sa propre page. Aucun état à gérer pour ça, les
+	     entrées de la liste sont déjà de vrais liens vers `/dm/[id]`. Inviter à
+	     « choisir une conversation » à côté de la liste qu'on est en train de
+	     lire n'apportait rien, et coûtait la moitié de l'écran. -->
+	<div class="hidden md:flex flex-1 flex-col items-center justify-center bg-gray-950/20">
 		<div class="flex flex-col items-center gap-4 text-center px-8 max-w-sm">
 			<!-- Illustration -->
 			<div class="relative">
@@ -337,11 +347,11 @@
 						<svg class="w-3.5 h-3.5 shrink-0 text-indigo-400/60" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 							<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
 						</svg>
-						Continue à taper… (encore 1 caractère)
+						{tFn('dm.keep_typing')}
 					</div>
 				{:else if searchQuery.trim().length >= 2 && !searching}
 					<div class="absolute top-full mt-2 left-0 right-0 bg-gray-900/95 border border-white/[0.08] rounded-xl shadow-2xl z-20 px-3 py-3 text-xs text-gray-500">
-						Aucun membre ne correspond à <span class="text-gray-300 font-mono">"{searchQuery.trim()}"</span>
+						{@html tFn('dm.no_match', { query: searchQuery.trim() })}
 					</div>
 				{/if}
 			</div>

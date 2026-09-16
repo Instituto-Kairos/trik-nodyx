@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { enhance } from '$app/forms'
 	import type { PageData } from './$types'
+	import { t } from '$lib/i18n'
+
+	const tFn = $derived($t)
 
 	let { data }: { data: PageData } = $props()
 	const community = $derived(data.community)
@@ -13,9 +16,9 @@
 </script>
 
 <svelte:head>
-	<title>{community.name} — Nodyx</title>
-	<meta name="description" content={community.description ?? `Communauté ${community.name} sur Nodyx.`} />
-	<meta property="og:title" content="{community.name} — Nodyx" />
+	<title>{community.name} · Nodyx</title>
+	<meta name="description" content={community.description ?? tFn('community_page.meta_desc', { name: community.name })} />
+	<meta property="og:title" content="{community.name} · Nodyx" />
 	<meta property="og:type" content="website" />
 </svelte:head>
 
@@ -38,7 +41,7 @@
 			{#if community.description}
 				<p class="text-gray-400 mt-1">{community.description}</p>
 			{/if}
-			<p class="text-xs text-gray-600 mt-1">{members.length} membre{members.length > 1 ? 's' : ''}</p>
+			<p class="text-xs text-gray-600 mt-1">{members.length > 1 ? tFn('community_page.member_many', { n: members.length }) : tFn('community_page.member_one', { n: members.length })}</p>
 		</div>
 
 		<!-- Actions -->
@@ -58,7 +61,7 @@
 						type="submit"
 						class="rounded bg-indigo-600 hover:bg-indigo-500 px-4 py-1.5 text-sm font-semibold text-white transition-colors"
 					>
-						Rejoindre
+						{tFn('community_page.join')}
 					</button>
 				</form>
 			{:else if userRole !== 'owner'}
@@ -67,7 +70,7 @@
 						type="submit"
 						class="rounded border border-gray-700 hover:border-red-700 px-4 py-1.5 text-sm text-gray-400 hover:text-red-400 transition-colors"
 					>
-						Quitter
+						{tFn('community_page.leave')}
 					</button>
 				</form>
 			{/if}
@@ -79,11 +82,11 @@
 <div class="max-w-5xl mx-auto px-4 py-6">
 	{#if categories.length === 0}
 		<div class="text-center py-12 text-gray-500">
-			<p>Aucune catégorie pour l'instant.</p>
+			<p>{tFn('community_page.no_category')}</p>
 			{#if isAdmin}
 				<p class="text-sm mt-2">
 					<a href="/communities/{community.slug}/admin/grades" class="text-indigo-400 hover:text-indigo-300">
-						Configurer la communauté →
+						{tFn('community_page.configure')}
 					</a>
 				</p>
 			{/if}

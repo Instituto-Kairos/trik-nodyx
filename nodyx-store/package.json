@@ -1,0 +1,31 @@
+{
+  "name": "nodyx-store",
+  "version": "1.0.0",
+  "private": true,
+  "license": "AGPL-3.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev --port 4190",
+    "build": "vite build",
+    "preview": "node build/index.js",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "test": "vitest run",
+    "registry:check": "node scripts/check-registry.mjs",
+    "prepare": "svelte-kit sync || echo ''",
+    "pack": "node scripts/pack-example.mjs"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-node": "5.5.7",
+    "@sveltejs/kit": "^2.68.0",
+    "@sveltejs/vite-plugin-svelte": "6.2.4",
+    "@types/node": "^26.2.0",
+    "svelte": "^5.56.4",
+    "svelte-check": "4.7.1",
+    "typescript": "6.0.3",
+    "vite": "^7.3.5",
+    "vitest": "^4.1.11"
+  },
+  "overrides": {
+    "cookie": "^0.7.2"
+  }
+}

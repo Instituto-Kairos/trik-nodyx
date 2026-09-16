@@ -187,6 +187,8 @@ T_EN[help_yes]='    --yes, -y          Auto-confirm all prompts'
 T_FR[help_yes]='    --yes, -y          Répondre oui à toutes les confirmations'
 T_EN[help_no_turn]='    --no-turn          Skip nodyx-turn installation'
 T_FR[help_no_turn]='    --no-turn          Ne pas installer nodyx-turn'
+T_EN[help_no_sfu]='    --no-sfu           Skip nodyx-sfud (voice stays in mesh mode)'
+T_FR[help_no_sfu]='    --no-sfu           Ne pas installer nodyx-sfud (le vocal reste en mesh)'
 T_EN[help_no_subdomain]='    --no-subdomain     Skip nodyx.org subdomain registration'
 T_FR[help_no_subdomain]='    --no-subdomain     Ne pas enregistrer le sous-domaine nodyx.org'
 T_EN[help_lang]='    --lang=en|fr       UI language (default: auto from $LANG, fallback en)'
@@ -401,6 +403,24 @@ T_EN[relay_mode_url]='Nodyx Relay mode — URL: %s%s%s'
 T_FR[relay_mode_url]='Mode Nodyx Relay — URL : %s%s%s'
 T_EN[relay_mode_no_port]='No port to open. The tunnel will be established to relay.nodyx.org.'
 T_FR[relay_mode_no_port]='Aucun port à ouvrir. Le tunnel sera établi vers relay.nodyx.org.'
+T_EN[relay_probe]='Checking that your network lets the tunnel out on port 7443...'
+T_FR[relay_probe]='Vérification que votre réseau laisse sortir le tunnel sur le port 7443...'
+T_EN[relay_probe_ok]='Outbound port 7443 is open. The tunnel will work.'
+T_FR[relay_probe_ok]='Le port 7443 sort bien. Le tunnel fonctionnera.'
+T_EN[relay_probe_v6]='Port 7443 is filtered over IPv4, but IPv6 works. Using %s instead.'
+T_FR[relay_probe_v6]='Le port 7443 est filtré en IPv4, mais IPv6 fonctionne. Utilisation de %s à la place.'
+T_EN[relay_probe_wss]='Port 7443 is blocked, but the tunnel goes through HTTPS on port 443. Using %s instead.'
+T_FR[relay_probe_wss]='Le port 7443 est bloqué, mais le tunnel passe en HTTPS sur le port 443. Utilisation de %s à la place.'
+T_EN[relay_probe_wss_try]='Port 7443 is blocked. Trying the tunnel over HTTPS, on port 443...'
+T_FR[relay_probe_wss_try]='Le port 7443 est bloqué. Essai du tunnel en HTTPS, sur le port 443...'
+T_EN[relay_probe_blocked]='Your network silently drops outbound port 7443. The tunnel cannot come up.'
+T_FR[relay_probe_blocked]='Votre réseau bloque silencieusement le port 7443 en sortie. Le tunnel ne pourra pas monter.'
+T_EN[relay_probe_hint]='This is a network restriction, not a mistake on your side. Company, university and institute networks often allow only 80 and 443.'
+T_FR[relay_probe_hint]="C'est une restriction du réseau, pas une erreur de votre part. Les réseaux d'entreprise, d'université et d'institut n'autorisent souvent que 80 et 443."
+T_EN[relay_probe_doc]='What to do, including a message to send to your network administrator: %s'
+T_FR[relay_probe_doc]="Que faire, avec un message prêt à envoyer à votre administrateur réseau : %s"
+T_EN[relay_probe_continue]='Continue anyway? The instance will install correctly but stay unreachable until the port is opened. [y/N]'
+T_FR[relay_probe_continue]="Continuer quand même ? L'instance s'installera correctement mais restera injoignable tant que le port ne sera pas ouvert. [o/N]"
 T_EN[auto_domain]='Auto domain: %s%s%s'
 T_FR[auto_domain]='Domaine automatique : %s%s%s'
 T_EN[sslip_resolves]='sslip.io auto-resolves to %s — HTTPS certificate handled by Caddy.'
@@ -485,8 +505,8 @@ T_EN[step_install_deps]='Installing system dependencies'
 T_FR[step_install_deps]='Installation des dépendances système'
 T_EN[deps_installed]='System packages installed'
 T_FR[deps_installed]='Paquets système installés'
-T_EN[node_installing]='Installing Node.js 20 LTS...'
-T_FR[node_installing]='Installation de Node.js 20 LTS...'
+T_EN[node_installing]='Installing Node.js 22 LTS...'
+T_FR[node_installing]='Installation de Node.js 22 LTS...'
 T_EN[node_installed]='Node.js %s installed'
 T_FR[node_installed]='Node.js %s installé'
 T_EN[node_present]='Node.js %s already present'
@@ -501,8 +521,10 @@ T_EN[pm2_installed]='PM2 installed'
 T_FR[pm2_installed]='PM2 installé'
 T_EN[pm2_already]='PM2 already present'
 T_FR[pm2_already]='PM2 déjà présent'
-T_EN[pm2_logrotate_set]='pm2-logrotate configured (50M, 7 days)'
-T_FR[pm2_logrotate_set]='pm2-logrotate configuré (50M, 7 jours)'
+T_EN[pm2_logrotate_set]='pm2-logrotate configured (50M, 7 days, compressed)'
+T_FR[pm2_logrotate_set]='pm2-logrotate configuré (50M, 7 jours, compressé)'
+T_EN[pm2_logrotate_fail]='pm2-logrotate could not be registered, PM2 logs will not be rotated'
+T_FR[pm2_logrotate_fail]='pm2-logrotate non enregistré, les logs PM2 ne seront pas tournés'
 T_EN[step_create_user]='Creating system user'
 T_FR[step_create_user]="Création de l'utilisateur système"
 T_EN[user_created_full]="System user 'nodyx' created (/home/nodyx)"
@@ -557,6 +579,32 @@ T_EN[turn_not_binary]="The downloaded file is not a valid binary.\nURL: %s"
 T_FR[turn_not_binary]="Le fichier téléchargé n'est pas un binaire valide.\nURL : %s"
 T_EN[turn_started]='nodyx-turn started (IP: %s, UDP port 3478)'
 T_FR[turn_started]='nodyx-turn démarré (IP: %s, port UDP 3478)'
+
+# §18b — SFU (nodyx-sfud) : vocal et partage d'écran scalables
+T_EN[step_sfu]='Installing nodyx-sfud (scalable voice & screen sharing)'
+T_FR[step_sfu]="Installation de nodyx-sfud (vocal et partage d'écran scalables)"
+T_EN[sfu_downloading]='Downloading nodyx-sfud %s (%s)...'
+T_FR[sfu_downloading]='Téléchargement de nodyx-sfud %s (%s)...'
+# Le SFU est un SUPPLÉMENT : s'il échoue, le vocal marche quand même (en mesh).
+# On ne fait donc JAMAIS échouer l'installation à cause de lui — on avertit.
+T_EN[sfu_skipped]="nodyx-sfud not installed — voice still works, in mesh mode.\nLimits: ~4 people in screen sharing, and screen sharing has no sound.\nReason: %s"
+T_FR[sfu_skipped]="nodyx-sfud non installé — le vocal fonctionne quand même, en mode mesh.\nLimites : ~4 personnes en partage d'écran, et le partage se fait sans son.\nRaison : %s"
+T_EN[sfu_reason_arch]='unsupported architecture (%s)'
+T_FR[sfu_reason_arch]='architecture non supportée (%s)'
+T_EN[sfu_reason_dl]='download failed (%s)'
+T_FR[sfu_reason_dl]='téléchargement impossible (%s)'
+T_EN[sfu_reason_notbin]='the downloaded file is not a valid binary'
+T_FR[sfu_reason_notbin]="le fichier téléchargé n'est pas un binaire valide"
+T_EN[sfu_reason_start]='the service did not start (see: journalctl -u nodyx-sfud)'
+T_FR[sfu_reason_start]='le service ne démarre pas (voir : journalctl -u nodyx-sfud)'
+# Serveur derrière NAT (mode Relay) : le SFU a besoin de ports média joignables de
+# l'extérieur, ce qu'un tunnel ne fournit pas. On ne demandera JAMAIS d'ouvrir un
+# port sur la box de l'utilisateur : c'est un engagement du projet.
+T_EN[sfu_relay_skipped]="Relay mode: nodyx-sfud is not installed (media ports are not reachable through a tunnel).\nVoice works in mesh mode: ~4 people in screen sharing, and no sound while sharing.\nLifting this limit will NOT require opening any port on your router — it is being worked on."
+T_FR[sfu_relay_skipped]="Mode Relay : nodyx-sfud n'est pas installé (les ports média ne sont pas joignables à travers un tunnel).\nLe vocal fonctionne en mode mesh : ~4 personnes en partage d'écran, et le partage se fait sans son.\nLever cette limite n'exigera AUCUNE ouverture de port sur ta box — c'est en cours."
+T_EN[sfu_started]='nodyx-sfud started (media ports %s, announced IP: %s)'
+T_FR[sfu_started]='nodyx-sfud démarré (ports média %s, IP annoncée : %s)'
+
 T_EN[step_firewall]='Configuring the firewall'
 T_FR[step_firewall]='Configuration du pare-feu'
 T_EN[ufw_existing_saved]='Existing UFW rules saved to %s'
@@ -739,8 +787,8 @@ T_FR[sub_skipped]='Sous-domaine gratuit ignoré. Tu utiliseras https://%s'
 # §23 — Relay client systemd service
 T_EN[step_relay_client]='Configuring the Nodyx Relay Client service'
 T_FR[step_relay_client]='Configuration du service Nodyx Relay Client'
-T_EN[relay_client_started]='Nodyx Relay Client started — tunnel to relay.nodyx.org:7443 active'
-T_FR[relay_client_started]='Nodyx Relay Client démarré — tunnel vers relay.nodyx.org:7443 actif'
+T_EN[relay_client_started]='Nodyx Relay Client started — tunnel to %s active'
+T_FR[relay_client_started]='Nodyx Relay Client démarré — tunnel vers %s actif'
 T_EN[relay_client_url_soon]='Your instance will be reachable at https://%s in a few seconds.'
 T_FR[relay_client_url_soon]='Ton instance sera accessible sur https://%s dans quelques secondes.'
 
@@ -898,6 +946,31 @@ slugify()     { echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' |
 # Retourne 0 (true) si $1 > $2 en semver
 version_gt() { [[ "$(printf '%s\n' "$1" "$2" | sort -V | tail -1)" == "$1" ]] && [[ "$1" != "$2" ]]; }
 
+# Rotation des logs PM2, sur le daemon 'nodyx' (celui qui fait tourner les apps).
+#
+# ATTENTION, piège vécu en production : "npm install -g pm2-logrotate" NE SUFFIT
+# PAS. Il pose le paquet sur le disque mais n'enregistre AUCUN module dans PM2 :
+# le daemon ne le lance jamais, "pm2 set pm2-logrotate:*" écrit dans le vide, et
+# l'installeur affichait quand même "configuré". Panne 100% SILENCIEUSE : les
+# logs grossissent jusqu'à saturer le disque (constaté sur nodyx.org, 1,2 Go pour
+# le seul nodyx-core-out.log). Seul "pm2 install" enregistre et lance le module.
+#
+# Idempotent : ne fait rien si le module tourne déjà. Suppose l'utilisateur
+# 'nodyx' déjà créé, donc à n'appeler qu'APRÈS la création de l'utilisateur.
+_setup_pm2_logrotate() {
+  local as_nodyx=(runuser -u nodyx -- env PM2_HOME=/home/nodyx/.pm2 pm2)
+  id -u nodyx &>/dev/null || return 0
+  if "${as_nodyx[@]}" list 2>/dev/null | grep -q 'pm2-logrotate'; then
+    return 0
+  fi
+  "${as_nodyx[@]}" install pm2-logrotate >/dev/null 2>&1 || true
+  "${as_nodyx[@]}" set pm2-logrotate:max_size 50M   >/dev/null 2>&1 || true
+  "${as_nodyx[@]}" set pm2-logrotate:retain   7     >/dev/null 2>&1 || true
+  "${as_nodyx[@]}" set pm2-logrotate:compress true  >/dev/null 2>&1 || true
+  # Ne déclarer le succès que si le module est RÉELLEMENT enregistré.
+  "${as_nodyx[@]}" list 2>/dev/null | grep -q 'pm2-logrotate'
+}
+
 # Chemin rapide : mise à jour / réparation sans reconfiguration
 _nodyx_upgrade() {
   local from_ver="$1" to_ver="$2" dir="$3"
@@ -919,11 +992,7 @@ _nodyx_upgrade() {
   chown -R nodyx:nodyx /home/nodyx/.pm2 2>/dev/null || true
 
   # pm2-logrotate si absent (vérifier sur le daemon nodyx)
-  if ! runuser -u nodyx -- env PM2_HOME=/home/nodyx/.pm2 pm2 list 2>/dev/null | grep -q 'pm2-logrotate'; then
-    npm install -g pm2-logrotate --silent 2>/dev/null || true
-    runuser -u nodyx -- env PM2_HOME=/home/nodyx/.pm2 pm2 set pm2-logrotate:max_size 50M 2>/dev/null || true
-    runuser -u nodyx -- env PM2_HOME=/home/nodyx/.pm2 pm2 set pm2-logrotate:retain 7 2>/dev/null || true
-  fi
+  _setup_pm2_logrotate || true
 
   # Arrêter les anciens processus PM2 root (migration nexus-* → nodyx-*)
   for _old_proc in nexus-core nexus-frontend nodyx-core nodyx-frontend; do
@@ -944,7 +1013,7 @@ _nodyx_upgrade() {
 
   info "$(t backend_rebuild)"
   cd "${dir}/nodyx-core"
-  npm install --no-fund --no-audit --silent || die "$(t npm_install_backend_fail)"
+  npm ci --no-fund --no-audit --silent || die "$(t npm_install_backend_fail)"
   npm run build || die "$(t backend_build_fail)"
   ok "$(t backend_built)"
 
@@ -957,7 +1026,7 @@ _nodyx_upgrade() {
   elif [[ "$_RB_RAM_MB" -lt 8000 ]]; then export NODE_OPTIONS="--max-old-space-size=2048"
   else                                    export NODE_OPTIONS="--max-old-space-size=4096"
   fi
-  npm install --no-fund --no-audit --silent || die "$(t npm_install_frontend_fail)"
+  npm ci --no-fund --no-audit --silent || die "$(t npm_install_frontend_fail)"
   npm run build || die "$(t frontend_build_fail)"
   unset NODE_OPTIONS
   ok "$(t frontend_built)"
@@ -1012,7 +1081,7 @@ _nodyx_upgrade() {
 Description=Nodyx Relay Client
 After=network.target
 [Service]
-ExecStart=/usr/local/bin/nodyx-relay client --server relay.nodyx.org:7443 --slug ${_slug} --token ${_dir_token} --local-port 80
+ExecStart=/usr/local/bin/nodyx-relay client --server ${RELAY_SERVER:-relay.nodyx.org:7443} --slug ${_slug} --token ${_dir_token} --local-port 80
 Restart=on-failure
 RestartSec=5s
 StartLimitIntervalSec=60
@@ -1119,6 +1188,8 @@ NODYX_RELAY_VERSION="v0.1.4-p2p"
 _FORCE_MODE=""        # upgrade | repair | reinstall | wipe (bypass detection menu)
 _AUTO_YES=false       # --yes : passer toutes les confirmations
 SKIP_TURN=false       # --no-turn
+SKIP_SFU=false        # --no-sfu
+_SFU_INSTALLED=false  # vrai seulement si le daemon SFU tourne réellement
 SKIP_SUBDOMAIN=false  # --no-subdomain
 _ARG_DOMAIN=""  _ARG_SLUG=""  _ARG_NAME=""
 _ARG_ADMIN_USER=""  _ARG_ADMIN_EMAIL=""  _ARG_ADMIN_PASS=""
@@ -1131,6 +1202,7 @@ for _arg in "$@"; do
     --wipe)               _FORCE_MODE="wipe"      ;;
     --yes|-y)             _AUTO_YES=true           ;;
     --no-turn)            SKIP_TURN=true           ;;
+    --no-sfu)             SKIP_SFU=true            ;;
     --no-subdomain)       SKIP_SUBDOMAIN=true      ;;
     --domain=*)           _ARG_DOMAIN="${_arg#*=}" ;;
     --slug=*)             _ARG_SLUG="${_arg#*=}"   ;;
@@ -1159,6 +1231,7 @@ for _arg in "$@"; do
       echo "$(t help_options_header)"
       echo "$(t help_yes)"
       echo "$(t help_no_turn)"
+      echo "$(t help_no_sfu)"
       echo "$(t help_no_subdomain)"
       echo "$(t help_lang)"
       echo "$(t help_help)"
@@ -1730,6 +1803,86 @@ NET_MODE="${NET_MODE:-2}"
 RELAY_MODE=false
 DOMAIN_IS_AUTO=false
 
+# ── La sonde qui évite une installation « réussie » mais injoignable ──────────
+#
+# Le relais n'a besoin que d'UNE sortie TCP sur 7443. Les connexions grand public
+# l'autorisent, les réseaux d'entreprise, d'université et d'institut souvent pas,
+# et ils ne le disent jamais. Sans ce contrôle, l'installeur se terminait en
+# annonçant un succès, puis l'instance restait muette sans le moindre indice.
+# Cas réel : une inscription en août 2026, tombée exactement là-dessus.
+#
+# Un port filtré ne REFUSE pas, il ne répond rien : on borne donc l'essai.
+RELAY_SERVER="relay.nodyx.org:7443"
+
+_relay_joignable() {
+  timeout 8 bash -c "exec 3<>/dev/tcp/$1/$2" 2>/dev/null
+}
+
+# La porte WebSocket, en HTTPS sur 443.
+#
+# On n'accepte PAS une simple ouverture du port 443 comme preuve : un proxy
+# d'entreprise peut accepter la connexion, puis refuser la montée en WebSocket ou
+# la casser en inspectant le trafic. Le seul verdict qui engage est le 101
+# Switching Protocols, c'est-à-dire la poignée de main réellement aboutie.
+_relais_ws_joignable() {
+  local cle code
+  cle=$(head -c16 /dev/urandom | base64 2>/dev/null) || return 1
+
+  # Attention au code de SORTIE de curl : il ne dit rien de la réussite ici.
+  # curl n'est pas un client WebSocket. Une fois le 101 reçu il attend des
+  # données qui ne viendront pas, jusqu'à expiration du délai, et sort alors en
+  # code 28. Tester ce code de sortie faisait rejeter une porte parfaitement
+  # ouverte. Seul le code HTTP imprimé fait foi.
+  #
+  # Le délai est donc atteint à chaque essai RÉUSSI, et non l'inverse : il est
+  # court parce qu'il borne le succès, pas l'échec.
+  code=$(curl -s -o /dev/null -w '%{http_code}' -m 5 --http1.1 \
+    -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+    -H 'Sec-WebSocket-Version: 13' -H "Sec-WebSocket-Key: $cle" \
+    "https://$1/tunnel" 2>/dev/null)
+
+  [ "$code" = "101" ]
+}
+
+verifier_sortie_relais() {
+  info "$(t relay_probe)"
+
+  if _relay_joignable relay.nodyx.org 7443; then
+    ok "$(t relay_probe_ok)"
+    return 0
+  fi
+
+  # IPv4 filtrée. Certains réseaux laissent passer l'IPv6, et un réseau IPv6 seul
+  # ne pouvait pas se connecter du tout avant que ce nom existe.
+  if _relay_joignable relay6.nodyx.org 7443; then
+    RELAY_SERVER="relay6.nodyx.org:7443"
+    ok "$(printf "$(t relay_probe_v6)" "relay6.nodyx.org")"
+    return 0
+  fi
+
+  # 7443 est muré dans les deux familles. C'est le cas des réseaux d'entreprise,
+  # d'université et d'institut, qui ne laissent sortir que 80 et 443. Ce dernier
+  # essai est précisément ce pour quoi la porte WebSocket existe : un réseau qui
+  # bloque tout sauf le web laisse passer un tunnel déguisé en trafic web.
+  info "$(t relay_probe_wss_try)"
+  if _relais_ws_joignable tunnel.nodyx.org; then
+    RELAY_SERVER="wss://tunnel.nodyx.org/tunnel"
+    ok "$(printf "$(t relay_probe_wss)" "$RELAY_SERVER")"
+    return 0
+  fi
+
+  warn "$(t relay_probe_blocked)"
+  info "$(t relay_probe_hint)"
+  info "$(printf "$(t relay_probe_doc)" "https://nodyx.dev/relay#the-tunnel-never-connects-the-port-7443-wall")"
+
+  local reponse=""
+  read -r -p "  $(t relay_probe_continue) " reponse || true
+  case "${reponse,,}" in
+    y|yes|o|oui) return 0 ;;
+    *) die "$(t relay_probe_blocked)" ;;
+  esac
+}
+
 case "$NET_MODE" in
   1)
     prompt DOMAIN "$(t prompt_domain)"
@@ -1739,6 +1892,7 @@ case "$NET_MODE" in
     DOMAIN="${COMMUNITY_SLUG}.nodyx.org"
     ok "$(printf "$(t relay_mode_url)" "${BOLD}" "https://${DOMAIN}" "${RESET}")"
     info "$(t relay_mode_no_port)"
+    verifier_sortie_relais
     ;;
   3|*)
     DOMAIN="${PUBLIC_IP//./-}.sslip.io"
@@ -1875,11 +2029,11 @@ _SYS_PKGS="curl wget gnupg2 ca-certificates lsb-release openssl ufw build-essent
 apt-get install -y -q $_SYS_PKGS 2>/dev/null
 ok "$(t deps_installed)"
 
-# Node.js 20 LTS
+# Node.js 22 LTS — mediasoup-client/awaitqueue (voice) require >=22 (#642)
 _NODE_MAJOR=$(node --version 2>/dev/null | sed 's/v//;s/\..*//' || echo 0)
-if ! command -v node &>/dev/null || [[ "$_NODE_MAJOR" -lt 20 ]]; then
+if ! command -v node &>/dev/null || [[ "$_NODE_MAJOR" -lt 22 ]]; then
   info "$(t node_installing)"
-  curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null 2>&1
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null 2>&1
   apt-get install -y -q nodejs >/dev/null 2>&1
   ok "$(printf "$(t node_installed)" "$(node -v)")"
 else
@@ -1908,14 +2062,6 @@ else
   ok "$(t pm2_already)"
 fi
 
-# PM2 log-rotate — check on the nodyx daemon (the one actually running the apps)
-if ! runuser -u nodyx -- env PM2_HOME=/home/nodyx/.pm2 pm2 list 2>/dev/null | grep -q 'pm2-logrotate'; then
-  npm install -g pm2-logrotate --silent 2>/dev/null || true
-  runuser -u nodyx -- env PM2_HOME=/home/nodyx/.pm2 pm2 set pm2-logrotate:max_size 50M 2>/dev/null || true
-  runuser -u nodyx -- env PM2_HOME=/home/nodyx/.pm2 pm2 set pm2-logrotate:retain 7 2>/dev/null || true
-  ok "$(t pm2_logrotate_set)"
-fi
-
 # ── Create the 'nodyx' system user ───────────────────────────────────────────
 step "$(t step_create_user)"
 if ! id -u nodyx &>/dev/null; then
@@ -1926,6 +2072,15 @@ else
 fi
 mkdir -p /home/nodyx/.pm2/logs
 chown -R nodyx:nodyx /home/nodyx/.pm2
+
+# Rotation des logs PM2 — APRÈS la création de l'utilisateur nodyx (ce bloc était
+# exécuté avant, donc sur une install neuve il tournait sans utilisateur cible :
+# toutes les commandes échouaient en silence et l'installeur affichait "configuré").
+if _setup_pm2_logrotate; then
+  ok "$(t pm2_logrotate_set)"
+else
+  warn "$(t pm2_logrotate_fail)"
+fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  POSTGRESQL
@@ -2136,6 +2291,122 @@ SVC
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  NODYX-SFUD (SFU mediasoup) — vocal et partage d'écran scalables
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+#  Sans lui : le vocal fonctionne en MESH. Chacun envoie son flux à chacun, donc le
+#  partage d'écran plafonne vers 4 personnes (le partageur uploade UNE COPIE PAR
+#  SPECTATEUR) et se fait sans son.
+#  Avec lui : le partageur envoie UNE SEULE FOIS, le serveur recopie. Plus de mur,
+#  et le partage emporte son son.
+#
+#  ⚠ MODE RELAY : le SFU a besoin de ports média joignables depuis l'extérieur, ce
+#  qu'un tunnel ne fournit pas. On ne l'installe donc pas, et on ne demandera JAMAIS
+#  à l'utilisateur d'ouvrir un port sur sa box : c'est un engagement du projet. La
+#  levée passera par une pile ICE complète (perçage de NAT), pas par sa box.
+#
+#  Le SFU est un SUPPLÉMENT : s'il échoue, on AVERTIT et on continue. Le vocal marche
+#  sans lui. Faire échouer toute l'installation pour un bonus serait absurde.
+# ═══════════════════════════════════════════════════════════════════════════════
+_sfu_skip() { warn "$(printf "$(t sfu_skipped)" "$1")"; }
+
+if $RELAY_MODE; then
+  warn "$(t sfu_relay_skipped)"
+elif ! $SKIP_SFU; then
+  step "$(t step_sfu)"
+
+  _SFU_ARCH=""
+  case "$(uname -m)" in
+    x86_64)  _SFU_ARCH="amd64" ;;
+    aarch64) _SFU_ARCH="arm64" ;;
+  esac
+
+  if [[ -z "$_SFU_ARCH" ]]; then
+    _sfu_skip "$(printf "$(t sfu_reason_arch)" "$(uname -m)")"
+  else
+    _SFU_VERSION="sfu-v0.1.0"
+    _SFU_URL="https://github.com/Pokled/nodyx/releases/download/${_SFU_VERSION}/nodyx-sfud-linux-${_SFU_ARCH}"
+    info "$(printf "$(t sfu_downloading)" "${_SFU_VERSION}" "${_SFU_ARCH}")"
+    _SFU_TMP="$(mktemp /tmp/nodyx-sfud.XXXXXX)"
+
+    if ! curl -fsSL --max-time 180 "$_SFU_URL" -o "$_SFU_TMP"; then
+      rm -f "$_SFU_TMP"
+      _sfu_skip "$(printf "$(t sfu_reason_dl)" "${_SFU_URL}")"
+    elif ! file "$_SFU_TMP" 2>/dev/null | grep -q ELF; then
+      rm -f "$_SFU_TMP"
+      _sfu_skip "$(t sfu_reason_notbin)"
+    else
+      chmod +x "$_SFU_TMP"
+      mv -f "$_SFU_TMP" /usr/local/bin/nodyx-sfud
+
+      SFU_TOKEN="$(openssl rand -hex 32)"
+
+      # Le média écoute sur toutes les interfaces et ANNONCE l'IP publique : certains
+      # hébergeurs (AWS, GCP…) ne montrent jamais l'IP publique à la machine, un bind
+      # direct dessus échouerait.
+      cat > /etc/nodyx-sfud.env <<SFUENV
+# Généré par install.sh — le secret est partagé avec nodyx-core (VOICE_SFU_TOKEN)
+SFU_TOKEN=${SFU_TOKEN}
+
+# API interne : JAMAIS exposée, seul nodyx-core la contacte, en local.
+SFU_HTTP_ADDR=127.0.0.1:3901
+
+# Média : on écoute partout, on annonce l'IP publique aux navigateurs.
+SFU_LISTEN_IP=0.0.0.0
+SFU_ANNOUNCED_IP=${PUBLIC_IP}
+
+# Plage de ports média (ouverte dans le pare-feu, en UDP ET en TCP : le TCP est le
+# repli des réseaux qui bloquent l'UDP — entreprises, hôtels, certains opérateurs).
+SFU_RTC_MIN_PORT=40000
+SFU_RTC_MAX_PORT=40999
+
+# Le nombre de workers s'adapte tout seul à la machine (cœurs - réservés). Un cœur
+# reste hors de portée du média pour le reste des services.
+SFU_RESERVED_CORES=1
+
+# 0 = toute session passe par le SFU dès que nodyx-core le décide. C'est nodyx-core
+# qui arbitre mesh/SFU (VOICE_SFU_MESH_THRESHOLD), pas le daemon.
+SFU_MESH_THRESHOLD=0
+SFUENV
+      chown root:nodyx /etc/nodyx-sfud.env
+      chmod 640 /etc/nodyx-sfud.env
+
+      cat > /etc/systemd/system/nodyx-sfud.service <<SFUSVC
+[Unit]
+Description=Nodyx SFU daemon (mediasoup) — scalable voice & screen sharing
+After=network.target
+
+[Service]
+EnvironmentFile=/etc/nodyx-sfud.env
+ExecStart=/usr/local/bin/nodyx-sfud
+Restart=on-failure
+RestartSec=5s
+User=nodyx
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+SFUSVC
+
+      systemctl daemon-reload
+      systemctl enable nodyx-sfud --quiet
+      systemctl restart nodyx-sfud
+      sleep 2
+
+      if systemctl is-active --quiet nodyx-sfud; then
+        _SFU_INSTALLED=true
+        ok "$(printf "$(t sfu_started)" "40000-40999" "${PUBLIC_IP}")"
+      else
+        _sfu_skip "$(t sfu_reason_start)"
+      fi
+    fi
+  fi
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  FIREWALL (UFW)
 # ═══════════════════════════════════════════════════════════════════════════════
 step "$(t step_firewall)"
@@ -2161,6 +2432,14 @@ if ! $RELAY_MODE; then
     ufw allow 5349/tcp >/dev/null 2>&1
     ufw allow 5349/udp >/dev/null 2>&1
     ufw allow 49152:65535/udp >/dev/null 2>&1
+  fi
+  # Ports média du SFU. Le TCP n'est PAS un luxe : c'est le repli des réseaux qui
+  # bloquent l'UDP (entreprises, hôtels, certains opérateurs). Sans lui, ces
+  # utilisateurs ne se connectent PAS DU TOUT au vocal — pas « moins bien » : rien,
+  # avec un écran noir et aucun message.
+  if $_SFU_INSTALLED; then
+    ufw allow 40000:40999/udp >/dev/null 2>&1
+    ufw allow 40000:40999/tcp >/dev/null 2>&1
   fi
 fi
 ufw --force enable >/dev/null 2>&1
@@ -2257,7 +2536,13 @@ NODYX_VERSION=${NODYX_VERSION}
 
 # Serveur
 PORT=3000
-HOST=0.0.0.0
+# Loopback, volontairement. Caddy tourne sur la même machine et mandate vers
+# localhost:3000 : écouter sur toutes les interfaces publierait l'API sur
+# Internet, et il ne resterait qu'une règle de pare-feu entre elle et le monde.
+# Une ligne de défense n'en fait pas deux.
+#
+# À changer seulement si votre mandataire vit sur une AUTRE machine.
+HOST=127.0.0.1
 NODE_ENV=production
 
 # JWT
@@ -2296,8 +2581,32 @@ if $RELAY_MODE; then
     >> "${NODYX_DIR}/nodyx-core/.env"
 fi
 
+# Brancher nodyx-core sur le SFU. Sans ces variables, le daemon tournerait pour rien :
+# le core ne lui parlerait jamais et tout le vocal resterait en mesh.
+if $_SFU_INSTALLED; then
+  cat >> "${NODYX_DIR}/nodyx-core/.env" <<SFUCORE
+
+# ── SFU (nodyx-sfud) : vocal et partage d'écran scalables ──────────────────────
+# Le secret est le même que dans /etc/nodyx-sfud.env.
+VOICE_SFU_URL=http://127.0.0.1:3901
+VOICE_SFU_TOKEN=${SFU_TOKEN}
+
+# Bascule automatique mesh → SFU.
+VOICE_SFU_AUTO=true
+
+# Vide = TOUS les canaux vocaux. (Renseigner des UUID pour limiter à certains.)
+VOICE_SFU_AUTO_CHANNELS=
+
+# À partir de combien de personnes un canal bascule tout seul. En dessous, le mesh
+# suffit et évite un aller-retour par le serveur.
+# ⚠ Un PARTAGE D'ÉCRAN bascule TOUJOURS, quel que soit ce seuil : c'est précisément
+# le moment où le mesh s'écroule (une copie envoyée PAR SPECTATEUR).
+VOICE_SFU_MESH_THRESHOLD=6
+SFUCORE
+fi
+
 cd "${NODYX_DIR}/nodyx-core"
-run_bg "$(t backend_npm_install_label)" npm install --no-fund --no-audit \
+run_bg "$(t backend_npm_install_label)" npm ci --no-fund --no-audit \
   || die "$(t backend_npm_install_fail2)"
 run_bg "$(t backend_compile_label)" npm run build \
   || die "$(t backend_build_fail2)"
@@ -2326,7 +2635,7 @@ PUBLIC_TURN_CREDENTIAL=
 FEENV
 
 cd "${NODYX_DIR}/nodyx-frontend"
-run_bg "$(t front_npm_install_label)" npm install --no-fund --no-audit \
+run_bg "$(t front_npm_install_label)" npm ci --no-fund --no-audit \
   || die "$(t front_npm_install_fail2)"
 
 # On ARM64: ensure native Rollup binary is present
@@ -2791,7 +3100,7 @@ After=network.target
 
 [Service]
 ExecStart=/usr/local/bin/nodyx-relay client \
-  --server relay.nodyx.org:7443 \
+  --server ${RELAY_SERVER:-relay.nodyx.org:7443} \
   --slug ${COMMUNITY_SLUG} \
   --token ${NODYX_DIRECTORY_TOKEN} \
   --local-port 80
@@ -2807,8 +3116,8 @@ SVC
 
   systemctl daemon-reload
   systemctl enable nodyx-relay-client --quiet
-  systemctl start nodyx-relay-client
-  ok "$(t relay_client_started)"
+  systemctl restart nodyx-relay-client
+  ok "$(printf "$(t relay_client_started)" "${RELAY_SERVER:-relay.nodyx.org:7443}")"
   info "$(printf "$(t relay_client_url_soon)" "${DOMAIN}")"
 fi
 
@@ -2887,13 +3196,13 @@ git -C "$NODYX_DIR" pull --ff-only || die "git pull échoué. Vérifie ta connex
 
 info "Rebuild backend..."
 cd "${NODYX_DIR}/nodyx-core"
-npm install --no-fund --no-audit --silent
+npm ci --no-fund --no-audit --silent
 npm run build || die "Build backend échoué."
 ok "Backend compilé"
 
 info "Rebuild frontend..."
 cd "${NODYX_DIR}/nodyx-frontend"
-npm install --no-fund --no-audit --silent
+npm ci --no-fund --no-audit --silent
 npm run build || die "Build frontend échoué."
 ok "Frontend compilé"
 
@@ -3199,7 +3508,7 @@ if ! $RELAY_MODE; then
   echo -e "     ${BOLD}$(t summ_voice)   ${RESET}stun/turn:${PUBLIC_IP}:3478 (nodyx-turn)"
 fi
 if $RELAY_MODE; then
-  echo -e "     ${BOLD}$(t summ_relay)   ${RESET}tunnel → relay.nodyx.org:7443"
+  echo -e "     ${BOLD}$(t summ_relay)   ${RESET}tunnel → ${RELAY_SERVER:-relay.nodyx.org:7443}"
 fi
 echo -e "     ${BOLD}$(t summ_version)   ${RESET}${NODYX_VERSION}"
 echo -e "     ${BOLD}$(t summ_dir)   ${RESET}${NODYX_DIR}"

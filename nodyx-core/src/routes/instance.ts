@@ -99,10 +99,10 @@ export default async function instanceRoutes(app: FastifyInstance) {
       db.query(`SELECT COUNT(*)::int AS count FROM posts`),
       io ? io.in('presence').fetchSockets() : Promise.resolve([]),
       communityId
-        ? db.query<{ logo_url: string | null; banner_url: string | null }>(
-            `SELECT logo_url, banner_url FROM communities WHERE id = $1`, [communityId]
+        ? db.query<{ logo_url: string | null; banner_url: string | null; sidebar_bg: Record<string, unknown> | null }>(
+            `SELECT logo_url, banner_url, sidebar_bg FROM communities WHERE id = $1`, [communityId]
           )
-        : Promise.resolve({ rows: [{ logo_url: null, banner_url: null }] }),
+        : Promise.resolve({ rows: [{ logo_url: null, banner_url: null, sidebar_bg: null }] }),
       // Thème d'instance posé par l'owner (son univers, base pour tous) :
       //  - theme_vars : thème structuré (--p-bg/--p-accent…), base de la cascade
       //  - theme_css  : surcharge CSS libre (variables Tailwind) en complément
@@ -114,7 +114,7 @@ export default async function instanceRoutes(app: FastifyInstance) {
     const seen = new Set<string>()
     for (const s of presenceSockets) { if (s.data.userId) seen.add(s.data.userId) }
 
-    const branding = brandingRes.rows[0] ?? { logo_url: null, banner_url: null }
+    const branding = brandingRes.rows[0] ?? { logo_url: null, banner_url: null, sidebar_bg: null }
 
     return reply.send({
       name:        process.env.NODYX_COMMUNITY_NAME        || 'Nodyx',
@@ -130,6 +130,7 @@ export default async function instanceRoutes(app: FastifyInstance) {
       post_count:   postRes.rows[0].count,
       logo_url:     branding.logo_url,
       banner_url:   branding.banner_url,
+      sidebar_bg:   branding.sidebar_bg,
       theme_css:    themeRes.rows.find(r => r.key === 'theme_css')?.value ?? null,
       theme_vars:   (() => {
         const raw = themeRes.rows.find(r => r.key === 'theme_vars')?.value
@@ -257,6 +258,10 @@ export default async function instanceRoutes(app: FastifyInstance) {
        JOIN categories c ON c.id = t.category_id
        JOIN users     u ON u.id = t.author_id
        WHERE c.community_id = $1
+         -- Un fil d'une catégorie restreinte (annonces) ne remonte dans le flux
+         -- public que s'il a été explicitement mis en avant : un brouillon
+         -- d'annonce ne doit pas fuiter avant publication.
+         AND (c.post_min_role = 'member' OR t.is_featured = true)
        ORDER BY COALESCE(
          (SELECT MAX(p3.created_at) FROM posts p3 WHERE p3.thread_id = t.id),
          t.created_at
@@ -270,7 +275,10 @@ export default async function instanceRoutes(app: FastifyInstance) {
 
   // GET /api/v1/instance/threads/showcase
   // Threads "éditorialisés" avec cover image + excerpt extraits du 1er post.
-  // Query params: category (slug ou UUID), pinned_only, limit (max 20), order (recent|popular|most_viewed)
+  // Ne renvoie QUE les fils mis en avant par un admin (threads.showcased_at) :
+  // durcissement du 2026-09, sans quoi n'importe quel membre atteignait la
+  // vitrine en postant un fil récent. Query params: category (slug ou UUID),
+  // pinned_only, limit (max 20), order (recent|popular|most_viewed).
   app.get('/threads/showcase', { preHandler: [rateLimit] }, async (request, reply) => {
     const communityId = await getCommunityId()
     if (!communityId) return reply.send({ threads: [] })
@@ -302,7 +310,7 @@ export default async function instanceRoutes(app: FastifyInstance) {
       return reply.send(JSON.parse(cached))
     }
 
-    const conditions: string[] = ['c.community_id = $1']
+    const conditions: string[] = ['c.community_id = $1', 't.showcased_at IS NOT NULL']
     const params: unknown[] = [communityId]
 
     if (categoryRaw) {
@@ -312,9 +320,9 @@ export default async function instanceRoutes(app: FastifyInstance) {
     if (pinnedOnly) conditions.push('t.is_pinned = true')
 
     const orderClause =
-      orderKey === 'popular'     ? 'post_count DESC NULLS LAST, t.created_at DESC' :
-      orderKey === 'most_viewed' ? 't.views DESC, t.created_at DESC' :
-      'COALESCE((SELECT MAX(p3.created_at) FROM posts p3 WHERE p3.thread_id = t.id), t.created_at) DESC'
+      orderKey === 'popular'     ? 'post_count DESC NULLS LAST, t.showcased_at DESC' :
+      orderKey === 'most_viewed' ? 't.views DESC, t.showcased_at DESC' :
+      't.showcased_at DESC'
 
     params.push(limit)
     const limitIdx = params.length

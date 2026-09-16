@@ -4,19 +4,21 @@
         startPTT, stopPTT, inputLevel, setPeerVolume, kickPeer,
         peerStatsStore, getQuality, voiceFullStore, voiceKickedStore,
         startScreenShare, stopScreenShare, screenShareStore, remoteScreenStore,
+        audioOutputStore, toggleSpeaker, refreshAudioOutputs,
         type VoicePeer, type PeerStats, type NetQuality,
     } from '$lib/voice'
     import { getPeerVolume, savePeerVolume } from '$lib/voiceSettings'
 
     import VoiceSettings    from './VoiceSettings.svelte'
     import ScreenShareModal from './ScreenShareModal.svelte'
-    import StageView        from './StageView.svelte'
+    import { stageOpenStore } from '$lib/stageStore'
+    import { portal } from '$lib/actions/portal'
     import { onMount } from 'svelte'
     import { t } from '$lib/i18n'
     import { voicePanelTarget } from '$lib/voicePanel'
-    import { page } from '$app/stores'
+    import { page } from '$app/state'
 
-    const userRole = $derived(($page.data as any)?.user?.role as string | undefined)
+    const userRole = $derived((page.data as any)?.user?.role as string | undefined)
     const canModerate = $derived(
         userRole === 'owner' || userRole === 'admin' || userRole === 'moderator'
     )
@@ -32,8 +34,9 @@
     let { mode = 'float', extraClass = '' }: { mode?: 'float' | 'sidebar'; extraClass?: string } = $props()
 
     let showShareModal  = $state(false)
-    let showStage       = $state(false)
     let showVoiceSettings = $state(false)
+    // L'ouverture de la scène est PARTAGÉE (stageStore) : le salon doit pouvoir
+    // dire « ouvre ça en grand » sans passer par ce composant.
 
     const vs            = $derived($voiceStore)
     const peers         = $derived(vs.peers)
@@ -43,15 +46,31 @@
     const level         = $derived($inputLevel)
     const statsMap      = $derived($peerStatsStore)
     const isSharing     = $derived($screenShareStore)
+    const speaker       = $derived($audioOutputStore)
     const remoteScreens = $derived($remoteScreenStore)
+
+    // Disponibilité du bouton haut-parleur (setSinkId : Android/desktop, pas iOS).
+    onMount(() => { void refreshAudioOutputs() })
     const anySharing    = $derived(isSharing || remoteScreens.size > 0)
     const shareCount    = $derived(remoteScreens.size + (isSharing ? 1 : 0))
 
-    // Auto-ouvrir le Stage dès qu'un partage distant devient actif
+    // Auto-ouvrir la scène quand un partage distant APPARAÎT (front montant,
+    // comme Discord). Son PROPRE partage n'ouvre pas la scène en grand : le salon
+    // en montre un aperçu cliquable.
+    //
+    // ⚠ On n'agit QU'À la transition 0 -> >0, et on NE lit PAS stageOpenStore ici.
+    // L'ancienne version « tant qu'un partage existe et que la scène est fermée,
+    // rouvre-la » créait une BOUCLE : cliquer la croix remettait le store à false,
+    // l'effet se redéclenchait (il lisait stageOpenStore), voyait un partage actif,
+    // et rouvrait aussitôt. Impossible de fermer tant que quelqu'un partageait.
+    // Ici, fermer reste fermé jusqu'à ce qu'un NOUVEAU partage arrive.
+    let _prevRemoteCount = 0
     $effect(() => {
-        if (remoteScreens.size > 0 && !showStage) {
-            showStage = true
+        const count = remoteScreens.size
+        if (count > 0 && _prevRemoteCount === 0) {
+            stageOpenStore.set(true)
         }
+        _prevRemoteCount = count
     })
 
     const tFn = $derived($t)
@@ -115,9 +134,9 @@
         return { excellent: 4, good: 3, fair: 2, poor: 1, unknown: 0 }[q]
     }
 
-    function fmtRtt(v: number | null): string   { return v === null ? '—' : `${v} ms` }
-    function fmtLoss(v: number | null): string  { return v === null ? '—' : `${v} %` }
-    function fmtJitter(v: number | null): string { return v === null ? '—' : `${v} ms` }
+    function fmtRtt(v: number | null): string   { return v === null ? '·' : `${v} ms` }
+    function fmtLoss(v: number | null): string  { return v === null ? '·' : `${v} %` }
+    function fmtJitter(v: number | null): string { return v === null ? '·' : `${v} ms` }
 
     // Inline dot color — safe for Tailwind v4 scanner
     function qualityDotClass(q: NetQuality): string {
@@ -210,13 +229,16 @@
     <!-- ── Panneau "Vous" ──────────────────────────────────────────── -->
     {#if selfInfo !== null}
         {@const si = selfInfo}
-        <div class='fixed inset-0 z-40 backdrop-blur-sm bg-black/20'
+        <!-- use:portal — en mode sidebar ce panneau est rendu dans un conteneur
+             transformé (voir actions/portal.ts) : sans portal, `left-1/2` se
+             calcule sur 220px et le panneau part hors écran. -->
+        <div use:portal class='fixed inset-0 z-40 backdrop-blur-sm bg-black/20'
              role='button' tabindex='-1'
              onclick={() => selfInfo = null}
              onkeydown={e => e.key === 'Escape' && (selfInfo = null)}
              aria-label={tFn('voice.close_panel')}></div>
 
-        <div class='fixed bottom-16 left-1/2 -translate-x-1/2 z-50 w-72 rounded-2xl
+        <div use:portal class='fixed bottom-16 left-1/2 -translate-x-1/2 z-50 w-72 rounded-2xl
                     bg-gradient-to-b from-gray-900 to-gray-950
                     border border-green-500/30 shadow-2xl shadow-green-500/10
                     overflow-hidden backdrop-blur-sm
@@ -296,6 +318,7 @@
 
         <!-- Overlay de fermeture -->
         <div
+            use:portal
             class='fixed inset-0 z-40 backdrop-blur-sm bg-black/20'
             role='button' tabindex='-1'
             onclick={closePanel}
@@ -304,7 +327,7 @@
         ></div>
 
         <!-- Panneau popup -->
-        <div class='fixed bottom-16 left-1/2 -translate-x-1/2 z-50 w-72 rounded-2xl 
+        <div use:portal class='fixed bottom-16 left-1/2 -translate-x-1/2 z-50 w-72 rounded-2xl
                     bg-gradient-to-b from-gray-900 to-gray-950 
                     border border-indigo-500/30 shadow-2xl shadow-indigo-500/20 
                     overflow-hidden backdrop-blur-sm
@@ -335,6 +358,8 @@
                             <span class='text-[8px] px-1.5 py-0.5 rounded-full bg-green-900/60 text-green-400 border border-green-700/50'>P2P</span>
                         {:else if stats?.connectionType === 'relay'}
                             <span class='text-[8px] px-1.5 py-0.5 rounded-full bg-blue-900/60 text-blue-400 border border-blue-700/50'>TURN</span>
+                        {:else if stats?.connectionType === 'sfu'}
+                            <span class='text-[8px] px-1.5 py-0.5 rounded-full bg-indigo-900/60 text-indigo-300 border border-indigo-700/50'>SFU</span>
                         {/if}
                     </p>
                     
@@ -400,6 +425,11 @@
                         <span class='text-[10px] px-2 py-0.5 rounded-full bg-green-900/60 text-green-300 font-medium border border-green-700/50 flex items-center gap-1'>
                             <span class="w-1 h-1 rounded-full bg-green-400 animate-pulse"></span>
                             {tFn('voice.direct_p2p')}
+                        </span>
+                    {:else if stats?.connectionType === 'sfu'}
+                        <span class='text-[10px] px-2 py-0.5 rounded-full bg-indigo-900/60 text-indigo-300 font-medium border border-indigo-700/50 flex items-center gap-1'>
+                            <span class="w-1 h-1 rounded-full bg-indigo-400 animate-pulse"></span>
+                            SFU
                         </span>
                     {:else}
                         <span class='text-[10px] px-2 py-0.5 rounded-full bg-gray-800 text-gray-500 font-medium border border-gray-700'>
@@ -664,13 +694,13 @@
                         <!-- Stage button — visible when any share is active -->
                         {#if anySharing}
                             <button
-                                onclick={() => { showStage = !showStage; showShareModal = false }}
+                                onclick={() => { $stageOpenStore = !$stageOpenStore; showShareModal = false }}
                                 class='hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-all duration-200 transform hover:scale-110 active:scale-95 relative
-                                       {showStage
+                                       {$stageOpenStore
                                            ? "bg-gradient-to-r from-red-600 to-rose-600 text-white shadow-lg shadow-red-500/50 ring-2 ring-red-400/50"
                                            : "text-red-400 border border-red-500/30 hover:border-red-400/50"}'
-                                style="pointer-events: auto; position: relative; z-index: 102; {!showStage ? 'background: rgba(239,68,68,0.08)' : ''}"
-                                title="Ouvrir le Stage"
+                                style="pointer-events: auto; position: relative; z-index: 102; {!$stageOpenStore ? 'background: rgba(239,68,68,0.08)' : ''}"
+                                title={tFn('voice_panel.open_stage')}
                             >
                                 <span class="w-1.5 h-1.5 rounded-full bg-current animate-pulse"></span>
                                 <span class="text-[11px] font-bold uppercase tracking-wider">Stage</span>
@@ -683,14 +713,14 @@
 
                         <!-- Partager l'écran / Arrêter -->
                         <button
-                            onclick={() => { isSharing ? stopScreenShare() : (showShareModal = !showShareModal); showStage = false }}
+                            onclick={() => { isSharing ? stopScreenShare() : (showShareModal = !showShareModal); $stageOpenStore = false }}
                             class='hidden sm:flex p-2 rounded-lg transition-all duration-200 transform hover:scale-110 active:scale-95 relative
                                    {isSharing
                                        ? "bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-500/50 ring-2 ring-emerald-400/50"
                                        : showShareModal
                                            ? "bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-500/50 ring-2 ring-indigo-400/50"
                                            : "bg-gray-800/80 text-gray-300 hover:text-white hover:bg-gray-700 hover:shadow-lg hover:shadow-emerald-500/20 border border-gray-700 hover:border-emerald-500/30"}'
-                            title={isSharing ? 'Arrêter le partage' : "Partager l'écran"}
+                            title={isSharing ? tFn('voice_panel.stop_share') : tFn('voice_panel.share_screen')}
                             style="pointer-events: auto; position: relative; z-index: 102;"
                         >
                             <svg xmlns='http://www.w3.org/2000/svg' class='w-4 h-4 {isSharing ? "animate-pulse" : ""}' fill='none' viewBox='0 0 24 24' stroke='currentColor' stroke-width='2'>
@@ -706,7 +736,7 @@
                                    {muted
                                        ? 'bg-gradient-to-r from-red-600 to-red-500 text-white shadow-lg shadow-red-900/50 ring-1 ring-red-700/50 animate-pulse'
                                        : 'bg-gray-800/80 text-gray-300 hover:text-white hover:bg-gray-700 hover:shadow-lg hover:shadow-indigo-500/20 border border-gray-700 hover:border-indigo-500/30'}'
-                            title={muted ? 'Réactiver le micro' : 'Couper le micro'}
+                            title={muted ? tFn('voice_panel.unmute') : tFn('voice_panel.mute')}
                             style="pointer-events: auto; position: relative; z-index: 101;"
                         >
                             {#if muted}
@@ -725,6 +755,33 @@
                             {/if}
                         </button>
 
+                        <!-- Haut-parleur (Android/desktop) : bascule écouteur <-> haut-parleur.
+                             Sur mobile, le son part dans l'écouteur dès qu'un micro tourne ;
+                             ce bouton le renvoie au haut-parleur. Absent sur iOS (pas de setSinkId). -->
+                        {#if speaker.supported}
+                            <button
+                                onclick={() => { void toggleSpeaker() }}
+                                class='p-2 rounded-lg transition-all duration-200 transform hover:scale-110 active:scale-95 relative min-w-[44px] min-h-[44px] flex items-center justify-center
+                                       {speaker.onSpeaker
+                                           ? 'bg-gradient-to-r from-indigo-600 to-indigo-500 text-white shadow-lg shadow-indigo-900/50 ring-1 ring-indigo-700/50'
+                                           : 'bg-gray-800/80 text-gray-300 hover:text-white hover:bg-gray-700 border border-gray-700'}'
+                                title={speaker.onSpeaker ? tFn('voice_panel.to_earpiece') : tFn('voice_panel.to_speaker')}
+                                aria-label={speaker.onSpeaker ? tFn('voice_panel.to_earpiece') : tFn('voice_panel.to_speaker')}
+                                style="pointer-events: auto; position: relative; z-index: 101;"
+                            >
+                                {#if speaker.onSpeaker}
+                                    <svg class='w-4 h-4' fill='none' viewBox='0 0 24 24' stroke='currentColor' stroke-width='2'>
+                                        <path stroke-linecap='round' stroke-linejoin='round' d='M11 5 6 9H2v6h4l5 4V5z'/>
+                                        <path stroke-linecap='round' stroke-linejoin='round' d='M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14'/>
+                                    </svg>
+                                {:else}
+                                    <svg class='w-4 h-4' fill='none' viewBox='0 0 24 24' stroke='currentColor' stroke-width='2'>
+                                        <path stroke-linecap='round' stroke-linejoin='round' d='M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z'/>
+                                    </svg>
+                                {/if}
+                            </button>
+                        {/if}
+
                         <!-- Deafen -->
                         <button
                             onclick={toggleDeafen}
@@ -732,7 +789,7 @@
                                    {deafened
                                        ? 'bg-gradient-to-r from-red-600 to-red-500 text-white shadow-lg shadow-red-900/50 ring-1 ring-red-700/50 animate-pulse'
                                        : 'bg-gray-800/80 text-gray-300 hover:text-white hover:bg-gray-700 hover:shadow-lg hover:shadow-indigo-500/20 border border-gray-700 hover:border-indigo-500/30'}'
-                            title={deafened ? 'Réactiver le son' : 'Se rendre sourd'}
+                            title={deafened ? tFn('voice_panel.undeafen') : tFn('voice_panel.deafen')}
                             style="pointer-events: auto; position: relative; z-index: 101;"
                         >
                             <svg xmlns='http://www.w3.org/2000/svg' class='w-4 h-4' fill='none' viewBox='0 0 24 24' stroke='currentColor' stroke-width='2'>
@@ -835,37 +892,47 @@
 
                 <!-- ── VoiceSettings popup ────────────────────────────────────── -->
                 {#if showVoiceSettings}
-                    <div class="fixed inset-0 sm:absolute sm:inset-auto sm:bottom-full sm:mb-2 sm:right-0 sm:w-[340px] z-[200]
+                    <!-- PORTAL OBLIGATOIRE, mesure du 17/08 chez l'utilisateur (500x996).
+                         Cette fenetre est `z-[200]`, et elle etait quand meme RECOUVERTE
+                         par l'entete de l'application (`NAV.sticky top-0 z-50`, 48px), qui
+                         mangeait les 31 premiers pixels de la croix de fermeture sur 44 :
+
+                             y=4  -> NAV.sticky top-0 z-50 h-12   <- l'entete
+                             y=52 -> LA CROIX                     <- enfin
+
+                         La chaine des ancetres dit pourquoi :
+
+                             panneau            z:200
+                             barre vocale       z:40
+                             DIV.fixed top-12   z:10   <- le plafond
+
+                         Chaque `z-index` sur un `fixed` cree un contexte d'empilement. Le
+                         200 ne vaut que dans celui de la barre, qui ne vaut que dans celui
+                         a z:10. Face au z-50 de l'entete, c'est 10 contre 50 : perdu. J'ai
+                         d'abord monte la barre de 40 a 60 (#576) : INERTE, mesure a
+                         l'appui, le plafond etait un cran plus haut.
+
+                         Le portal sort la fenetre a la racine : plus aucun contexte
+                         intermediaire, le 200 compte pour de vrai. C'est deja la parade
+                         employee trois fois dans ce fichier.
+
+                         Consequence : `sm:absolute ... bottom-full right-0` n'a plus de
+                         parent auquel s'accrocher. On passe donc en `fixed` centre au
+                         dessus de la barre, comme la variante laterale. -->
+                    <div use:portal class="fixed inset-0 sm:inset-auto sm:left-1/2 sm:-translate-x-1/2 sm:w-[340px]
+                                sm:bottom-[calc(var(--bottom-nav-h)+5.5rem)] z-[200]
                                 flex flex-col sm:block animate-in fade-in slide-in-from-bottom-4 duration-300"
                          style="pointer-events: auto;">
+                        <!-- Sous `sm` le panneau occupe tout l'ecran et defile deja. A
+                             partir de `sm` il pousse vers le HAUT (`bottom-full`) : sans
+                             borne il deborde d'une fenetre courte, meme defaut qu'en bas. -->
                         <div class="relative flex-1 sm:flex-none bg-gradient-to-b from-gray-900 to-gray-950
                                     border border-amber-500/30 sm:rounded-2xl shadow-2xl shadow-amber-500/10
-                                    overflow-hidden backdrop-blur-md flex flex-col">
+                                    sm:max-h-[calc(100dvh-8rem)] overflow-hidden backdrop-blur-md flex flex-col">
                             <div class="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-amber-500 to-transparent"></div>
-                            <!-- Header fermeture mobile-only -->
-                            <div class="sm:hidden flex items-center justify-between px-4 py-3 border-b border-gray-800 bg-gray-900/95 shrink-0">
-                                <span class="text-sm font-semibold text-white">{tFn('voice.audio_settings_title')}</span>
-                                <button onclick={() => showVoiceSettings = false}
-                                        aria-label="Fermer les paramètres audio"
-                                        class="min-w-[44px] min-h-[44px] flex items-center justify-center text-gray-400 hover:text-white">
-                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
-                                    </svg>
-                                </button>
+                            <div class="flex-1 overflow-y-auto sm:flex-none sm:overflow-y-auto">
+                                <VoiceSettings onclose={() => showVoiceSettings = false} />
                             </div>
-                            <div class="flex-1 overflow-y-auto sm:flex-none sm:overflow-visible">
-                                <VoiceSettings />
-                            </div>
-                            <button
-                                onclick={() => showVoiceSettings = false}
-                                class="hidden sm:flex absolute top-4 right-4 text-gray-500 hover:text-white
-                                       bg-black/40 w-7 h-7 rounded-full items-center justify-center
-                                       backdrop-blur-sm border border-gray-700 hover:border-amber-500/50
-                                       transition-all duration-200 hover:scale-110"
-                                style="pointer-events: auto; z-index: 201;"
-                            >
-                                <span class="text-sm">✕</span>
-                            </button>
                         </div>
                     </div>
                 {/if}
@@ -885,7 +952,7 @@
                     <span class="absolute inset-0 rounded-full bg-green-400 animate-ping opacity-60"></span>
                 {/if}
             </div>
-            <span class="text-xs text-green-400 font-medium flex-1 truncate">Vocal actif</span>
+            <span class="text-xs text-green-400 font-medium flex-1 truncate">{tFn('voice_panel.active')}</span>
             <span class="text-xs text-gray-600 tabular-nums">{peers.length + 1}</span>
         </div>
 
@@ -905,7 +972,7 @@
                     {@const pQuality = getQuality(pStats)}
                     <button
                         onclick={() => openPeerPanel(peer)}
-                        title="{peer.username}"
+                        title={peer.username}
                         class="relative focus:outline-none shrink-0"
                     >
                         {#if peer.avatar}
@@ -934,7 +1001,7 @@
             <div class="flex items-center px-1.5 pb-2 gap-0.5">
 
                 <!-- Mute -->
-                <button onclick={toggleMute} title={muted ? 'Réactiver le micro' : 'Couper le micro'}
+                <button onclick={toggleMute} title={muted ? tFn('voice_panel.unmute') : tFn('voice_panel.mute')}
                     class="flex-1 flex items-center justify-center p-1.5 rounded-lg transition-colors
                            {muted ? 'text-red-400 bg-red-900/30' : 'text-gray-400 hover:text-white hover:bg-gray-800'}">
                     {#if muted}
@@ -954,7 +1021,7 @@
                 </button>
 
                 <!-- Deafen -->
-                <button onclick={toggleDeafen} title={deafened ? 'Réactiver le son' : 'Se rendre sourd'}
+                <button onclick={toggleDeafen} title={deafened ? tFn('voice_panel.undeafen') : tFn('voice_panel.deafen')}
                     class="flex-1 flex items-center justify-center p-1.5 rounded-lg transition-colors
                            {deafened ? 'text-red-400 bg-red-900/30' : 'text-gray-400 hover:text-white hover:bg-gray-800'}">
                     <svg xmlns='http://www.w3.org/2000/svg' class='w-4 h-4' fill='none' viewBox='0 0 24 24' stroke='currentColor' stroke-width='2'>
@@ -965,8 +1032,8 @@
 
                 <!-- Stage (sidebar) -->
                 {#if anySharing}
-                    <button onclick={() => { showStage = !showStage }}
-                        title="Stage"
+                    <button onclick={() => { $stageOpenStore = !$stageOpenStore }}
+                        title={tFn('voice_panel.stage')}
                         class="flex-1 flex items-center justify-center p-1.5 rounded-lg transition-colors text-red-400 bg-red-900/20">
                         <span class="w-1.5 h-1.5 rounded-full bg-current animate-pulse"></span>
                     </button>
@@ -974,7 +1041,7 @@
 
                 <!-- Partage d'écran (sidebar) -->
                 <button onclick={() => { isSharing ? stopScreenShare() : (showShareModal = !showShareModal) }}
-                    title={isSharing ? 'Arrêter le partage' : "Partager l'écran"}
+                    title={isSharing ? tFn('voice_panel.stop_share') : tFn('voice_panel.share_screen')}
                     class="flex-1 flex items-center justify-center p-1.5 rounded-lg transition-colors
                            {isSharing ? 'text-emerald-400 bg-emerald-900/30' : 'text-gray-400 hover:text-white hover:bg-gray-800'}">
                     <svg xmlns='http://www.w3.org/2000/svg' class='w-4 h-4 {isSharing ? "animate-pulse" : ""}' fill='none' viewBox='0 0 24 24' stroke='currentColor' stroke-width='2'>
@@ -1004,28 +1071,32 @@
                 </button>
             </div>
 
-            <!-- VoiceSettings popup (fixed, échappe la sidebar) -->
+            <!-- VoiceSettings popup — `fixed` NE SUFFIT PAS à échapper la sidebar :
+                 celle-ci porte `transform: translateX(0)` (animation de repli), donc
+                 elle devient le bloc conteneur des descendants fixed. `left-1/2` se
+                 calculait sur 220px et `-translate-x-1/2` de 360px sortait le panneau
+                 à -14px : les libellés étaient cisaillés à gauche. Le portal le sort
+                 pour de bon (voir actions/portal.ts). -->
             {#if showVoiceSettings}
-                <div class="fixed inset-0 z-[199] backdrop-blur-sm bg-black/20"
+                <div use:portal class="fixed inset-0 z-[199] backdrop-blur-sm bg-black/20"
                      role="button" tabindex="-1"
                      onclick={() => showVoiceSettings = false}
                      onkeydown={e => e.key === 'Escape' && (showVoiceSettings = false)}
-                     aria-label="Fermer les paramètres audio">
+                     aria-label={tFn('voice_panel.close_settings')}>
                 </div>
-                <div class="fixed bottom-24 left-1/2 -translate-x-1/2 w-[360px] z-[200]
+                <div use:portal class="fixed bottom-24 left-1/2 -translate-x-1/2 w-[360px] z-[200]
                             animate-in fade-in slide-in-from-bottom-4 duration-300">
+                    <!-- BORNE A L'ECRAN. Sans `max-h`, ce panneau mesurait 619px de haut
+                         sur un ecran de 600px. Ancre en bas (`bottom-24`), son sommet
+                         tombait a -115px, et `overflow-hidden` interdisait tout
+                         defilement : l'excedent etait purement AMPUTE par le haut, avec
+                         l'en-tete et la croix de fermeture dedans. Mesure du 17/08. -->
                     <div class="relative bg-gradient-to-b from-gray-900 to-gray-950
                                 border border-amber-500/30 rounded-2xl shadow-2xl shadow-amber-500/10
-                                overflow-hidden backdrop-blur-md">
+                                max-h-[calc(100dvh-7rem)] overflow-y-auto backdrop-blur-md">
                         <div class="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-amber-500 to-transparent"></div>
-                        <VoiceSettings />
-                        <button onclick={() => showVoiceSettings = false}
-                            class="absolute top-4 right-4 text-gray-500 hover:text-white
-                                   bg-black/40 w-7 h-7 rounded-full flex items-center justify-center
-                                   backdrop-blur-sm border border-gray-700 hover:border-amber-500/50
-                                   transition-all duration-200 hover:scale-110">
-                            <span class="text-sm">✕</span>
-                        </button>
+
+                        <VoiceSettings onclose={() => showVoiceSettings = false} />
                     </div>
                 </div>
             {/if}
@@ -1037,9 +1108,12 @@
     {#if showShareModal}
         <ScreenShareModal onclose={() => showShareModal = false}/>
     {/if}
-    {#if showStage}
-        <StageView onclose={() => showStage = false}/>
-    {/if}
+    <!-- La Scène N'EST PLUS montée ici : ce composant vit dans <aside id="galaxy-sidebar">,
+         qui est `fixed` + `z-30` et crée donc un CONTEXTE D'EMPILEMENT. Un enfant en
+         z-[500] y reste prisonnier : la sidebar des membres (z-30, plus loin dans le
+         DOM) et l'en-tête peignaient par-dessus la Scène (écran rogné à droite,
+         en-tête de la Scène invisible). Elle est désormais montée à la RACINE de
+         +layout.svelte, pilotée par stageOpenStore. -->
 {/if}
 
 <style>
@@ -1244,6 +1318,4 @@ input[type=range]::-moz-range-thumb:hover {
 }
 
 
-@keyframes sound-wave {}
-@keyframes sound-wave-small {}
 </style>

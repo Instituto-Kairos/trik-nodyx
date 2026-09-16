@@ -1,8 +1,14 @@
 <script lang="ts">
+	import { hexToRgbTriplet } from '$lib/types/homepage'
 	import type { GridLayout, GridTheme, GridRow, GridColumn } from '$lib/types/homepage'
 	import { DEFAULT_THEME, autoSpanMd, autoSpanSm } from '$lib/types/homepage'
 	import { PLUGIN_REGISTRY } from './plugins'
 	import DynamicWidget from './DynamicWidget.svelte'
+	import ExtensionSurface from '$lib/components/ExtensionSurface.svelte'
+	import { extensionIndex, type PublicExtension } from './extensionCatalog'
+	import { t as i18n } from '$lib/i18n'   // `t` est déjà utilisé pour le thème
+
+	const tFn = $derived($i18n)
 
 	interface Props {
 		layout:           GridLayout
@@ -10,6 +16,7 @@
 		instance?:        Record<string, unknown>
 		user?:            Record<string, unknown> | null
 		installedWidgets?: Record<string, { entry: string; [k: string]: unknown }>
+		extensions?:       PublicExtension[]
 		// Mode édition : affiche overlays, handles, slots vides
 		editMode?:         boolean
 		// Callbacks édition
@@ -30,6 +37,7 @@
 		instance = {},
 		user = null,
 		installedWidgets = {},
+		extensions = [],
 		editMode = false,
 		onRowDragStart,
 		onColClick,
@@ -47,9 +55,16 @@
 	const cssVars = $derived([
 		`--np: ${t.primary}`,
 		`--na: ${t.accent}`,
+		// Triplets RGB pour les widgets natifs qui composent des rgb(var(--x) / alpha)
+		// (glows, dégradés translucides) — même technique que --nx-*-rgb dans app.css.
+		`--np-rgb: ${hexToRgbTriplet(t.primary)}`,
+		`--na-rgb: ${hexToRgbTriplet(t.accent)}`,
+		`--nl: ${t.link_color}`,
+		`--nl-rgb: ${hexToRgbTriplet(t.link_color)}`,
 		`--nb: ${t.bg}`,
 		`--nc: ${t.card_bg}`,
 		`--nborder: ${t.border_color}`,
+		`--nbw: ${t.border_width}`,
 		`--nr: ${t.border_radius}`,
 		`--nfont: ${t.font_family}, Inter, sans-serif`,
 		`--nfs: ${t.font_size_base}`,
@@ -73,6 +88,12 @@
 	}
 	function getDynamic(widgetType: string) {
 		return installedWidgets[widgetType] ?? null
+	}
+
+	// Surfaces d'extension, resolues par identifiant prefixe `ext:<ext>:<surface>`.
+	const extIndex = $derived(extensionIndex(extensions))
+	function getExtension(widgetType: string) {
+		return extIndex[widgetType] ?? null
 	}
 
 	function colKey(row: GridRow, col: GridColumn) {
@@ -101,12 +122,12 @@
 				<div class="gr-row-bar">
 					<button
 						class="gr-row-bar-handle"
-						title="Déplacer la ligne"
+						title={tFn('grid_renderer.move_row')}
 						onpointerdown={(e) => onRowDragStart?.(e, row.id)}
-					>⠿ déplacer</button>
+					>{tFn('grid_renderer.drag')}</button>
 					<div class="gr-row-bar-actions">
-						<button class="gr-row-btn" title="Paramètres" onclick={() => onRowSettings?.(row.id)}>⚙</button>
-						<button class="gr-row-btn gr-row-btn--del" title="Supprimer" onclick={() => onRowDelete?.(row.id)}>✕</button>
+						<button class="gr-row-btn" title={tFn('grid_renderer.settings')} onclick={() => onRowSettings?.(row.id)}>⚙</button>
+						<button class="gr-row-btn gr-row-btn--del" title={tFn('grid_renderer.delete')} onclick={() => onRowDelete?.(row.id)}>✕</button>
 					</div>
 				</div>
 			{/if}
@@ -114,6 +135,7 @@
 			{#each row.columns as col, colIdx (col.id)}
 				{@const plugin  = col.widget ? getPlugin(col.widget) : null}
 				{@const dynamic = col.widget ? getDynamic(col.widget) : null}
+				{@const ext     = col.widget ? getExtension(col.widget) : null}
 				{@const isSelected = selectedColKey === colKey(row, col)}
 
 				<!-- ── COLUMN ──────────────────────────────────────────────── -->
@@ -139,6 +161,18 @@
 							{user}
 							title={col.title}
 						/>
+					{:else if ext}
+						<ExtensionSurface
+							extensionId={ext.extensionId}
+							version={ext.version}
+							surface={`widget:${ext.surfaceId}`}
+							entry={ext.entry}
+							label={ext.label}
+							config={col.config ?? {}}
+							messages={ext.messages}
+							defaultHeight={ext.defaultHeight}
+							{instance}
+						/>
 					{:else if dynamic}
 						<DynamicWidget
 							widgetId={col.widget ?? ''}
@@ -152,7 +186,7 @@
 						<!-- Colonne vide en mode éditeur -->
 						<button class="gr-col-empty-btn" onclick={() => onAddWidget?.(row.id, col.id)}>
 							<span class="gr-col-empty-icon">＋</span>
-							<span class="gr-col-empty-label">Ajouter un widget</span>
+							<span class="gr-col-empty-label">{tFn('grid_renderer.add_widget')}</span>
 							<span class="gr-col-empty-hint">span {col.span}/12</span>
 						</button>
 					{/if}
@@ -161,7 +195,7 @@
 						<!-- Badge edit/supprimer sur le widget -->
 						<div class="gr-col-overlay">
 							<button class="gr-col-overlay-btn" onclick={(e) => { e.stopPropagation(); onColClick?.(row.id, col.id) }}>⚙ Config</button>
-							<button class="gr-col-overlay-btn gr-col-overlay-btn--add" onclick={(e) => { e.stopPropagation(); onAddWidget?.(row.id, col.id) }}>↩ Changer</button>
+							<button class="gr-col-overlay-btn gr-col-overlay-btn--add" onclick={(e) => { e.stopPropagation(); onAddWidget?.(row.id, col.id) }}>{tFn('grid_renderer.change')}</button>
 						</div>
 					{/if}
 
@@ -170,7 +204,7 @@
 						     → hors du flux CSS Grid, n'occupe pas de cellule -->
 						<button
 							class="gr-resize-handle"
-							title="Redimensionner les colonnes"
+							title={tFn('grid_renderer.resize_cols')}
 							onpointerdown={(e) => { e.stopPropagation(); onResizeStart?.(e, row.id, colIdx) }}
 						>◀▶</button>
 					{/if}
@@ -293,6 +327,14 @@
 	.gr-col--selected {
 		outline: 2px solid var(--nx-accent-2-soft) !important;
 		outline-offset: -1px;
+		animation: gr-col-aura 1.8s ease-in-out infinite;
+	}
+	@keyframes gr-col-aura {
+		0%, 100% { box-shadow: 0 0 0 0 rgb(var(--nx-accent-2-rgb) / .35), inset 0 0 20px rgb(var(--nx-accent-2-rgb) / .05); }
+		50%      { box-shadow: 0 0 24px 3px rgb(var(--nx-accent-2-rgb) / .55), inset 0 0 30px rgb(var(--nx-accent-2-rgb) / .12); }
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.gr-col--selected { animation: none; box-shadow: 0 0 16px 2px rgb(var(--nx-accent-2-rgb) / .4); }
 	}
 	.gr-col--empty {
 		min-height: 80px;

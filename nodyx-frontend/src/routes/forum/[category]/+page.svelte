@@ -2,8 +2,9 @@
 	import type { PageData } from './$types';
 	import { fly, fade } from 'svelte/transition';
 	import type { FlyParams, FadeParams } from 'svelte/transition';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { t } from '$lib/i18n';
+	import { replyCount, isUnanswered } from '$lib/forumCounts';
 
 	const tFn = $derived($t)
 
@@ -21,7 +22,7 @@
 	const categoryName = $derived(
 	data.category?.name || 
 	// Si pas de catégorie, on utilise un nom générique
-	`Catégorie`
+	tFn('forum.category_fallback')
 ); // À remplacer quand l'API fournira la catégorie
 
 	// ── Types ──────────────────────────────────────────────────────────
@@ -95,10 +96,10 @@
 				filtered = filtered.filter(t => t.is_pinned);
 				break;
 			case 'unanswered':
-				filtered = filtered.filter(t => (t.post_count || 0) === 0);
+				filtered = filtered.filter(t => isUnanswered(t.post_count));
 				break;
 			case 'popular':
-				filtered = filtered.filter(t => (t.post_count || 0) >= 10);
+				filtered = filtered.filter(t => replyCount(t.post_count) >= 10);
 				break;
 			case 'today':
 				const today = new Date();
@@ -124,6 +125,9 @@
 					new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
 				);
 			case 'popular':
+				// Volontairement sur post_count et non sur replyCount : retrancher le
+				// message d'ouverture des DEUX côtés ne change pas l'ordre. Passer par
+				// le helper ici n'apporterait rien qu'un appel de plus par comparaison.
 				return filtered.sort((a, b) => (b.post_count || 0) - (a.post_count || 0));
 			case 'views':
 				return filtered.sort((a, b) => (b.views || 0) - (a.views || 0));
@@ -225,8 +229,8 @@
 	const categoryStats = $derived({
 		total: threads.length,
 		pinned: threads.filter(t => t.is_pinned).length,
-		unanswered: threads.filter(t => (t.post_count || 0) === 0).length,
-		popular: threads.filter(t => (t.post_count || 0) >= 10).length,
+		unanswered: threads.filter(t => isUnanswered(t.post_count)).length,
+		popular: threads.filter(t => replyCount(t.post_count) >= 10).length,
 		today: threads.filter(t => {
 			const today = new Date();
 			today.setHours(0, 0, 0, 0);
@@ -249,19 +253,22 @@
 </script>
 
 <svelte:head>
-	<title>{categoryName} — {$page.data.communityName ?? 'Nodyx'}</title>
-	<meta name="description" content="Discussions dans {categoryName} — forum {$page.data.communityName ?? 'Nodyx'}" />
-	<link rel="canonical" href={$page.url.href} />
-	<meta property="og:title"       content="{categoryName} — {$page.data.communityName ?? 'Nodyx'}" />
-	<meta property="og:description" content="Discussions dans {categoryName} — forum {$page.data.communityName ?? 'Nodyx'}" />
+	<title>{categoryName} · {page.data.communityName ?? 'Nodyx'}</title>
+	<meta name="description" content="Discussions dans {categoryName}, forum {page.data.communityName ?? 'Nodyx'}" />
+	<link rel="canonical" href={page.url.href} />
+	<meta property="og:title"       content="{categoryName} · {page.data.communityName ?? 'Nodyx'}" />
+	<meta property="og:description" content="Discussions dans {categoryName}, forum {page.data.communityName ?? 'Nodyx'}" />
 	<meta property="og:type"        content="website" />
-	<meta property="og:url"         content={$page.url.href} />
-	<meta property="og:image"       content={$page.data.communityBannerUrl ?? $page.data.communityLogoUrl ?? `${$page.url.origin}/default-og-image.png`} />
-	<meta property="og:site_name"   content={$page.data.communityName ?? 'Nodyx'} />
+	<meta property="og:url"         content={page.url.href} />
+	<meta property="og:image"       content={page.data.communityBannerUrl ?? page.data.communityLogoUrl ?? `${page.url.origin}/default-og-image.png`} />
+	<meta property="og:site_name"   content={page.data.communityName ?? 'Nodyx'} />
 </svelte:head>
 
 <!-- EN-TÊTE DE CATÉGORIE -->
-<div class="relative mb-8 overflow-hidden border border-white/[.06] bg-gradient-to-br from-gray-900 via-gray-900 to-indigo-950/30 p-8">
+<!-- `p-5` sur mobile : `p-8` seul mangeait 64px de rembourrage horizontal
+     sur un ecran de 390px, et le contenu de l'en-tete (fil d'Ariane, titre,
+     pastilles de statistiques) se faisait couper de 80px. -->
+<div class="relative mb-8 overflow-hidden border border-white/[.06] bg-gradient-to-br from-gray-900 via-gray-900 to-indigo-950/30 p-5 sm:p-8">
 	<!-- Effets de lumière -->
 	<div class="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-indigo-500/50 to-transparent"></div>
 	<div class="absolute -top-20 -right-20 w-80 h-80 bg-indigo-600/10 blur-3xl"></div>
@@ -373,7 +380,7 @@
 			{#if searchQuery}
 				<button
 					onclick={() => searchQuery = ''}
-					aria-label="Effacer la recherche"
+					aria-label={tFn('forum.clear_search_aria')}
 					class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-400"
 				>
 					<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -391,7 +398,7 @@
 			</div>
 			<div class="flex items-center gap-1.5">
 				<span class="w-2 h-2 rounded-full bg-yellow-500"></span>
-				<span class="text-gray-500">Épinglé</span>
+				<span class="text-gray-500">{tFn('common.pinned')}</span>
 			</div>
 			<div class="flex items-center gap-1.5">
 				<span class="w-2 h-2 rounded-full bg-green-500"></span>
@@ -448,11 +455,11 @@
 									{/if}
 								</div>
 								<span class="block text-[10px] text-gray-600 mt-0.5">
-									{value === 'all' ? 'Aucun filtre' :
-									 value === 'pinned' ? 'Sujets épinglés uniquement' :
-									 value === 'unanswered' ? 'Sujets sans réponse' :
-									 value === 'popular' ? 'Plus de 10 réponses' :
-									 'Créés aujourd\'hui'}
+									{value === 'all' ? tFn('forum.filter_all') :
+									 value === 'pinned' ? tFn('forum.filter_pinned') :
+									 value === 'unanswered' ? tFn('forum.filter_unanswered') :
+									 value === 'popular' ? tFn('forum.filter_popular') :
+									 tFn('forum.filter_today')}
 								</span>
 							</button>
 						{/each}
@@ -504,10 +511,10 @@
 									{/if}
 								</div>
 								<span class="block text-[10px] text-gray-600 mt-0.5">
-									{value === 'recent' ? 'Date de création' :
-									 value === 'popular' ? 'Nombre de réponses' :
-									 value === 'views' ? 'Nombre de vues' :
-									 'Dernière activité'}
+									{value === 'recent' ? tFn('forum.sort_created') :
+									 value === 'popular' ? tFn('forum.sort_replies') :
+									 value === 'views' ? tFn('forum.sort_views') :
+									 tFn('forum.sort_activity')}
 								</span>
 							</button>
 						{/each}
@@ -536,14 +543,14 @@
 {#if searchQuery}
 	<div class="mb-4 flex items-center justify-between">
 		<p class="text-sm text-gray-400">
-			🔍 Recherche pour "<span class="text-white font-medium">{searchQuery}</span>" · 
-			{filteredThreads.length} résultat{filteredThreads.length > 1 ? 's' : ''}
+			🔍 {tFn('forum.search_for')} "<span class="text-white font-medium">{searchQuery}</span>" ·
+			{tFn('forum.results_count', { n: filteredThreads.length })}
 		</p>
 		<button 
 			onclick={() => searchQuery = ''}
 			class="text-xs text-gray-600 hover:text-gray-400 transition-colors"
 		>
-			Effacer
+			{tFn('common.clear')}
 		</button>
 	</div>
 {/if}
@@ -569,12 +576,12 @@
 			{#if searchQuery}
 				{tFn('forum.try_keywords')}
 			{:else}
-				Soyez le premier à lancer une discussion !
+				{tFn('forum.empty_cta')}
 			{/if}
 		</p>
 		{#if user && !searchQuery}
 			<a href="/forum/{categoryId}/new" class="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors">
-				Créer le premier sujet
+				{tFn('forum.create_first')}
 			</a>
 		{/if}
 	</div>
@@ -651,7 +658,12 @@
 					</div>
 
 					<!-- Titre -->
-					<p class="text-base font-semibold text-white group-hover:text-indigo-400 transition-colors line-clamp-1">
+					<!-- Deux lignes sur mobile, une seule des `sm`. Le bloc de droite est
+					     en `shrink-0` et prélève environ 150px avant que le titre n'ait sa
+					     part : sur un téléphone, `line-clamp-1` réduisait des titres comme
+					     « Nodyx Soundboard v2.7.0 : tes sons, ta queue... » à un moignon
+					     illisible. -->
+					<p class="text-base font-semibold text-white group-hover:text-indigo-400 transition-colors line-clamp-2 sm:line-clamp-1">
 						{thread.title}
 					</p>
 
@@ -688,13 +700,13 @@
 				<div class="flex items-center gap-4 shrink-0">
 					<!-- Compteur de réponses -->
 					<div class="flex flex-col items-center px-3 py-1.5 border border-white/[.06] group-hover:border-indigo-700/50 transition-colors min-w-[60px] text-center">
-						<span class="text-lg font-bold text-indigo-400 leading-none">{thread.post_count}</span>
-						<span class="text-[10px] text-gray-500 uppercase tracking-wider">{tFn('forum.replies_label')}</span>
+						<span class="text-lg font-bold text-indigo-400 leading-none">{replyCount(thread.post_count)}</span>
+						<span class="text-[11px] text-gray-500 uppercase tracking-wider">{tFn('forum.replies_label')}</span>
 					</div>
 
 					<!-- Dernier posteur -->
 					{#if lastPoster}
-						<div class="flex items-center gap-2 pl-2 border-l border-gray-800">
+						<div class="hidden sm:flex items-center gap-2 pl-2 border-l border-gray-800">
 							<div class="text-right hidden sm:block">
 								<p class="text-[10px] text-gray-600">{tFn('forum.last_reply')}</p>
 								<p class="text-xs font-medium text-gray-300">{lastPoster.author_username}</p>
@@ -712,7 +724,7 @@
 				</div>
 
 				<!-- Flèche -->
-				<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-700 group-hover:text-indigo-500 transition-colors shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+				<svg xmlns="http://www.w3.org/2000/svg" class="hidden sm:block w-5 h-5 text-gray-700 group-hover:text-indigo-500 transition-colors shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
 					<path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
 				</svg>
 			</a>
@@ -730,7 +742,7 @@
 			<button
 				onclick={() => goToPage(currentPage - 1)}
 				disabled={currentPage === 1}
-				aria-label="Page précédente"
+				aria-label={tFn('common.prev_page')}
 				class="w-9 h-9 bg-gray-800 text-gray-400 hover:text-white hover:bg-indigo-600
 					   disabled:opacity-30 disabled:cursor-not-allowed transition-all
 					   flex items-center justify-center"
@@ -762,7 +774,7 @@
 			<button
 				onclick={() => goToPage(currentPage + 1)}
 				disabled={currentPage === totalPages}
-				aria-label="Page suivante"
+				aria-label={tFn('common.next_page')}
 				class="w-9 h-9 bg-gray-800 text-gray-400 hover:text-white hover:bg-indigo-600
 					   disabled:opacity-30 disabled:cursor-not-allowed transition-all
 					   flex items-center justify-center"

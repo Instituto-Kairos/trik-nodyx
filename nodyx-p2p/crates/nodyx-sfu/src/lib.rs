@@ -17,8 +17,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 mod voice;
 pub use voice::{
-    desired_mode, JoinOutcome, Mode, PublicationInfo, SfuMigration, VoiceConfig, VoiceError,
-    VoiceService,
+    desired_mode, Direction, JoinOutcome, Mode, PublicationInfo, SfuMigration, TransportAudit,
+    VoiceConfig, VoiceError, VoiceService,
 };
 
 // ── Identifiants du domaine ─────────────────────────────────────────────────
@@ -55,10 +55,17 @@ PipeHandle);
 // ── Types média ─────────────────────────────────────────────────────────────
 
 /// Nature d'un flux publié.
+///
+/// `ScreenAudio` est bien de l'AUDIO au sens média (pas de keyframe, pas de
+/// couches), mais c'est une SOURCE distincte du micro : c'est le son de l'écran
+/// partagé (onglet, jeu, vidéo). Le distinguer permet au spectateur de le rattacher
+/// au flux vidéo du partageur, et donc de le faire sortir de la balise `<video>`
+/// avec son image, au lieu de le confondre avec la voix de quelqu'un.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrackKind {
     Audio,
     Screen,
+    ScreenAudio,
     Cam,
 }
 
@@ -72,6 +79,20 @@ pub struct Layer {
 impl Layer {
     /// Couche la plus basse (fallback bande passante faible).
     pub const LOWEST: Layer = Layer { spatial: 0, temporal: 0 };
+}
+
+/// Charge utile de signaling, OPAQUE pour le métier. Contenu propre au moteur
+/// (mediasoup : JSON ICE/DTLS/RtpParameters ; un autre moteur : SDP…). Le
+/// cerveau (`VoiceService`) la TRANSPORTE entre client et moteur sans jamais
+/// la lire : c'est ce qui garde le métier 100 % agnostique du moteur (CDC §18,
+/// la « fuite » codecs confinée dans l'adaptateur/CodecAdapter).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignalingBlob(pub String);
+
+impl fmt::Display for SignalingBlob {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
 }
 
 /// Portée d'une requête de stats.
@@ -135,12 +156,50 @@ pub type Result<T> = std::result::Result<T, MediaError>;
 pub trait MediaEngine: Send + Sync {
     /// Crée le Router d'un salon (idempotent côté appelant recommandé).
     async fn create_room(&self, room: RoomId) -> Result<RouterHandle>;
+    /// Capabilities du salon à remettre au client au join (mediasoup :
+    /// `router.rtpCapabilities` pour `device.load()`). Blob opaque.
+    async fn room_capabilities(&self, router: &RouterHandle) -> Result<SignalingBlob>;
     /// Crée le Transport WebRTC d'un participant dans un salon.
     async fn create_transport(&self, router: &RouterHandle, participant: ParticipantId) -> Result<TransportHandle>;
-    /// Le participant publie un flux (audio / écran / cam).
-    async fn produce(&self, transport: &TransportHandle, kind: TrackKind) -> Result<ProducerId>;
-    /// Le participant souscrit à un flux publié.
-    async fn consume(&self, transport: &TransportHandle, producer: &ProducerId) -> Result<ConsumerId>;
+    /// Paramètres de connexion du transport à remettre au client
+    /// (mediasoup : id + iceParameters + iceCandidates + dtlsParameters).
+    async fn transport_params(&self, transport: &TransportHandle) -> Result<SignalingBlob>;
+    /// Finalise la connexion du transport avec la réponse du client
+    /// (mediasoup : dtlsParameters du `connect`).
+    async fn connect_transport(&self, transport: &TransportHandle, client: &SignalingBlob) -> Result<()>;
+    /// Audit réseau d'un transport : blob opaque contenant la réalité du lien
+    /// (mediasoup : paire ICE sélectionnée = IP:port locale ↔ distante, ice_state,
+    /// bitrate/perte live). Outil de DIAGNOSTIC : le métier le transporte sans
+    /// jamais le lire. Un moteur de test renvoie un stub.
+    async fn transport_stats(&self, transport: &TransportHandle) -> Result<SignalingBlob>;
+    /// Le participant publie un flux (audio / écran / cam). `client` porte ses
+    /// paramètres RTP (opaque ; un moteur de test peut l'ignorer).
+    async fn produce(&self, transport: &TransportHandle, kind: TrackKind, client: &SignalingBlob) -> Result<ProducerId>;
+    /// Le participant souscrit à un flux publié. `client_caps` porte ses
+    /// capabilities ; retourne les paramètres que le client doit appliquer.
+    async fn consume(&self, transport: &TransportHandle, producer: &ProducerId, client_caps: &SignalingBlob) -> Result<(ConsumerId, SignalingBlob)>;
+    /// Ferme un producer (le participant arrête un flux, ex. stop partage
+    /// d'écran). Idempotent : un producer déjà fermé/inconnu n'est PAS une erreur
+    /// (un nettoyage doit toujours pouvoir aboutir).
+    async fn close_producer(&self, producer: &ProducerId) -> Result<()>;
+    /// Ferme un consumer (nettoyage : son producer a disparu, ou son abonné part).
+    /// Sans ça, les consumers morts s'accumulent dans le registre du moteur = fuite
+    /// mémoire sur une instance qui tourne longtemps. Idempotent.
+    async fn close_consumer(&self, consumer: &ConsumerId) -> Result<()>;
+    /// Ferme un transport (au départ d'un participant). En fermant le transport,
+    /// le moteur casse en cascade tous ses producers/consumers côté serveur.
+    /// Idempotent : un transport déjà parti n'est pas une erreur.
+    async fn close_transport(&self, transport: &TransportHandle) -> Result<()>;
+    /// Reprend un consumer créé en pause. La VIDÉO démarre en pause : sans ça, la
+    /// keyframe part avant que le décodeur du client n'existe → écran noir jusqu'à
+    /// la suivante (clignotement). Le client appelle ceci une fois son consumer
+    /// créé ; la reprise redemande une keyframe à un décodeur prêt.
+    async fn resume_consumer(&self, consumer: &ConsumerId) -> Result<()>;
+    /// État réel d'un consumer (blob de DIAGNOSTIC : kind, en pause ou non…).
+    /// Sans ça on ne peut pas distinguer « le spectateur n'a jamais souscrit » de
+    /// « il a souscrit mais son flux est resté en pause » : deux pannes qui se
+    /// ressemblent (aucune vidéo ne part) et qui appellent des correctifs opposés.
+    async fn consumer_state(&self, consumer: &ConsumerId) -> Result<SignalingBlob>;
     /// Force la couche servie à un abonné (adaptation bande passante).
     async fn set_preferred_layer(&self, consumer: &ConsumerId, layer: Layer) -> Result<()>;
     /// Relaie un flux vers un nœud SFU distant (cascade fédérée, PipeTransport).
@@ -174,14 +233,44 @@ impl MediaEngine for NullEngine {
     async fn create_room(&self, _room: RoomId) -> Result<RouterHandle> {
         Ok(RouterHandle(self.next("router")))
     }
+    async fn room_capabilities(&self, router: &RouterHandle) -> Result<SignalingBlob> {
+        Ok(SignalingBlob(format!("{{\"engine\":\"null\",\"router\":\"{router}\"}}")))
+    }
     async fn create_transport(&self, _router: &RouterHandle, _participant: ParticipantId) -> Result<TransportHandle> {
         Ok(TransportHandle(self.next("transport")))
     }
-    async fn produce(&self, _transport: &TransportHandle, _kind: TrackKind) -> Result<ProducerId> {
+    async fn transport_params(&self, transport: &TransportHandle) -> Result<SignalingBlob> {
+        Ok(SignalingBlob(format!("{{\"engine\":\"null\",\"transport\":\"{transport}\"}}")))
+    }
+    async fn connect_transport(&self, _transport: &TransportHandle, _client: &SignalingBlob) -> Result<()> {
+        Ok(())
+    }
+    async fn transport_stats(&self, transport: &TransportHandle) -> Result<SignalingBlob> {
+        Ok(SignalingBlob(format!("{{\"engine\":\"null\",\"transport\":\"{transport}\"}}")))
+    }
+    async fn produce(&self, _transport: &TransportHandle, _kind: TrackKind, _client: &SignalingBlob) -> Result<ProducerId> {
         Ok(ProducerId(self.next("producer")))
     }
-    async fn consume(&self, _transport: &TransportHandle, _producer: &ProducerId) -> Result<ConsumerId> {
-        Ok(ConsumerId(self.next("consumer")))
+    async fn consume(&self, _transport: &TransportHandle, _producer: &ProducerId, client_caps: &SignalingBlob) -> Result<(ConsumerId, SignalingBlob)> {
+        // Écho des caps client : déterministe, suffisant pour l'orchestration.
+        Ok((ConsumerId(self.next("consumer")), client_caps.clone()))
+    }
+    async fn close_producer(&self, _producer: &ProducerId) -> Result<()> {
+        Ok(())
+    }
+    async fn close_consumer(&self, _consumer: &ConsumerId) -> Result<()> {
+        Ok(())
+    }
+    async fn close_transport(&self, _transport: &TransportHandle) -> Result<()> {
+        Ok(())
+    }
+    async fn resume_consumer(&self, _consumer: &ConsumerId) -> Result<()> {
+        Ok(())
+    }
+    async fn consumer_state(&self, consumer: &ConsumerId) -> Result<SignalingBlob> {
+        Ok(SignalingBlob(format!(
+            "{{\"engine\":\"null\",\"consumer\":\"{consumer}\"}}"
+        )))
     }
     async fn set_preferred_layer(&self, _consumer: &ConsumerId, _layer: Layer) -> Result<()> {
         Ok(())

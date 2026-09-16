@@ -22,7 +22,7 @@
 </script>
 
 <svelte:head>
-	<title>{q ? tFn('page_title.search_results', { q }) : tFn('nav.search')} — Nodyx</title>
+	<title>{q ? tFn('page_title.search_results', { q }) : tFn('nav.search')} · Nodyx</title>
 </svelte:head>
 
 <div class="max-w-3xl">
@@ -39,7 +39,7 @@
 		/>
 		<button type="submit"
 			class="rounded-lg bg-indigo-600 hover:bg-indigo-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors">
-			Rechercher
+			{tFn('search.button')}
 		</button>
 	</form>
 

@@ -362,6 +362,12 @@ T_FR[summary_voice_warn_pangolin]='Voix/webcam nécessitent un chemin UDP. Utili
 T_EN[summary_voice_warn_none]='Voice/webcam need a UDP route. Make sure your reverse tunnel forwards UDP/3478 (TURN) and the WebRTC ports.'
 T_FR[summary_voice_warn_none]='Voix/webcam nécessitent un chemin UDP. Vérifie que ton tunnel transporte UDP/3478 (TURN) et les ports WebRTC.'
 
+# Note SFU : un tunnel n'expose pas de ports média joignables, donc le SFU n'est pas
+# installé et le vocal reste en mesh. On l'explique, et surtout on tient la promesse :
+# lever cette limite n'exigera JAMAIS d'ouvrir un port sur la box de l'utilisateur.
+T_EN[summary_sfu_note]='Voice runs in mesh (peer-to-peer): screen sharing is capped around 4 people and has no sound.\n   Lifting this needs reachable media ports, which a tunnel cannot provide — and it will NOT\n   require opening any port on your router. It is being worked on.'
+T_FR[summary_sfu_note]='Le vocal fonctionne en mesh (pair-à-pair) : le partage d’écran plafonne vers 4 personnes et\n   se fait sans son. Lever cette limite demande des ports média joignables, qu’un tunnel ne\n   fournit pas — et cela n’exigera AUCUNE ouverture de port sur ta box. C’est en cours.'
+
 # Pangolin next-steps. Two newt deployment modes are explicitly supported:
 #   - --network host  → newt shares the host netns; resource target = localhost:80
 #   - default bridge  → newt runs in its own netns; resource target = host LAN IP:80
@@ -823,13 +829,13 @@ _nodyx_upgrade() {
 
   info "$(t backend_rebuild)"
   cd "${NODYX_DIR}/nodyx-core"
-  run_bg "npm install (backend)" npm install --no-fund --no-audit
+  run_bg "npm install (backend)" npm ci --no-fund --no-audit
   run_bg "npm run build (backend)" npm run build
   ok "$(t backend_built)"
 
   info "$(t frontend_rebuild)"
   cd "${NODYX_DIR}/nodyx-frontend"
-  run_bg "npm install (frontend)" npm install --no-fund --no-audit
+  run_bg "npm install (frontend)" npm ci --no-fund --no-audit
   run_bg "npm run build (frontend)" npm run build
   ok "$(t frontend_built)"
 
@@ -1184,6 +1190,9 @@ if ! runuser -u nodyx -- env PM2_HOME=/home/nodyx/.pm2 pm2 list 2>/dev/null | gr
   runuser -u nodyx -- env PM2_HOME=/home/nodyx/.pm2 pm2 install pm2-logrotate >/dev/null 2>&1 || true
   runuser -u nodyx -- env PM2_HOME=/home/nodyx/.pm2 pm2 set pm2-logrotate:max_size 50M 2>/dev/null || true
   runuser -u nodyx -- env PM2_HOME=/home/nodyx/.pm2 pm2 set pm2-logrotate:retain 7 2>/dev/null || true
+  runuser -u nodyx -- env PM2_HOME=/home/nodyx/.pm2 pm2 set pm2-logrotate:compress true 2>/dev/null || true
+  runuser -u nodyx -- env PM2_HOME=/home/nodyx/.pm2 pm2 list 2>/dev/null | grep -q pm2-logrotate \
+    || warn "pm2-logrotate could not be registered, PM2 logs will not be rotated"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1287,11 +1296,38 @@ if ufw status 2>/dev/null | head -1 | grep -q "Status: active"; then
   warn "UFW already active - leaving existing rules untouched."
   warn "Make sure SSH (22/tcp) and your tunnel client can reach this host: sudo ufw status verbose"
 else
+  # L'ORDRE ET LES ASSERTIONS SONT CRITIQUES ICI.
+  #
+  # `ufw --force enable` avec une politique « deny incoming » et SANS regle SSH
+  # verrouille l'utilisateur HORS de son propre serveur, definitivement, sur une
+  # machine qui n'a souvent aucun acces console. Le `|| true` sur chaque ligne
+  # neutralisait le `set -e` du script : une seule commande en echec passait
+  # inapercue, et l'installeur annoncait quand meme « Firewall enabled ».
+  #
+  # On n'active donc le pare-feu qu'APRES avoir constate que SSH est autorise,
+  # et on ne declare le succes qu'apres avoir verifie l'etat reel d'ufw.
   ufw default deny incoming  >/dev/null 2>&1 || true
   ufw default allow outgoing >/dev/null 2>&1 || true
-  ufw allow ssh              >/dev/null 2>&1 || true
-  ufw --force enable         >/dev/null 2>&1 || true
-  ok "Firewall enabled (SSH inbound only - tunnel handles web traffic outbound)"
+
+  # `ssh` est un profil applicatif : absent sur certaines images, d'ou le repli
+  # sur le port brut.
+  if ufw allow ssh >/dev/null 2>&1 || ufw allow 22/tcp >/dev/null 2>&1; then
+    ufw --force enable >/dev/null 2>&1 || true
+
+    _ufw_state="$(ufw status 2>/dev/null || true)"
+    if grep -q "Status: active" <<<"$_ufw_state" \
+       && grep -qE '(^|[[:space:]])(22/tcp|OpenSSH|SSH)' <<<"$_ufw_state"; then
+      ok "Firewall enabled (SSH inbound only - tunnel handles web traffic outbound)"
+    else
+      warn "UFW did not come up as expected. Your server may be unprotected."
+      warn "Check it yourself: sudo ufw status verbose"
+    fi
+  else
+    warn "Could not add an SSH rule to UFW."
+    warn "The firewall was left DISABLED on purpose: enabling it now, with"
+    warn "'deny incoming' and no SSH rule, would lock you out of this server."
+    warn "Fix it manually, then enable: sudo ufw allow ssh && sudo ufw enable"
+  fi
 fi
 
 # Pangolin Method B: newt-in-bridge connects to host LAN IP on :80. Loopback
@@ -1349,7 +1385,7 @@ COREENV
 )
 
 cd "${NODYX_DIR}/nodyx-core"
-run_bg "npm install (backend)" npm install --no-fund --no-audit \
+run_bg "npm install (backend)" npm ci --no-fund --no-audit \
   || die "Backend npm install failed."
 run_bg "TypeScript compile (backend)" npm run build \
   || die "Backend build failed."
@@ -1388,7 +1424,7 @@ FEENV
 )
 
 cd "${NODYX_DIR}/nodyx-frontend"
-run_bg "npm install (frontend)" npm install --no-fund --no-audit \
+run_bg "npm install (frontend)" npm ci --no-fund --no-audit \
   || die "Frontend npm install failed."
 run_bg "SvelteKit build (2-5 min on ARM)" npm run build \
   || die "Frontend build failed."
@@ -1592,6 +1628,11 @@ if [[ "$TUNNEL_MODE" == "cf" ]]; then
     sleep 3
     if systemctl is-active --quiet cloudflared; then
       ok "Cloudflare Tunnel service active"
+      # `systemctl enable` est avale par un `|| true` plus haut : sans cette
+      # verification, le tunnel tourne maintenant mais ne remonterait PAS au
+      # prochain redemarrage, et rien ne l'aurait signale.
+      systemctl is-enabled --quiet cloudflared 2>/dev/null \
+        || warn "cloudflared is running but NOT enabled at boot: sudo systemctl enable cloudflared"
     else
       warn "cloudflared service not active - diagnostic: systemctl status cloudflared"
     fi
@@ -1818,13 +1859,13 @@ fi
 
 info "Rebuild backend..."
 cd "${NODYX_DIR}/nodyx-core"
-npm install --no-fund --no-audit --silent
+npm ci --no-fund --no-audit --silent
 npm run build || die "Backend build failed."
 ok "Backend compiled"
 
 info "Rebuild frontend..."
 cd "${NODYX_DIR}/nodyx-frontend"
-npm install --no-fund --no-audit --silent
+npm ci --no-fund --no-audit --silent
 npm run build || die "Frontend build failed."
 ok "Frontend compiled"
 
@@ -2114,6 +2155,7 @@ case "$TUNNEL_MODE" in
     echo -e "  runuser -u nodyx -- env PM2_HOME=/home/nodyx/.pm2 pm2 list"
     echo ""
     warn "$(t summary_voice_warn_cf)"
+    info "$(t summary_sfu_note)"
     ;;
   pangolin)
     echo -e "  ${BOLD}${CYAN}▸ $(t summary_pangolin_header)${RESET}"
@@ -2161,6 +2203,7 @@ case "$TUNNEL_MODE" in
     echo -e "  runuser -u nodyx -- env PM2_HOME=/home/nodyx/.pm2 pm2 list"
     echo ""
     warn "$(t summary_voice_warn_pangolin)"
+    info "$(t summary_sfu_note)"
     ;;
   none)
     echo -e "  ${BOLD}${CYAN}▸ $(t summary_none_header)${RESET}"
@@ -2174,6 +2217,7 @@ case "$TUNNEL_MODE" in
     echo -e "  runuser -u nodyx -- env PM2_HOME=/home/nodyx/.pm2 pm2 list"
     echo ""
     warn "$(t summary_voice_warn_none)"
+    info "$(t summary_sfu_note)"
     ;;
 esac
 echo ""

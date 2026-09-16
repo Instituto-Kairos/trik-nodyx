@@ -2,7 +2,7 @@
 	import { onMount, onDestroy, tick, untrack } from 'svelte';
 	import { fade } from 'svelte/transition';
 	import { browser } from '$app/environment';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import type { PageData } from './$types';
 	import { socket, getSocket } from '$lib/socket';
@@ -24,6 +24,7 @@
 	// FloatingReactions : retiré, géré globalement dans +layout.svelte
 	import { t } from '$lib/i18n';
 	import { unreadCountsStore, flashChannelIdStore } from '$lib/unreadStore';
+	import { panelCollapsedStore, membersCollapsedStore } from '$lib/communityStore';
 	import { playMessage, playMention } from '$lib/sounds';
 	const tFn = $derived($t)
 	const customEmojis = $derived($customEmojisStore)   // réactif : re-rend au chargement des emojis
@@ -41,6 +42,7 @@
 	let { data }: { data: PageData } = $props();
 
 	let localChannels = $state<any[]>([]);
+
 	$effect(() => { localChannels = (data.channels ?? []).slice(); });
 
 	// data.user comes from layout — cast through unknown to extract id safely
@@ -90,7 +92,7 @@
 	// où le timing de goto est plus lent que le state Svelte. Avec untrack le
 	// $effect ne fire QUE quand l'URL change réellement.
 	$effect(() => {
-		const urlChannelId = $page.url.searchParams.get('channel');
+		const urlChannelId = page.url.searchParams.get('channel');
 		untrack(() => {
 			if (localChannels.length === 0) return;
 			if (urlChannelId) {
@@ -179,6 +181,33 @@
 	let mentionQuery       = $state('');
 	let mentionSuggestions = $state<{ username: string; avatar: string | null }[]>([]);
 	let showMentions       = $state(false);
+
+	/**
+	 * Les quatre commandes, listées quand l'utilisateur tape « / ».
+	 *
+	 * Elles vivaient dans le placeholder du champ, ce qui posait deux problèmes.
+	 * Le premier, mesuré : « Message dans # {{channel}} · /roll /flip /8ball
+	 * /rps » fait 54 caractères et passe à DEUX lignes dès que le champ est en
+	 * dessous de 340px de large, ce qui déborde un textarea en `rows={1}` et
+	 * fait apparaître une barre de défilement parasite. Le second : on ne lit un
+	 * placeholder qu'avant d'écrire, or on cherche une commande au moment où on
+	 * la tape.
+	 */
+	const COMMANDES = [
+		{ nom: 'roll',  args: '2d6',        cle: 'chat.cmd_help_roll' },
+		{ nom: 'flip',  args: '',           cle: 'chat.cmd_help_flip' },
+		{ nom: '8ball', args: '…',          cle: 'chat.cmd_help_8ball' },
+		{ nom: 'rps',   args: '🪨 📄 ✂️',   cle: 'chat.cmd_help_rps' },
+	];
+
+	// N'apparaît que sur un « / » en tête, et disparaît dès qu'une commande
+	// complète est écrite : la liste ne doit pas gêner la frappe.
+	const suggestions = $derived.by(() => {
+		const t = inputText;
+		if (!t.startsWith('/') || t.includes(' ')) return [];
+		const q = t.slice(1).toLowerCase();
+		return COMMANDES.filter(c => c.nom.startsWith(q));
+	});
 	let mentionIndex       = $state(0);
 
 	// Reply/quote
@@ -660,7 +689,7 @@
 		// Only allow https GIF URLs — prevents data:/javascript: injection in img src
 		if (!/^https:\/\//i.test(url)) return;
 		const safeUrl = url.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-		const content = `<img src="${safeUrl}" alt="GIF" style="max-width:360px;border-radius:8px;">`;
+		const content = `<img src="${safeUrl}" alt="" style="max-width:360px;border-radius:8px;">`;
 		s.emit('chat:send', { channelId: selectedChannel.id, content });
 		showGifPicker = false;
 		gifQuery = '';
@@ -724,13 +753,7 @@
 	}
 
 	// ── Slash commands ────────────────────────────────────────────────────────
-	const EIGHT_BALL = [
-		'Oui, absolument.', 'C\'est certain.', 'Sans aucun doute.', 'Oui.', 'Tu peux compter dessus.',
-		'Très probablement.', 'Les perspectives sont bonnes.', 'Les signes pointent vers oui.',
-		'Réponse floue, réessaie.', 'Demande plus tard.', 'Difficile à dire maintenant.',
-		'Impossible de prédire pour l\'instant.', 'Ne compte pas dessus.', 'Ma réponse est non.',
-		'Mes sources disent non.', 'Les perspectives ne sont pas bonnes.', 'Très douteux.',
-	];
+	const EIGHT_BALL = $derived(Array.from({ length: 17 }, (_, i) => tFn(`chat.cmd.8ball_${i + 1}`)));
 
 	function parseSlashCommand(text: string): string | null {
 		if (!text.startsWith('/')) return null;
@@ -747,24 +770,24 @@
 				const rolls = Array.from({ length: n }, () => Math.floor(Math.random() * sides) + 1);
 				const total = rolls.reduce((a, b) => a + b, 0);
 				const detail = n > 1 ? ` <em>(${rolls.join(' + ')})</em>` : '';
-				return `🎲 ${u} lance un <strong>${n}d${sides}</strong>${detail} → <strong>${total}</strong>`;
+				return tFn('chat.cmd.roll', { user: u, dice: `${n}d${sides}`, detail, total });
 			}
 			case 'flip': {
-				const r = Math.random() < 0.5 ? 'Pile 🪙' : 'Face ✨';
-				return `🪙 ${u} lance une pièce → <strong>${r}</strong>`;
+				const r = Math.random() < 0.5 ? tFn('chat.cmd.flip_heads') : tFn('chat.cmd.flip_tails');
+				return tFn('chat.cmd.flip', { user: u, result: r });
 			}
 			case '8ball': {
 				const q = args.length ? ` « ${args.join(' ')} »` : '';
 				const a = EIGHT_BALL[Math.floor(Math.random() * EIGHT_BALL.length)];
-				return `🎱 ${u}${q} → <em>${a}</em>`;
+				return tFn('chat.cmd.8ball', { user: u, q, answer: a });
 			}
 			case 'rps': {
 				const opts   = ['🪨', '📄', '✂️'];
 				const wins   = { '🪨': '✂️', '📄': '🪨', '✂️': '📄' };
 				const me     = opts.includes(args[0]) ? args[0] : opts[Math.floor(Math.random() * 3)];
 				const bot    = opts[Math.floor(Math.random() * 3)];
-				const result = me === bot ? 'Égalité !' : wins[me as keyof typeof wins] === bot ? `${u} gagne 🏆` : 'Le bot gagne 🤖';
-				return `✊ ${u} joue ${me} contre le bot ${bot} → <strong>${result}</strong>`;
+				const result = me === bot ? tFn('chat.cmd.rps_tie') : wins[me as keyof typeof wins] === bot ? tFn('chat.cmd.rps_win', { user: u }) : tFn('chat.cmd.rps_lose');
+				return tFn('chat.cmd.rps', { user: u, me, bot, result });
 			}
 			default:
 				return null; // Commande inconnue → message normal
@@ -780,6 +803,9 @@
 		inputText = '';
 		showMentions = false;
 		replyTo = null;
+		// Le champ vient d'être vidé : sans ça il resterait à la hauteur du
+		// message qu'on vient d'envoyer.
+		ajusterHauteur(document.querySelector<HTMLTextAreaElement>('textarea#chat-input'));
 	}
 
 	function sendRich() {
@@ -830,7 +856,30 @@
 		if (e.key === 'E' && e.ctrlKey && e.shiftKey) { e.preventDefault(); openRichCompose(); }
 	}
 
+	/**
+	 * Ajuste la hauteur du champ à son contenu.
+	 *
+	 * Le textarea était en `rows={1}` avec `resize-none` et un `max-h-32`, mais
+	 * RIEN ne le faisait jamais grandir : il restait sur une ligne quel que soit
+	 * le message, et le `scrollbar-width: thin` faisait apparaître une barre de
+	 * défilement minuscule dès la deuxième ligne. On écrivait donc ses messages
+	 * dans une fente.
+	 *
+	 * `height = 'auto'` avant la mesure n'est pas décoratif : sans cette remise
+	 * à zéro, `scrollHeight` ne redescend jamais quand on efface du texte, et le
+	 * champ resterait grand après avoir été vidé.
+	 */
+	function ajusterHauteur(el: HTMLTextAreaElement | null) {
+		if (!el) return
+		el.style.height = 'auto'
+		// 128px = max-h-32, la borne au-delà de laquelle on rend la main au
+		// défilement plutôt que de manger tout l'écran.
+		el.style.height = Math.min(el.scrollHeight, 128) + 'px'
+	}
+
 	async function handleInput() {
+		ajusterHauteur(document.querySelector<HTMLTextAreaElement>('textarea#chat-input'))
+
 		// Typing indicator (throttled) — server + P2P fast path
 		if (s && selectedChannel) {
 			if (!typingThrottle) {
@@ -989,7 +1038,7 @@
 
 	// ── Delete ────────────────────────────────────────────────────────────────
 	function confirmDelete(messageId: string) {
-		if (!s || !confirm('Supprimer ce message ?')) return;
+		if (!s || !confirm(tFn('chat.confirm_delete'))) return;
 		s.emit('chat:delete', { messageId });
 	}
 
@@ -1030,10 +1079,10 @@
 
 </script>
 
-<svelte:head><title>Chat — Nodyx</title></svelte:head>
+<svelte:head><title>Chat · Nodyx</title></svelte:head>
 
-<!-- Full-height layout — left offset accounts for icon bar (72px) + channel sidebar (220px) = 292px -->
-<div class="fixed top-12 bottom-0 lg:left-[292px] xl:right-[220px] left-0 right-0 flex overflow-hidden z-10" style="background: #080810">
+<!-- Full-height layout — left and right offsets dynamically adjusted on collapse/expand -->
+<div class="fixed top-12 bottom-0 {$panelCollapsedStore ? 'lg:left-14' : 'lg:left-[276px]'} {$membersCollapsedStore ? 'xl:right-0' : 'xl:right-[220px]'} left-0 right-0 flex overflow-hidden z-10 bg-[#080810] [transition:left_.25s_cubic-bezier(.4,0,.2,1),right_.25s_cubic-bezier(.4,0,.2,1)]">
 
 	<!-- ── Channel sidebar — mobile drawer only (layout sidebar handles desktop) ── -->
 	<div class="lg:hidden">
@@ -1074,6 +1123,7 @@
 					socket={s}
 					{userId}
 					{canvasRecapChannelId}
+					activities={data.activities ?? []}
 					onjoinCurrentVoice={joinCurrentVoiceChannel}
 				/>
 
@@ -1084,7 +1134,7 @@
 				<div class="h-11 shrink-0 flex items-center gap-3 px-4" style="background: #0d0d12; border-bottom: 1px solid rgba(255,255,255,.06)">
 					<!-- Mobile hamburger -->
 					<button class="lg:hidden shrink-0 p-1.5 transition-colors" style="color: #6b7280"
-					        onclick={() => drawerOpen = true} aria-label="Ouvrir les canaux" aria-expanded={drawerOpen} aria-controls="channels-drawer">
+					        onclick={() => drawerOpen = true} aria-label={tFn('chat.open_channels_aria')} aria-expanded={drawerOpen} aria-controls="channels-drawer">
 						<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 							<path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/>
 						</svg>
@@ -1102,7 +1152,7 @@
 						{#if $p2pStatus === 'p2p'}
 							<div class="flex items-center gap-1.5 px-2 h-6 cursor-default"
 							     style="background: rgba(234,179,8,.06); border: 1px solid rgba(234,179,8,.2)"
-							     title="{tFn('chat.p2p_peers', { n: String($p2pPeerCount) })}">
+							     title={tFn('chat.p2p_peers', { n: String($p2pPeerCount) })}>
 								<span class="relative flex h-1.5 w-1.5 shrink-0">
 									<span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-60" style="background: #eab308"></span>
 									<span class="relative inline-flex h-1.5 w-1.5 rounded-full" style="background: #eab308"></span>
@@ -1147,7 +1197,7 @@
                 style="scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.06) transparent"
             >
 				{#if isLoadingOld}
-					<p class="text-center text-xs text-gray-600 py-2">Chargement…</p>
+					<p class="text-center text-xs text-gray-600 py-2">{tFn('common.loading')}</p>
 				{/if}
 				{#if noMoreHistory && messages.length > 0}
 					<p class="text-center text-xs text-gray-700 py-2">{tFn('chat.history_start')}</p>
@@ -1232,14 +1282,14 @@
 							{:else if editingMsg?.id === msg.id}
 								<div class="bg-gray-800 p-2 rounded-xl border border-indigo-500/50 mt-1 shadow-2xl">
 									<textarea
-										class="w-full bg-transparent text-sm text-white outline-none resize-none custom-scrollbar"
+										class="w-full bg-transparent text-sm text-white outline-hidden resize-none custom-scrollbar"
 										rows={2}
 										bind:value={editingMsg.content}
 										onkeydown={handleEditKeydown}
 									></textarea>
 									<div class="flex justify-end gap-2 mt-2">
-										<button onclick={() => { editingMsg = null }} class="text-[10px] font-black text-gray-500 hover:text-white uppercase tracking-widest">Annuler</button>
-										<button onclick={confirmEdit} class="text-[10px] font-black text-indigo-400 hover:text-indigo-300 uppercase tracking-widest underline">Valider</button>
+										<button onclick={() => { editingMsg = null }} class="text-[10px] font-black text-gray-500 hover:text-white uppercase tracking-widest">{tFn('common.cancel')}</button>
+										<button onclick={confirmEdit} class="text-[10px] font-black text-indigo-400 hover:text-indigo-300 uppercase tracking-widest underline">{tFn('common.validate')}</button>
 									</div>
 								</div>
 							{:else if msg.poll_id}
@@ -1330,7 +1380,7 @@
 								<span class="w-px h-4 mx-0.5" style="background: rgba(255,255,255,.07)"></span>
 								<!-- Réagir (full picker) -->
 								<div data-picker class="relative">
-									<button onclick={() => toggleEmojiPicker(msg.id)} title="Plus…"
+									<button onclick={() => toggleEmojiPicker(msg.id)} title={tFn('chat.more')}
 									        class="w-7 h-7 flex items-center justify-center transition-colors" style="color: #4b5563"
 									        onmouseenter={(e) => (e.currentTarget as HTMLElement).style.color = 'var(--nx-accent-2-soft)'}
 									        onmouseleave={(e) => (e.currentTarget as HTMLElement).style.color = '#4b5563'}>
@@ -1352,7 +1402,7 @@
 								</button>
 								{#if msg.author_id === userId}
 									<!-- Modifier -->
-									<button onclick={() => startEdit(msg)} title="Modifier"
+									<button onclick={() => startEdit(msg)} title={tFn('common.edit')}
 									        class="w-7 h-7 flex items-center justify-center transition-colors" style="color: #4b5563"
 									        onmouseenter={(e) => (e.currentTarget as HTMLElement).style.color = 'var(--nx-accent-2-soft)'}
 									        onmouseleave={(e) => (e.currentTarget as HTMLElement).style.color = '#4b5563'}>
@@ -1361,7 +1411,7 @@
 								{/if}
 								{#if isAdmin}
 									<!-- Épingler -->
-									<button onclick={() => pinMessage(msg)} title={pinnedMessage?.id === msg.id ? 'Désépingler' : 'Épingler'}
+									<button onclick={() => pinMessage(msg)} title={pinnedMessage?.id === msg.id ? tFn('common.unpin') : tFn('common.pin')}
 									        class="w-7 h-7 flex items-center justify-center transition-colors" style="color: {pinnedMessage?.id === msg.id ? 'var(--nx-accent-2-soft)' : '#4b5563'}"
 									        onmouseenter={(e) => (e.currentTarget as HTMLElement).style.color = 'var(--nx-accent-2-soft)'}
 									        onmouseleave={(e) => (e.currentTarget as HTMLElement).style.color = pinnedMessage?.id === msg.id ? 'var(--nx-accent-2-soft)' : '#4b5563'}>
@@ -1370,7 +1420,7 @@
 								{/if}
 								{#if msg.author_id === userId || isAdmin}
 									<!-- Supprimer -->
-									<button onclick={() => confirmDelete(msg.id)} title="Supprimer"
+									<button onclick={() => confirmDelete(msg.id)} title={tFn('common.delete')}
 									        class="w-7 h-7 flex items-center justify-center transition-colors" style="color: #4b5563"
 									        onmouseenter={(e) => (e.currentTarget as HTMLElement).style.color = '#ef4444'}
 									        onmouseleave={(e) => (e.currentTarget as HTMLElement).style.color = '#4b5563'}>
@@ -1378,7 +1428,7 @@
 									</button>
 								{/if}
 								<!-- Copier -->
-								<button onclick={() => { navigator.clipboard.writeText(msg.content?.replace(/<[^>]*>/g, '') ?? '') }} title="Copier"
+								<button onclick={() => { navigator.clipboard.writeText(msg.content?.replace(/<[^>]*>/g, '') ?? '') }} title={tFn('common.copy')}
 								        class="w-7 h-7 flex items-center justify-center transition-colors" style="color: #4b5563"
 								        onmouseenter={(e) => (e.currentTarget as HTMLElement).style.color = '#9ca3af'}
 								        onmouseleave={(e) => (e.currentTarget as HTMLElement).style.color = '#4b5563'}>
@@ -1410,7 +1460,7 @@
 					transition:fade={{ duration: 120 }}
 				>
 					<span class="text-xs font-semibold" style="color: var(--nx-accent-2-soft);">
-						{#if unreadWhileScrolled > 0}{unreadWhileScrolled} nouveau{unreadWhileScrolled > 1 ? 'x' : ''}{:else}Retour en bas{/if}
+						{#if unreadWhileScrolled > 0}{tFn('chat.new_count', { n: unreadWhileScrolled })}{:else}{tFn('chat.back_to_bottom')}{/if}
 					</span>
 					<svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="#a78bfa" stroke-width="2.5" viewBox="0 0 24 24">
 						<path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
@@ -1455,7 +1505,7 @@
 			</div>
 
 			<!-- Input area -->
-			<div class="px-4 shrink-0" style="padding-bottom: max(1rem, var(--bottom-nav-h))">
+			<div class="px-4 shrink-0" style="padding-bottom: calc(var(--bottom-nav-h) + 1rem)">
 				<!-- @mention dropdown -->
 				{#if showMentions && mentionSuggestions.length > 0}
 					<div class="relative">
@@ -1508,7 +1558,7 @@
 										placeholder={tFn('chat.gif_search')}
 										bind:value={gifQuery}
 										oninput={onGifInput}
-										class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-500 outline-none focus:border-indigo-600"
+										class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-500 outline-hidden focus:border-indigo-600"
 									/>
 								</div>
 								<div class="p-2 grid grid-cols-3 gap-1.5 max-h-56 overflow-y-auto" style="scrollbar-width:thin;">
@@ -1524,7 +1574,7 @@
 												onclick={() => sendGif(gif.url)}
 												class="rounded-lg overflow-hidden hover:ring-2 hover:ring-indigo-500 transition-all aspect-square"
 											>
-												<img src={gif.preview} alt="GIF" class="w-full h-full object-cover" loading="lazy" />
+												<img src={gif.preview} alt={tFn('chat.gif')} class="w-full h-full object-cover" loading="lazy" />
 											</button>
 										{/each}
 									{/if}
@@ -1543,7 +1593,7 @@
 						<svg class="w-3 h-3 shrink-0" fill="none" stroke="#a78bfa" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/></svg>
 						<span class="font-bold shrink-0" style="color: var(--nx-accent-2-soft)">{replyTo.author_username}</span>
 						<span class="truncate flex-1" style="color: #4b5563">{replyTo.content?.replace(/<[^>]*>/g, '').slice(0, 80) ?? ''}</span>
-						<button onclick={() => replyTo = null} title="Annuler"
+						<button onclick={() => replyTo = null} title={tFn('common.cancel')}
 						        class="shrink-0 w-4 h-4 flex items-center justify-center text-sm leading-none transition-colors" style="color: #374151">×</button>
 					</div>
 				{/if}
@@ -1562,11 +1612,36 @@
 					</div>
 				{/if}
 
+				<!-- Aide aux commandes, à l'endroit et au moment où on la cherche :
+				     au-dessus du champ, dès qu'on tape « / ». Elle ne prend aucune
+				     place le reste du temps, contrairement au placeholder de 54
+				     caractères qu'elle remplace. -->
+				{#if suggestions.length > 0}
+					<div class="mb-1 flex flex-wrap gap-1.5 px-1">
+						{#each suggestions as c}
+							<button
+								type="button"
+								onclick={() => {
+									inputText = `/${c.nom} `;
+									const el = document.querySelector<HTMLTextAreaElement>('textarea#chat-input');
+									el?.focus();
+									ajusterHauteur(el);
+								}}
+								class="inline-flex items-center gap-1.5 px-2 py-1 border border-white/[0.08] bg-white/[0.03] hover:bg-white/[0.07] hover:border-indigo-700/50 transition-colors text-left"
+							>
+								<span class="text-xs font-semibold text-indigo-300">/{c.nom}</span>
+								{#if c.args}<span class="text-[10px] text-gray-600">{c.args}</span>{/if}
+								<span class="text-[11px] text-gray-500">{tFn(c.cle)}</span>
+							</button>
+						{/each}
+					</div>
+				{/if}
+
 				<div class="flex items-end gap-2 px-3 py-2 transition-all" style="background: rgba(255,255,255,.04); border: 1px solid {isRateLimited ? 'rgba(239,68,68,.4)' : 'rgba(255,255,255,.08)'}">
 					<!-- Textarea -->
 					<textarea
 						id="chat-input"
-						class="flex-1 bg-transparent py-1.5 text-sm resize-none outline-none max-h-32 disabled:opacity-50"
+						class="flex-1 bg-transparent py-1.5 text-sm resize-none outline-hidden max-h-32 disabled:opacity-50"
 						style="color: #e2e8f0; font-family: inherit; scrollbar-width: thin"
 						placeholder={isRateLimited ? tFn('chat.antispam_loading') : tFn('chat.input_placeholder', { channel: selectedChannel.name })}
 						rows={1}
@@ -1593,7 +1668,7 @@
 						</div>
 						<!-- GIF -->
 						<button data-gif-picker onclick={() => { showGifPicker = !showGifPicker; if (showGifPicker && gifProvider) gifQuery = ''; }}
-						        title="GIF"
+						        title={tFn('chat.gif')}
 						        class="w-7 h-7 flex items-center justify-center text-[10px] font-black uppercase tracking-wide transition-colors"
 						        style="color: {showGifPicker ? 'var(--nx-accent-2-soft)' : '#4b5563'}; background: {showGifPicker ? 'rgb(var(--nx-accent-2-rgb) / .12)' : 'transparent'}">GIF</button>
 						<!-- Poll -->
@@ -1625,7 +1700,7 @@
 						</button>
 					</div>
 				</div>
-				<p class="text-[10px] mt-1" style="color: #1f2937">↵ Envoyer · ⇧↵ Saut de ligne · ⌃⇧E Éditeur riche</p>
+				<p class="text-[10px] mt-1" style="color: #1f2937">{tFn('chat.composer_hint')}</p>
 			</div>
 
 			{/if}<!-- end voice/text branch -->
@@ -1658,11 +1733,11 @@
 <!-- ── P2P fallback toast ──────────────────────────────────────────────────── -->
 {#if $p2pFallback}
 	<div
-		class="fixed bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2.5 px-4 py-2.5 bg-gray-900/95 border border-gray-700/60 rounded-xl shadow-2xl backdrop-blur-sm z-50"
+		class="fixed bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2.5 px-4 py-2.5 bg-gray-900/95 border border-gray-700/60 rounded-xl shadow-2xl backdrop-blur-xs z-50"
 		transition:fade={{ duration: 280 }}
 	>
 		<div class="w-1.5 h-1.5 rounded-full bg-gray-500 shrink-0"></div>
-		<span class="text-xs text-gray-400 font-medium whitespace-nowrap">Relais serveur actif — connexion directe indisponible</span>
+		<span class="text-xs text-gray-400 font-medium whitespace-nowrap">{tFn('chat.p2p_fallback')}</span>
 	</div>
 {/if}
 
@@ -1681,7 +1756,7 @@
 			<div class="flex items-center justify-between px-6 py-4 border-b border-gray-800">
 			 
 			
-				<h2 class="text-lg font-semibold text-white">{editingRichId ? 'Modifier le message' : 'Composer un message riche'}</h2>
+				<h2 class="text-lg font-semibold text-white">{editingRichId ? tFn('chat.edit_message') : tFn('chat.compose_rich')}</h2>
 				<button onclick={closeRichModal} class="text-gray-400 hover:text-white text-xl leading-none">×</button>
 			</div>
 			
@@ -1697,14 +1772,14 @@
 			</div>
 			<div class="px-6 py-4 border-t border-gray-800 flex justify-end gap-3">
 				<button onclick={closeRichModal} class="px-4 py-2 rounded bg-gray-700 hover:bg-gray-600 text-sm text-gray-200 transition-colors">
-					Annuler
+					{tFn('common.cancel')}
 				</button>
 				<button
 					onclick={sendRich}
 					disabled={!richContent.trim()}
 					class="px-4 py-2 rounded bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-sm text-white font-medium transition-colors"
 				>
-					{editingRichId ? 'Enregistrer' : tFn('chat.send')}
+					{editingRichId ? tFn('common.save') : tFn('chat.send')}
 				</button>
 			</div>
 		</div>

@@ -7,6 +7,227 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versio
 
 ## [Unreleased]
 
+Un mois de travail depuis la 2.12.0, sur plusieurs chantiers en parallèle. Résumé par thème,
+pas par commit : le détail de chacun reste dans son historique git et ses PR.
+
+### Vitrine musique, un module pensé pour devenir générique
+
+Nouveau module public, `/musique`, géré entièrement depuis `/admin/music`. Né pour héberger une
+bande originale de jeu vidéo composée en interne et la distribuer à un studio partenaire, mais
+pas figé sur ce seul usage : titre, sous-titre et bannière de la page publique sont éditables par
+l'admin, avec repli propre sur des valeurs par défaut si rien n'est renseigné. Catégories
+illustrées et réordonnables (boutons monter/descendre, pas de glisser-déposer fragile), morceaux
+uploadés en un geste depuis l'admin (audio et image, scan anti-malware avant stockage, même
+garde que le reste des uploads), titre et description corrigeables en place sans jamais recréer
+un morceau pour une coquille. Chaque catégorie porte une note de licence libre qui alimente une
+attestation PDF générée à la volée et téléchargeable à côté de chaque morceau : une preuve de
+provenance datée, pas un avis juridique.
+
+### SDK d'extensions et place de marché (extensions.nodyx.org)
+
+Nodyx peut désormais être étendu par des tiers, sans toucher au cœur : un SDK complet, pensé
+sécurité d'abord (P0-A, P0-B). Une extension tourne dans une surface isolée, parle à l'hôte par
+un pont défini, stocke ses données dans un espace clé/valeur cloisonné par extension, ne voit
+qu'une identité projetée (jamais les vrais comptes), et sort vers le réseau par un proxy qui
+épingle l'adresse cible (protection anti SSRF). Un écran de permissions donne à l'admin le
+contrôle de ce qu'une extension peut faire. La première vraie extension (`next-event`) sert de
+preuve, tenue par des tests. `extensions.nodyx.org` héberge la vitrine, le registre et l'index :
+une extension s'installe depuis là, avec un premier paquet réel, téléchargeable et vérifiable.
+Les surfaces d'extension s'affichent sur la page d'accueil et entrent dans le Homepage Builder.
+
+### Activités communautaires dans les salons vocaux
+
+Un salon vocal peut désormais héberger une activité, un jeu joué à plusieurs pendant qu'on parle,
+sur le modèle des extensions : bundle applicatif livré par l'instance, relais temps réel dédié
+(`activity:*`), identité et avatars Nodyx résolus côté hôte pour l'activité. Une galerie façon
+Play Store remplace le lancement direct, le jeu se docke dans le salon avec un bouton plein
+écran, et la surface activity sert aussi de stockage applicatif (scores, état de partie).
+
+### Durcissement de la vitrine publique et des catégories d'annonce
+
+Suite à l'incident du 1er septembre (un compte `member` standard qui fait remonter du spam en
+page d'accueil et dans l'annuaire fédéré, sans aucune faille d'authentification) : les catégories
+peuvent désormais être restreintes par rôle (`post_min_role`), la vitrine publique et l'annuaire
+ne reprennent plus que les fils explicitement mis en avant par un admin, et le bannissement d'IP
+dit désormais la vérité (`ip_ban_applied`) au lieu d'un succès générique quand aucune adresse
+publique n'est connue pour le compte. CDC complet dans `SPECS/NODYX_DURCISSEMENT_VITRINE_CDC.md`.
+
+### Traduction et communauté
+
+Le portugais brésilien a atteint la parité complète (4567 clés), première locale communautaire à
+y arriver. La page `/translate` met en avant tous les contributeurs, pas seulement les
+traducteurs, avec un fond photo réel par langue en rotation façon guide touristique et un
+sélecteur de langue enfin traduit lui-même. Une cinquième porte i18n couvre désormais les
+fichiers `.ts`, angle mort des quatre portes précédentes. Fusionner une traduction déploie
+maintenant automatiquement (avant, une traduction mergée pouvait rester invisible plusieurs jours).
+
+### Réseau et sécurité du relais
+
+Le relais écoute en double pile et journalise l'adresse réelle du client derrière le proxy
+inverse. Une seconde porte WebSocket sur le port 443 permet de joindre le relais quand un réseau
+institutionnel ne laisse sortir que ce port (le cas du 7443 restait fermé pour certains). Modèle
+unifié des événements et décisions de sécurité, collecteur CrowdSec vers PostgreSQL, journal
+d'accès à ligne unique exploitable par GoAccess et CrowdSec : de quoi voir venir plutôt que
+découvrir après coup.
+
+### Corrigé
+
+- **`GET /admin/bans` renvoyait l'email des membres bannis en clair.** Le correctif d'août qui
+  avait masqué le tableau de bord et la liste des membres n'avait jamais couvert cette route.
+  Corrigé au même pattern : masqué par défaut, révélé par un geste tracé.
+- Identification du visiteur réel derrière le tunnel Cloudflare restaurée (les journaux
+  enregistraient l'adresse du proxy, pas celle du visiteur).
+- Éditeur : une vidéo insérée perdait sa mise en forme, un article se disloquait à la réouverture,
+  le sommaire ouvrait un onglet vide au lieu de descendre à l'ancre.
+  Alignement « dans le texte » ajouté pour les images.
+  N'importe qui pouvait réserver un sous-domaine d'infrastructure via l'annuaire fédéré.
+- Salon vocal : la fenêtre des réglages audio débordait de l'écran, sa croix de fermeture était
+  recouverte ou partait avec le défilement selon les cas. Le chat d'un salon vocal envahissait
+  l'écran sur téléphone.
+- Responsive : tableaux d'administration passés en cartes sous les petits écrans (14 tableaux),
+  page d'édition de profil, sidebar mobile qui mangeait 224 des 390 pixels disponibles.
+
+### Exploration (pas encore une décision)
+
+Spike de la Phase A du moteur média Rust natif (`str0m`), pour lever le verrou "zéro port ouvert"
+qui touche encore le SFU vocal (mediasoup est ICE-Lite, un auto-hébergeur derrière une box doit
+aujourd'hui ouvrir un port pour les salons qui dépassent le mesh). Code écrit et vérifié
+(`nodyx-p2p/crates/nodyx-sfu-str0m`) : un client STUN testé contre l'infrastructure réelle, un
+moteur qui implémente le contrat existant sans réécrire le métier. Le verdict du perçage NAT
+attend encore un test sur une vraie box résidentielle. Détail dans
+`SPECS/NODYX_MEDIA_ENGINE_RUST.md`.
+
+---
+
+## [2.12.0] — 2026-08-10
+
+### Personnalisation visuelle : l'admin reprend la main sur ce qu'on voit en premier
+
+Cette version sort d'un test grandeur nature : une vraie communauté multigaming, avec de vrais membres, déployée sur une instance Nodyx. Le premier réflexe de son admin a été de vouloir changer ce qu'un visiteur voit en arrivant, et de se cogner à des éléments non configurables. Tout ce qui suit vient de là.
+
+**Nouveau widget « En-tête »** (Homepage Builder). Le widget Hero Banner reste tel quel pour qui veut du simple ; celui-ci apporte le contrôle qui manquait :
+
+- Image de fond **et** logo téléversables, chacun positionnable (horizontal, vertical) et redimensionnable. Le fichier est stocké **brut**, sans recompression : pas de perte de qualité entre ce que vous envoyez et ce qui s'affiche
+- Titre et sous-titre : texte, position, couleur, police (parmi les 10 réellement chargées par le thème, pas une liste décorative)
+- **Chaque élément s'affiche ou non** : fond, logo, titre, sous-titre, bouton, statistiques, membres en ligne. Un admin qui ne veut que sa bannière et son logo coupe tout le reste
+- Le bouton absent est vraiment absent. Hero Banner, lui, retombe sur des liens de navigation en dur quand on vide le champ : c'est le piège qu'on ne reproduit pas ici
+
+**Fond d'image pour la sidebar des membres.** Elle est visible sur toutes les pages, son fond ne pouvait donc pas passer par le Homepage Builder : il vit désormais côté serveur, à côté du logo et de la bannière d'instance. Trois réglages nés de l'usage réel, pas de la théorie :
+
+- **Visibilité** : visiteurs, membres connectés, ou tout le monde. Par défaut *visiteurs seulement*, parce qu'une fois connecté cette sidebar est un outil de travail et qu'une image derrière la rend illisible
+- **Assombrissement réglable** : il était figé, et trop faible dès que l'image était chargée
+- **Dézoom** (jusqu'à 0,4) : on pouvait zoomer, pas dézoomer, donc impossible de faire tenir une affiche entière dans le cadre
+
+Sans image configurée, **rien ne change, au pixel près** : les deux fonctionnalités sont additives et éteintes par défaut.
+
+### Corrigé
+
+- **Le troisième widget à panneau personnalisé aurait affiché le panneau d'un autre.** La chaîne de panneaux de configuration du builder n'avait aucune garde sur l'identifiant du plugin : invisible tant qu'il n'y en avait que deux, le suivant héritait silencieusement du panneau du Diaporama. Trouvé en ajoutant précisément ce troisième widget
+- **Dézoomer coupait l'image.** `transform: scale()` réduit autour du centre de la boîte, alors que le cadrage vise un autre point : en dessous de 1, le décalage entre les deux ouvrait un vide asymétrique, visible comme une coupure. L'origine de la transformation suit maintenant la position choisie
+- **Positionner une image au glisser-déposer ne fonctionnait pas.** Le glisser natif du navigateur prenait la main (curseur « sens interdit »), et l'image elle-même n'était pas cliquable. Remplacé par des curseurs, qui n'ont aucun de ces pièges
+
+### Exploitation
+
+- **La quatrième instance du serveur n'était sauvegardée nulle part**, et n'aurait reçu aucune mise à jour, en silence. Elle est désormais couverte par les deux scripts. Sauvegarde **et restauration** vérifiées pour de vrai : base restaurée dans une base jetable, mêmes comptages, empreinte des fichiers identique à ce qui est servi en ligne
+- Les cahiers des charges de communautés hébergées sont exclus du dépôt public : c'est le contenu privé de l'instance concernée, pas celui de la plateforme
+
+## [2.11.0] — 2026-08-07
+
+### Vidéo : le partage d'écran passe par le SFU
+
+En 2.10.0 le SFU savait porter la voix. Il porte maintenant l'image. Un partageur envoie **un seul** flux, le serveur le recopie vers chaque spectateur : le mur du mesh (une copie par spectateur, ingérable au-delà de trois ou quatre) n'est plus le plafond du partage d'écran.
+
+- **Le partage d'écran des vrais canaux passe par le SFU** dès que le canal est basculé, et **partager son écran déclenche la bascule** sans attendre de quorum. En mesh, le chemin d'avant n'a pas changé d'une ligne : c'est le filet
+- Un partage **en cours survit à la bascule** : le flux local est capturé avant la démolition des connexions mesh, puis republié. Sans ça il aurait fallu rouvrir le sélecteur d'écran, ce que le navigateur refuse hors geste utilisateur, et le partage serait mort à chaque bascule
+- **Le son part avec l'écran** (onglet, jeu, vidéo), avec volume et coupure côté spectateur, un rappel contextuel pour penser à cocher la case, et un indicateur qui dit si un partage diffuse du son
+- **Chemin TCP de secours** pour l'ICE : sans lui, les réseaux qui bloquent l'UDP ne se connectaient pas du tout
+- **Pool de workers média réparti sur les cœurs**, avec réserve, et `sfu-bench`, un canon de charge qui révèle le plafond réel par router (modes multi-salons, watch-party, profil de flux configurable). Le banc a son propre site, auto-hébergé
+- **Fantômes exorcisés** : heartbeat, TTL côté daemon et réconciliation client. Un rejoin **remplace** au lieu d'être refusé, un onglet évincé s'arrête au lieu de boucler, la session survit à la veille mobile (wake lock), et le client se reconnecte seul après une coupure réseau
+- Consumers et transports orphelins fermés : fuite mémoire sur instance longue
+
+Quatre bugs vidéo qui se ressemblaient et n'avaient rien à voir, tous corrigés :
+
+- **La keyframe perdue.** Les consumers vidéo étaient créés non pausés : mediasoup poussait la keyframe avant que le décodeur du navigateur n'existe, et sans keyframe rien ne se décode. Écran noir jusqu'à la suivante. La vidéo est désormais servie en pause puis reprise côté client. L'audio n'a pas de keyframe : voilà pourquoi il marchait depuis le début
+- **Le clignotement noir.** Réassigner `srcObject` relance l'algorithme de chargement du média **même avec exactement le même objet**. Le store étant republié au moindre frémissement du roster, la vidéo se réinitialisait en boucle. Les cinq actions concernées ne réassignent plus que si le flux change vraiment. Corrige le mesh autant que le SFU
+- **L'écran invisible à l'arrivée.** En rejoignant un canal déjà basculé, le miroir qui recopie les écrans vers l'interface ne démarrait pas : le flux partait bien au serveur, plus rien ne l'affichait
+- **Le simulcast**, ajouté puis retiré : un `scalabilityMode` invalide côté navigateur privait le spectateur de toute vidéo. Remis ensuite, avec de quoi le prouver
+
+### La Scène, et un chat dans les salons vocaux
+
+- **Un canal vocal n'avait aucun fil de discussion.** Pas un défaut d'affichage : le composeur et les messages n'existaient que pour les canaux texte. Le chat vit maintenant à droite du salon, ouvert par défaut et repliable, avec l'éditeur Nodyx et les outils de modération
+- **La Scène** : le partage en plein écran, sans rognage ni sidebar, avec son chat, ses miniatures en bande basse et une fenêtre flottante qui survit à la navigation
+- **Contexte d'empilement** : la Scène était montée sous un `aside` positionné avec un `z-index`, donc son `z-[500]` ne valait qu'à l'intérieur de cet aside. L'en-tête et la sidebar des membres peignaient par-dessus, ce qui rognait l'écran à droite et rendait les boutons de la Scène inatteignables. Elle est montée à la racine du layout. Un overlay plein écran ne doit jamais vivre sous un ancêtre positionné
+
+### Le vocal au quotidien
+
+- **Un équaliseur réel par personne**, fini les barres factices, et le même sur la Scène du salon, là où il se voit le plus
+- **Voir qui est dans un canal avant de le rejoindre**, et les statuts dans le roster : muet, sourd, en train de partager
+- **Bouton haut-parleur** (Android et desktop) via `setSinkId`
+- Le son du partage sort par un `<audio>` dédié, seul chemin fiable sur mobile
+- L'état est republié à chaque arrivée dans le vocal, et la croix de la Scène ne la rouvre plus toute seule
+
+### Nodyx parle sept langues
+
+Le grand audit « plus rien en dur » est terminé. Toute l'interface, publique **et** administration, passe par des clés de traduction, et la CI empêche la moindre régression.
+
+- **`nodyx.org/translate`** : l'état des traductions, langue par langue, avec un lien direct vers le fichier à éditer. Les chiffres sont calculés depuis les fichiers de locale eux-mêmes, la page ne peut donc pas mentir. Un endpoint JSON alimente la même information sur nodyx.dev et start.nodyx.org
+- **Anglais complet**, à parité totale avec la source, et le repli d'exécution passe par l'anglais avant le français : une langue partiellement traduite montre de l'anglais, jamais une phrase française surprise
+- **Le cœur de l'interface est traduit dans les sept langues**, et le vietnamien fait son entrée
+- **Sélecteur de langue accessible aux visiteurs**, locale résolue côté serveur pour que le premier affichage soit déjà dans la bonne langue
+- **Drapeaux rendus en SVG** : Chrome sous Windows n'affiche pas les emoji drapeaux, il écrit « FR » et « GB » à la place
+- **Quatre garde-fous en CI** : aucune chaîne en dur, aucune clé référencée dans le vide, aucun placeholder corrompu par une traduction, et le tableau de couverture. Le contrôle des placeholders vérifie les variables `{{ }}`, les jetons de gabarit `{ }` et l'équilibre des balises, en distinguant ce qu'une traduction **invente** (erreur, ça s'affiche en clair à l'écran) de ce qu'elle **abandonne** (avertissement, c'est souvent un choix de langue)
+- **L'angle mort du scanner** : il ne repérait que le français accentué, donc « Se connecter », « Rejoindre », « membres » avaient traversé toute l'extraction. Environ 25 chaînes corrigées, et le scanner durci
+
+### Forum, contenu, éditeur
+
+- **Un index de forum vivant** : dernier message, compteurs et statistiques, avec les colonnes des sous-forums alignées sur celles des parents
+- **Embeds Twitch dans les posts**, en deux iframes (lecteur et chat), sans toucher à la CSP, avec une taille dédiée quand le chat est présent. Le live ne se perd plus à la réédition d'un post
+- **Popups de l'éditeur** portalées dans le `body` : elles n'étaient plus rognées par un `overflow`, y compris dans les modales
+- **Tableau de tâches** : cartes riches avec l'éditeur Nodyx à la place du champ texte brut, pleine largeur, et le crayon d'édition qui ne faisait rien (un `structuredClone` sur un proxy réactif)
+- La page d'un événement ne déborde plus sous les sidebars
+
+### Interface
+
+- **Sidebar des membres repliable**, badge de version centré en pied de colonne, typographie remontée d'un cran
+- **Pages d'authentification** unifiées autour d'un thème sombre, panneaux redimensionnables dont l'état est lu côté serveur pour éviter tout clignotement au premier affichage, et la dépendance three.js retirée au passage
+- La page d'accueil ne répète plus le nom de l'instance, qui semblait changer de taille en naviguant
+- Le tableau de contributions du profil était vide pour tout le monde : l'API renvoie un tableau, la page attendait un objet indexé par date
+
+### Sécurité et robustesse
+
+- **Injection SQL latente** dans `liked_by_me` : l'identifiant du lecteur était interpolé dans la requête. Non exploitable en pratique, l'identifiant venant d'un JWT signé, mais la requête est désormais paramétrée comme ses voisines
+- **OctoGuard** : les effets de bord d'avertissement et de mise en sourdine quittent le chemin critique de la modération. Le pipeline échouait ouvert sous latence
+- **`adm-zip`** relevé en 0.6.0 : déni de service par archive piégée
+- **`argon2` ne sera jamais relevé automatiquement** : c'est le hachage des mots de passe, il passe par une relecture humaine
+- L'heuristique de forme du pseudo qui recalait de vrais humains à l'inscription est supprimée
+- **Crash SSR** sous Node 22.4 et plus : `localStorage` gardé par `browser` et non par `typeof`
+
+### Installation et infrastructure
+
+- **Le SFU est empaqueté par l'installeur**, il appartient au projet et non plus à un serveur précis
+- **`install_tunnel.sh` dit honnêtement que le vocal reste en mesh** : demander d'ouvrir des ports trahirait la promesse zéro-port, tant que l'ICE complet n'existe pas
+- `npm ci` dans l'installeur, pour des installations reproductibles au verrou près
+- Le serveur TURN Node historique, non déployé, est retiré
+
+---
+
+## [2.10.0] — 2026-07-06
+
+### Vocal : le SFU est né (audio expérimental)
+
+Quatre jours après le CDC (`SPECS/NODYX_SFU_CDC.md`), le premier son a traversé le SFU de Nodyx : un PC et un téléphone en 4G (une barre, presque zone blanche), audio dans les deux sens, via l'infrastructure de l'instance, sans un octet chez un tiers. Le mur mathématique du mesh (15 spectateurs × 3 Mbps = impossible) a désormais sa réponse.
+
+- **`nodyx-sfu`** (Rust, zéro dépendance, zéro `unsafe`) : le cerveau vocal en trois étages hexagonaux, `VoiceService` (salons, sièges, kick, publish/subscribe, bascule hybride mesh↔SFU) → trait `MediaEngine` (le port, blobs de signaling opaques jamais lus par le métier) → adaptateur moteur. 25 tests contre un `NullEngine` : l'orchestration prouvée avant tout moteur réel, et le swap futur vers un moteur full-Rust garanti par construction
+- **`nodyx-sfu-mediasoup`** : l'adaptateur mediasoup (licence ISC, notice dans `NOTICE`) validé par spike (salon réel, pipe de fédération inter-workers, WebRtcTransport ICE/DTLS), et le daemon **`nodyx-sfud`** : API interne localhost à jeton obligatoire (comparaison en temps constant), HTTP minimal écrit main (~150 lignes), **plage RTC UDP bornée** (40000-40999, alignée sur le firewall, leçon nexus-turn), unité systemd durcie
+- **Relais de signaling dans nodyx-core** : events `voice:sfu_*` ADDITIFS et DORMANTS (sans `VOICE_SFU_URL`, tout répond `sfu_disabled` sans toucher ni daemon ni base), mêmes gardes d'admission que le mesh, identité issue du JWT, payloads bornés, rollback complet sur échec partiel. **Le vocal mesh existant : zéro ligne de comportement modifiée**, ses 385+ tests en témoignent
+- **Client `mediasoup-client` + laboratoire `/admin/sfu-lab`** : Device → paire de transports send/recv → micro publié → flux consommés, machine à états journalisée en direct, timeout sur chaque échange, nettoyage idempotent
+- **Passe de relecture post-MVP** : quatre défauts d'états fantômes corrigés (course de création de router, participant orphelin côté daemon après échec partiel, échec de session silencieux côté client, double consume sur annonces croisées)
+
+### Recherche Ctrl+K : elle cherche enfin
+
+- La palette n'appelait jamais le moteur de recherche, et son groupe FORUM interrogeait un endpoint inexistant : chercher un mot du contenu du site donnait toujours zéro résultat
+- Désormais : recherche full-text live dès 2 caractères (titres ET contenu des posts, extraits surlignés, lien direct jusqu'au message), et l'arbre complet des catégories aplati, sous-sous-catégories navigables au clavier
+
 ---
 
 ## [2.9.0] — 2026-07-05
@@ -1431,7 +1652,6 @@ The biggest Nodyx release since launch. v2.0 brings end-to-end encrypted DMs wit
 - Directory DNS creation: replaced `dnsLookup` (returned Cloudflare proxy IP) with `VPS_IP` env var
 
 ---
-
 
 ## [0.4.1] — 2026-03-01
 

@@ -8,8 +8,16 @@ import { writable, derived, get } from 'svelte/store'
 import type { Socket } from 'socket.io-client'
 import { voiceSettingsStore, getPeerVolume, type VoiceSettings } from './voiceSettings'
 import { p2pManager } from './p2p'
+import * as bascule from './voiceBascule'
 export { voiceSettingsStore } from './voiceSettings'
 export type { VoiceSettings } from './voiceSettings'
+
+// ── Bascule mesh↔SFU (§17-B) : mode du canal côté client ──────────────────────
+// 'mesh' par défaut. Passe à 'switching'/'sfu' UNIQUEMENT sur événement serveur
+// (qui n'arrive que si VOICE_SFU_AUTO est actif). Tant que c'est 'mesh', tous les
+// chemins mesh ci-dessous sont strictement ceux d'avant.
+type ChannelMode = 'mesh' | 'switching' | 'sfu'
+let _channelMode: ChannelMode = 'mesh'
 
 // ── ICE Configuration ─────────────────────────────────────────────
 // Priority: dynamic servers from voice:init (nodyx-turn) > static env vars (legacy coturn).
@@ -93,7 +101,7 @@ export interface PeerStats {
   theirRtt:       number | null  // ms — leur RTT (ils le broadcastent)
   packetLoss:     number | null  // %
   jitter:         number | null  // ms
-  connectionType: 'relay' | 'direct' | 'unknown'
+  connectionType: 'relay' | 'direct' | 'sfu' | 'unknown'  // 'sfu' = via le serveur SFU (pas du P2P)
 }
 
 export type NetQuality = 'excellent' | 'good' | 'fair' | 'poor' | 'unknown'
@@ -113,7 +121,17 @@ export const localScreenStore  = writable<MediaStream | null>(null)
 export const remoteScreenStore = writable<Map<string, MediaStream>>(new Map())
 
 // ── Voice channel member roster (populated by socket voice:channel_update) ──
-export interface VoiceChannelMember { userId: string; username: string; avatar: string | null }
+export interface VoiceChannelMember {
+  userId:    string
+  username:  string
+  avatar:    string | null
+  /** État publié par chaque membre via `voice:state` (cf serveur). Permet à
+   *  l'écran d'un canal qu'on n'a PAS rejoint de montrer la vraie vie du salon :
+   *  qui est muet, qui a coupé ses écouteurs, qui partage son écran. */
+  muted?:    boolean
+  deafened?: boolean
+  sharing?:  boolean
+}
 export const voiceChannelMembersStore = writable<Record<string, VoiceChannelMember[]>>({})
 
 // ── Voice join/leave toast events ────────────────────────────────────────────
@@ -531,6 +549,7 @@ function createPeerAudio(socketId: string, stream: MediaStream): void {
   // Volume mémorisé pour CET utilisateur (par userId → survit refresh/reconnexion)
   const peer = get(voiceStore).peers.find(p => p.socketId === socketId)
   audioEl.volume    = peer?.userId ? getPeerVolume(peer.userId) / 100 : 1.0
+  if (_currentSinkId) void _applySink(audioEl)   // adopte la sortie choisie (haut-parleur)
   audioEl.play().catch(() => {
     // Chrome desktop bloque l'autoplay si le contexte geste-utilisateur a expiré.
     // On réessaie au prochain clic ou frappe clavier (une seule fois suffit).
@@ -571,6 +590,83 @@ function createPeerAudio(socketId: string, stream: MediaStream): void {
   }, 100)
 
   _peerAudio.set(socketId, { audioEl, source, analyser, vadInterval })
+}
+
+// ── Sortie audio (Android : écouteur <-> haut-parleur via setSinkId) ─────────
+// Sur mobile, dès qu'un micro tourne, le système route le son vers l'ÉCOUTEUR
+// (mode « appel »), d'où l'obligation de coller le téléphone à l'oreille.
+// setSinkId permet de rediriger vers le haut-parleur. On applique le choix à TOUS
+// les <audio> de lecture (voix + son d'écran) et on le mémorise pour que les
+// éléments créés ensuite l'adoptent. iOS n'expose pas ça : le bouton n'apparaît
+// que si setSinkId existe (Android/desktop).
+export const audioOutputStore = writable<{ supported: boolean; onSpeaker: boolean }>({
+  supported: false, onSpeaker: false,
+})
+let _currentSinkId = ''                                   // '' = sortie système par défaut
+const _extraSinkEls = new Set<HTMLMediaElement>()         // éléments hors roster (son d'écran)
+
+function _sinkSupported(): boolean {
+  return typeof HTMLMediaElement !== 'undefined'
+    && typeof (HTMLMediaElement.prototype as unknown as { setSinkId?: unknown }).setSinkId === 'function'
+}
+
+async function _applySink(el: HTMLMediaElement): Promise<void> {
+  try { await (el as unknown as { setSinkId(id: string): Promise<void> }).setSinkId(_currentSinkId) }
+  catch { /* device parti / non supporté : on ignore */ }
+}
+
+/** Enregistre un <audio> hors roster (ex. son d'écran) pour qu'il suive la sortie. */
+export function registerSinkElement(el: HTMLMediaElement): () => void {
+  _extraSinkEls.add(el)
+  if (_currentSinkId) void _applySink(el)
+  return () => { _extraSinkEls.delete(el) }
+}
+
+/** Disponibilité du bouton : setSinkId présent (Android/desktop, pas iOS). */
+export async function refreshAudioOutputs(): Promise<void> {
+  audioOutputStore.update(s => ({ ...s, supported: _sinkSupported() }))
+}
+
+/** Cherche l'id d'une sortie dont le libellé matche, sinon ''. */
+async function _findOutput(re: RegExp): Promise<string> {
+  try {
+    const devs = await navigator.mediaDevices.enumerateDevices()
+    const outs = devs.filter(d => d.kind === 'audiooutput')
+    const match = outs.find(d => re.test(d.label))
+    if (match) return match.deviceId
+    // Repli : une sortie qui n'est ni « default » ni « communications » est
+    // souvent le haut-parleur sur Android.
+    const other = outs.find(d => d.deviceId !== 'default' && d.deviceId !== 'communications')
+    return other?.deviceId ?? ''
+  } catch { return '' }
+}
+
+/** Bascule écouteur <-> haut-parleur, appliqué à toutes les sorties de lecture. */
+export async function toggleSpeaker(): Promise<boolean> {
+  const cur = get(audioOutputStore)
+  const toSpeaker = !cur.onSpeaker
+  _currentSinkId = toSpeaker ? await _findOutput(/speaker|haut.?parleur/i) : ''
+  for (const node of _peerAudio.values()) await _applySink(node.audioEl)
+  for (const el of _extraSinkEls) await _applySink(el)
+  audioOutputStore.set({ supported: cur.supported, onSpeaker: toSpeaker })
+  return toSpeaker
+}
+
+// ── Accès au signal (pour un équaliseur RÉEL) ────────────────────────────────
+// Le VAD calcule déjà un niveau par personne… mais n'en garde qu'un booléen
+// `speaking`. Du coup toute barre de niveau ne pouvait être que FACTICE (une
+// animation CSS en boucle). On expose donc l'analyser lui-même : un composant
+// peut y lire le vrai spectre en `requestAnimationFrame`, sans passer par le
+// store (pas de re-render du roster à 60 fps).
+
+/** Analyser d'un pair (tap passif sur son flux entrant). */
+export function getPeerAnalyser(socketId: string): AnalyserNode | null {
+  return _peerAudio.get(socketId)?.analyser ?? null
+}
+
+/** Analyser de MON micro (en sortie de la chaîne de traitement). */
+export function getLocalAnalyser(): AnalyserNode | null {
+  return _localChain?.analyser ?? null
 }
 
 function destroyPeerAudio(socketId: string): void {
@@ -953,6 +1049,9 @@ export async function joinVoice(channelId: string, socket: Socket): Promise<void
   socket.on('voice:stats',       onPeerStats)
   socket.on('voice:full',        onVoiceFull)
   socket.on('voice:kicked',      onKicked)
+  socket.on('voice:mode',        onVoiceModeEvent)   // bascule §17-B (dormant si flag off)
+  socket.on('voice:sfu_commit',  onSfuCommitEvent)
+  _channelMode = 'mesh'                               // repart toujours de mesh
 
   _onSocketReconnect = () => {
     console.debug('[voice] Socket reconnected — rejoining voice room')
@@ -976,6 +1075,12 @@ export function leaveVoice(): void {
   if (channelId && _socket) {
     _socket.emit('voice:leave', channelId)
   }
+  // Si on était passé sur l'SFU (bascule), quitter aussi la session SFU. Idempotent
+  // en mesh pur (aucune session SFU ⇒ no-op). Puis on repart de mesh.
+  void bascule.basculeLeaveSfu()
+  _stopSfuStatsPolling()
+  _stopSfuScreenMirror()
+  _channelMode = 'mesh'
 
   if (_socket) {
     _socket.off('voice:init',        onVoiceInit)
@@ -988,6 +1093,8 @@ export function leaveVoice(): void {
     _socket.off('voice:stats',       onPeerStats)
     _socket.off('voice:full',        onVoiceFull)
     _socket.off('voice:kicked',      onKicked)
+    _socket.off('voice:mode',        onVoiceModeEvent)
+    _socket.off('voice:sfu_commit',  onSfuCommitEvent)
     if (_onSocketReconnect) {
       _socket.off('connect', _onSocketReconnect)
       _onSocketReconnect = null
@@ -1040,12 +1147,30 @@ export function kickPeer(targetSocketId: string): void {
   _socket.emit('voice:kick', { channelId, targetSocketId })
 }
 
+// ── Publication de MON état vocal (muet / sourd / partage) ──────────────────
+// Le serveur ne peut pas deviner ces états : ils vivent dans le navigateur. On
+// les lui publie donc à chaque changement, pour qu'il les mette dans le roster
+// du canal (voice:channel_update). Sans ça, l'écran d'un canal qu'on n'a PAS
+// rejoint ne peut pas montrer qui est muet, sourd ou en train de partager.
+// Appelé aux gestes humains (rares) : jamais dans une boucle.
+export function publishVoiceState(): void {
+  const s = get(voiceStore)
+  if (!_socket || !s.active || !s.channelId) return
+  _socket.emit('voice:state', {
+    channelId: s.channelId,
+    muted:     s.muted,
+    deafened:  s.deafened,
+    sharing:   get(screenShareStore),
+  })
+}
+
 export function toggleMute(): void {
   if (!_localStream) return
   const track = _localStream.getAudioTracks()[0]
   if (!track) return
   track.enabled = !track.enabled
   voiceStore.update(s => ({ ...s, muted: !track.enabled }))
+  publishVoiceState()
 }
 
 export function toggleDeafen(): void {
@@ -1057,6 +1182,7 @@ export function toggleDeafen(): void {
     }
     return { ...s, deafened }
   })
+  publishVoiceState()
 }
 
 export function togglePTTMode(): void {
@@ -1120,6 +1246,22 @@ async function capScreenShareBitrate(
   }
 }
 
+/** Ce navigateur peut-il capturer un écran ?
+ *
+ *  Sur ANDROID et iOS, la réponse est NON, et ce n'est pas un manque de Nodyx :
+ *  les navigateurs mobiles n'implémentent pas `getDisplayMedia`. La capture d'écran
+ *  y passe par une API système (MediaProjection sur Android) réservée aux
+ *  applications natives, jamais exposée aux pages web. AUCUN site ne peut partager
+ *  un écran mobile depuis un navigateur.
+ *
+ *  Sans ce contrôle, l'appel échouait en silence : l'utilisateur cliquait, rien ne
+ *  se passait, et rien ne lui disait pourquoi. On préfère l'expliquer.
+ *  (Regarder un partage, en revanche, marche parfaitement sur mobile.) */
+export function screenShareSupported(): boolean {
+  return typeof navigator !== 'undefined'
+    && typeof navigator.mediaDevices?.getDisplayMedia === 'function'
+}
+
 export async function startScreenShare(
   displaySurface: DisplaySurface = 'monitor',
   quality: ShareQuality = '1080p',
@@ -1127,9 +1269,28 @@ export async function startScreenShare(
 ): Promise<void> {
   const { channelId } = get(voiceStore)
   if (!channelId || !_socket) return
+  if (!screenShareSupported()) {
+    console.info('[voice] Partage d\'écran indisponible : ce navigateur ne sait pas capturer un écran (mobile).')
+    return
+  }
 
   const w = quality === '4k' ? 3840 : quality === '1080p' ? 1920 : 1280
   const h = quality === '4k' ? 2160 : quality === '1080p' ? 1080 : 720
+
+  // Canal basculé en SFU : le partage passe par le serveur. UN seul upload, qui
+  // est recopié à chaque spectateur, au lieu d'une copie PAR spectateur (le mur
+  // du mesh vers ~4 personnes). Les stores de l'UI sont alimentés par le miroir
+  // SFU, donc la Scène et le salon affichent ça sans rien savoir du changement.
+  if (_channelMode === 'sfu') {
+    await bascule.basculeStartScreenShare({
+      displaySurface,
+      width:      w,
+      height:     h,
+      frameRate:  fps,
+      maxBitrate: screenShareMaxBitrate(quality, fps),
+    })
+    return
+  }
 
   try {
     const displayStream = await navigator.mediaDevices.getDisplayMedia({
@@ -1140,12 +1301,28 @@ export async function startScreenShare(
         frameRate: { ideal: fps, max: fps },
         cursor:    'always',
       } as any,
-      audio: false,
+      // On capture le SON dès maintenant, même si le mesh ne sait pas le
+      // transporter : le canal va basculer en SFU (ci-dessous), et la migration
+      // republiera CETTE piste telle quelle. Sans elle, il faudrait rouvrir le
+      // sélecteur d'écran après la bascule, ce que le navigateur refuse hors geste
+      // utilisateur : le son serait perdu pour toute la session.
+      audio: true,
     })
 
     _screenStream = displayStream
     localScreenStore.set(displayStream)
     screenShareStore.set(true)
+    publishVoiceState()   // le roster du canal doit montrer « partage son écran »
+
+    // Le partage d'écran est PRÉCISÉMENT le moment où le mesh s'écroule : le
+    // partageur y uploade sa vidéo UNE FOIS PAR SPECTATEUR, et il plafonne vers 4
+    // personnes. On demande donc la bascule TOUT DE SUITE, sans attendre un quorum.
+    //
+    // Le partage démarre quand même en mesh dans la foulée (aucun délai pour
+    // l'utilisateur), puis MIGRE vers le SFU au commit, image et son compris, sans
+    // rien lui redemander. Si le SFU n'est pas activé pour ce canal, l'event est un
+    // no-op : on reste en mesh, exactement comme avant.
+    _socket.emit('voice:screenshare_intent', { channelId })
 
     const videoTrack = displayStream.getVideoTracks()[0]
     videoTrack.onended = () => stopScreenShare()
@@ -1179,6 +1356,14 @@ export async function startScreenShare(
 export function stopScreenShare(): void {
   const { channelId } = get(voiceStore)
 
+  // En SFU, c'est le producer SERVEUR qu'il faut fermer (le mesh ne porte aucune
+  // piste vidéo dans ce mode). Le miroir remet localScreenStore/screenShareStore
+  // à zéro, et les spectateurs voient l'écran disparaître net (voice:sfu_unpublish).
+  if (_channelMode === 'sfu') {
+    void bascule.basculeStopScreenShare()
+    return
+  }
+
   if (_screenStream) {
     _screenStream.getTracks().forEach(t => t.stop())
     _screenStream = null
@@ -1186,6 +1371,7 @@ export function stopScreenShare(): void {
 
   screenShareStore.set(false)
   localScreenStore.set(null)
+  publishVoiceState()
 
   if (!channelId) return
 
@@ -1205,11 +1391,12 @@ export function stopScreenShare(): void {
 
 // ── Socket event handlers ─────────────────────────────────────────
 
-function onVoiceInit({ channelId, peers, mySeatIndex, iceServers }: {
+function onVoiceInit({ channelId, peers, mySeatIndex, iceServers, mode }: {
   channelId:   string
   peers:       { socketId: string; userId: string; username: string; avatar: string | null; seatIndex: number }[]
   mySeatIndex: number
   iceServers?: RTCIceServer[]
+  mode?:       ChannelMode
 }): void {
   if (iceServers && iceServers.length > 0) {
     _dynamicIceServers = iceServers
@@ -1227,8 +1414,37 @@ function onVoiceInit({ channelId, peers, mySeatIndex, iceServers }: {
   const peerList: VoicePeer[] = peers.map(p => ({ ...p, stream: null, speaking: false, iceState: null }))
   voiceStore.update(s => ({ ...s, peers: peerList, mySeatIndex }))
 
-  for (const peer of peers) {
-    createPeerConn(peer.socketId, channelId, true)
+  // Publier notre état (muet/sourd/partage) MAINTENANT, et pas avant : voice:init
+  // est justement la preuve que le serveur nous a mis dans la room. Le faire juste
+  // après emit('voice:join') serait une course perdue d'avance (le serveur n'a pas
+  // encore la room, il jetterait l'état).
+  // Indispensable après une RECONNEXION : le serveur remet voiceState à zéro à
+  // chaque join, alors que _doRejoin garde le « muet » côté client. Sans ça, on
+  // s'affiche muet chez soi mais pas dans le roster du canal.
+  publishVoiceState()
+
+  _channelMode = mode ?? 'mesh'
+  if (_channelMode === 'sfu') {
+    // Arrivant tardif sur un canal DÉJÀ en SFU (§5) : aucun PC mesh, on rejoint
+    // l'SFU directement (lecture immédiate). Le roster ci-dessus reste affiché.
+    // Le MIROIR DES ÉCRANS doit démarrer ICI aussi, pas seulement au commit :
+    // sans ça, celui qui recharge sa page (ou arrive après la bascule) publie bien
+    // son écran au serveur mais rien ne le recopie vers les stores de l'UI, et il
+    // ne voit pas non plus l'écran des autres. Rien ne s'affiche, sans la moindre
+    // erreur : le flux est au serveur, c'est le pont vers l'UI qui manquait.
+    void bascule.basculeJoinDirectSfu(channelId).then(() => {
+      _startSfuStatsPolling()
+      _startSfuScreenMirror()
+    })
+  } else {
+    for (const peer of peers) {
+      createPeerConn(peer.socketId, channelId, true)
+    }
+    if (_channelMode === 'switching' && _socket) {
+      // J'arrive pendant une bascule : mesh (ci-dessus) + établir l'SFU en
+      // parallèle ; chaque flux SFU qui démarre coupe le mesh de la personne.
+      void bascule.basculeBeginSwitch(_socket, channelId, _meshMutePeerByUserId)
+    }
   }
 }
 
@@ -1247,7 +1463,9 @@ function onPeerJoined({ channelId, peer }: {
     if (s.peers.some(p => p.socketId === peer.socketId)) return s
     return { ...s, peers: [...s.peers, { ...peer, stream: null, speaking: false, iceState: null }] }
   })
-  if (!_peerConns.has(peer.socketId)) {
+  // Roster mis à jour ci-dessus dans TOUS les modes. On ne crée un PC mesh que
+  // hors SFU : en SFU, le nouveau flux est relayé via l'SFU (voice:sfu_new_producer).
+  if (_channelMode !== 'sfu' && !_peerConns.has(peer.socketId)) {
     createPeerConn(peer.socketId, channelId, false)
   }
 }
@@ -1262,6 +1480,155 @@ function onPeerLeft({ socketId }: { channelId: string; socketId: string }): void
   _offerLocks.delete(socketId)
   remoteScreenStore.update(map => { map.delete(socketId); return new Map(map) })
   voiceStore.update(s => ({ ...s, peers: s.peers.filter(p => p.socketId !== socketId) }))
+}
+
+// ── Bascule mesh↔SFU (§17-B) : handlers serveur + opérations mesh ──
+// Invoqués UNIQUEMENT si le serveur émet voice:mode / voice:sfu_commit (⇒
+// VOICE_SFU_AUTO actif). En mesh pur, ces fonctions ne tournent jamais.
+
+function _meshMutePlayback(muted: boolean): void {
+  for (const node of _peerAudio.values()) node.audioEl.muted = muted
+}
+
+// Crossfade par personne : coupe le mesh de l'utilisateur dont le flux SFU vient
+// de commencer à jouer (appelé par voiceSfu via le callback). Le roster fait le
+// lien userId → socketId mesh.
+function _meshMutePeerByUserId(userId: string): void {
+  const peer = get(voiceStore).peers.find(p => p.userId === userId)
+  if (!peer) return
+  const node = _peerAudio.get(peer.socketId)
+  if (node) node.audioEl.muted = true
+}
+
+function _meshTeardownConnections(): void {
+  // Ferme le MÉDIA mesh (PC + audio), garde la SESSION (roster, micro local,
+  // socket, seat). Le média passe désormais par l'SFU. Même geste que le teardown
+  // de leaveVoice, mais sans toucher au reste. Le micro mesh, désormais inutilisé,
+  // reste ouvert : inoffensif, et on évite de risquer l'état de session.
+  for (const [sid, pc] of _peerConns) {
+    destroyPeerAudio(sid)
+    pc.close()
+  }
+  _peerConns.clear()
+  _iceQueues.clear()
+  _initiatorMap.clear()
+  _offerLocks.clear()
+}
+
+// Stats SFU : un seul poller (pas de PC mesh à interroger). Il relève les stats de
+// la session SFU et les mappe sur le roster (userId → socketId) pour alimenter le
+// MÊME panneau réseau que le mesh (ping vers le SFU, perte/gigue par personne, type).
+let _sfuStatsInterval: ReturnType<typeof setInterval> | null = null
+function _startSfuStatsPolling(): void {
+  if (_sfuStatsInterval) return
+  void _pollSfuStats() // premier relevé immédiat
+  _sfuStatsInterval = setInterval(() => void _pollSfuStats(), 2000)
+}
+function _stopSfuStatsPolling(): void {
+  if (_sfuStatsInterval) { clearInterval(_sfuStatsInterval); _sfuStatsInterval = null }
+}
+async function _pollSfuStats(): Promise<void> {
+  const st = await bascule.basculeCollectStats()
+  const peers = get(voiceStore).peers
+  peerStatsStore.update(map => {
+    for (const p of peers) {
+      const u = st.perUser.get(p.userId)
+      map.set(p.socketId, {
+        rtt:            st.rtt,          // mon ping vers le SFU
+        theirRtt:       null,            // leur leg vers le SFU : non exposé en v1
+        packetLoss:     u?.packetLoss ?? null,
+        jitter:         u?.jitter ?? null,
+        connectionType: st.connType,
+      })
+    }
+    return new Map(map)
+  })
+}
+
+// ── Miroir des écrans SFU vers les stores de l'UI (P2) ───────────────────────
+// En SFU, les écrans arrivent par voiceSfu, clés par userId. L'UI, elle, lit
+// remoteScreenStore, clé par socketId. On REFLÈTE donc les uns dans les autres via
+// le roster, exactement comme le poller de stats. Résultat : aucun composant d'UI
+// à toucher, la Scène et le salon affichent l'SFU comme ils affichaient le mesh.
+let _unsubSfuScreens:       (() => void) | null = null
+let _unsubSfuLocalScreen:   (() => void) | null = null
+let _unsubRosterForScreens: (() => void) | null = null
+
+function _syncSfuScreens(): void {
+  const peers = get(voiceStore).peers
+  const next  = new Map<string, MediaStream>()
+  for (const sc of get(bascule.basculeScreensStore)) {
+    const peer = peers.find(p => p.userId === sc.userId)
+    if (peer) next.set(peer.socketId, sc.stream)
+  }
+  // N'émettre QUE si le contenu a réellement changé. On est abonné au roster, qui
+  // frémit sans arrêt (parole, niveaux…) : republier une Map neuve à chaque fois
+  // ferait re-rendre l'UI et réattacher les <video> pour rien. Or réassigner
+  // srcObject réinitialise l'élément (noir jusqu'à la keyframe suivante).
+  const cur = get(remoteScreenStore)
+  if (cur.size === next.size) {
+    let identical = true
+    for (const [socketId, stream] of next) {
+      if (cur.get(socketId) !== stream) { identical = false; break }
+    }
+    if (identical) return
+  }
+  remoteScreenStore.set(next)
+}
+
+function _startSfuScreenMirror(): void {
+  _stopSfuScreenMirror()
+  _unsubSfuScreens = bascule.basculeScreensStore.subscribe(() => _syncSfuScreens())
+  // Le roster peut se peupler APRÈS l'arrivée d'un flux : sans ça, le mapping
+  // userId → socketId échouerait une fois et l'écran ne s'afficherait jamais.
+  _unsubRosterForScreens = voiceStore.subscribe(() => {
+    if (_channelMode === 'sfu') _syncSfuScreens()
+  })
+  _unsubSfuLocalScreen = bascule.basculeLocalScreenStore.subscribe(stream => {
+    localScreenStore.set(stream)
+    screenShareStore.set(stream !== null)
+  })
+}
+
+function _stopSfuScreenMirror(): void {
+  _unsubSfuScreens?.();       _unsubSfuScreens = null
+  _unsubRosterForScreens?.(); _unsubRosterForScreens = null
+  _unsubSfuLocalScreen?.();   _unsubSfuLocalScreen = null
+}
+
+function onVoiceModeEvent({ channelId, mode }: { channelId: string; mode: 'sfu' | 'mesh' }): void {
+  if (mode === 'sfu') {
+    if (_channelMode !== 'mesh') return            // déjà en switching/sfu
+    _channelMode = 'switching'
+    // Garder le mesh + établir l'SFU (lecture immédiate) ; chaque flux SFU coupe
+    // le mesh de la personne concernée. Puis confirmer au serveur.
+    if (_socket) void bascule.basculeBeginSwitch(_socket, channelId, _meshMutePeerByUserId)
+  } else if (mode === 'mesh') {                    // abandon décidé par le serveur
+    if (_channelMode === 'switching') {
+      _channelMode = 'mesh'
+      void bascule.basculeLeaveSfu()               // on lâche l'SFU, le mesh (jamais lâché) reste
+      _stopSfuStatsPolling()
+      _stopSfuScreenMirror()
+    }
+  }
+}
+
+function onSfuCommitEvent(_payload: { channelId: string }): void {
+  _channelMode = 'sfu'
+  // Un partage d'écran mesh EN COURS doit suivre la bascule. On capture sa piste
+  // AVANT le teardown : le démontage ferme les PC mais ne stoppe pas le flux local,
+  // donc on peut le republier tel quel vers l'SFU. Sans ça il faudrait rouvrir le
+  // sélecteur d'écran, ce que le navigateur refuse hors geste utilisateur : le
+  // partage mourrait à la bascule.
+  const meshScreen = _screenStream
+  // Instant zéro-coupure : joue l'SFU, coupe puis démonte le mesh.
+  bascule.basculeCommit(_meshMutePlayback, _meshTeardownConnections)
+  _startSfuStatsPolling()  // le panneau réseau se remplit depuis l'SFU
+  _startSfuScreenMirror()  // les écrans SFU alimentent les stores de l'UI
+  if (meshScreen) {
+    _screenStream = null   // le mesh ne le porte plus, l'SFU prend le relais
+    void bascule.basculeStartScreenShare({ existingStream: meshScreen })
+  }
 }
 
 async function onOffer({ from, sdp, channelId }: { from: string; sdp: RTCSessionDescriptionInit; channelId: string }): Promise<void> {

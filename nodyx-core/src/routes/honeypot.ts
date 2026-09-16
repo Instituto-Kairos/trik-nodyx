@@ -5,6 +5,22 @@ import fs from 'fs'
 import { reportHoneypotToMISP } from '../services/mispService.js'
 import { enrichIP, type OSINTResult } from '../services/osintService.js'
 import { sendCERTEmail } from '../services/certEmailService.js'
+import { getClientIp } from '../utils/clientIp'
+
+// Comparaison à temps constant pour les secrets d'accès admin de ce fichier.
+// Trouvé en audit le 15/09 : les 3 routes /_hp_cert/* comparaient avec `!==`
+// (fuite temporelle théorique) ET retombaient sur JWT_SECRET (le secret de
+// signature de TOUTES les sessions) quand CERT_REPORT_SECRET n'était pas
+// configuré, ce qui était le cas en prod. Un secret dédié, jamais absent en
+// pratique, limite le rayon d'exposition à ce seul sous-système même si la
+// comparaison ou le transport (query string) devait un jour fuiter.
+export function secretMatches(provided: unknown, expected: string | undefined): boolean {
+  if (!expected || typeof provided !== 'string') return false
+  const a = Buffer.from(provided)
+  const b = Buffer.from(expected)
+  if (a.length !== b.length) return false
+  return crypto.timingSafeEqual(a, b)
+}
 
 // 1×1 transparent PNG — served by the tracking pixel endpoint
 const PIXEL_PNG = Buffer.from(
@@ -1074,11 +1090,7 @@ export default async function honeypotRoutes(fastify: FastifyInstance) {
     handler: async (request, reply) => {
 
       const headers = request.headers
-      const ip =
-        (headers['cf-connecting-ip'] as string) ||
-        (headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
-        request.ip ||
-        '0.0.0.0'
+      const ip = getClientIp(request) || '0.0.0.0'  // fiable via trustProxy
 
       const originalPath = decodeURIComponent((request.query as any).p || '/').slice(0, 512)
       const userAgent    = (headers['user-agent'] || '').slice(0, 512)
@@ -1279,11 +1291,7 @@ export default async function honeypotRoutes(fastify: FastifyInstance) {
     const { log: username = '', pwd: password = '', _incident: incidentRef = '', _origin_path: loginPath = '/' } = request.body ?? {}
 
     const headers = request.headers
-    const ip =
-      (headers['cf-connecting-ip'] as string) ||
-      (headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
-      request.ip ||
-      '0.0.0.0'
+    const ip = getClientIp(request) || '0.0.0.0'  // fiable via trustProxy
     const userAgent  = (headers['user-agent'] || '').slice(0, 512)
     const incidentId = genIncidentId()
 
@@ -1397,11 +1405,7 @@ export default async function honeypotRoutes(fastify: FastifyInstance) {
     if (!fp_hash || !/^[A-F0-9]{8,64}$/.test(fp_hash)) return reply.code(400).send({})
 
     const headers = request.headers
-    const ip =
-      (headers['cf-connecting-ip'] as string) ||
-      (headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
-      request.ip ||
-      '0.0.0.0'
+    const ip = getClientIp(request) || '0.0.0.0'  // fiable via trustProxy
 
     try {
       // Upsert fingerprint
@@ -1597,9 +1601,7 @@ export default async function honeypotRoutes(fastify: FastifyInstance) {
       return reply.code(200).send(PIXEL_PNG)
     }
 
-    const ip        = ((request.headers['cf-connecting-ip'] as string) ||
-                       (request.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
-                       request.ip || '0.0.0.0')
+    const ip        = getClientIp(request) || '0.0.0.0'  // fiable via trustProxy
     const userAgent = (request.headers['user-agent'] || '').slice(0, 512)
     const referer   = (request.headers['referer']    || '').slice(0, 512)
 
@@ -1674,10 +1676,12 @@ export default async function honeypotRoutes(fastify: FastifyInstance) {
       return reply.code(400).send({ error: 'invalid incident id' })
     }
 
-    // Vérification admin (header secret ou paramètre)
-    const secret = process.env.CERT_REPORT_SECRET || process.env.JWT_SECRET
-    const provided = request.headers['x-cert-secret'] || (request.query as Record<string, string>)['secret']
-    if (!secret || provided !== secret) return reply.code(403).send({ error: 'unauthorized' })
+    // Vérification admin par en-tête uniquement : voir le commentaire sur
+    // secretMatches() en tête de fichier (trouvé en audit le 15/09).
+    if (!process.env.CERT_REPORT_SECRET) return reply.code(503).send({ error: 'CERT_REPORT_SECRET not configured' })
+    if (!secretMatches(request.headers['x-cert-secret'], process.env.CERT_REPORT_SECRET)) {
+      return reply.code(403).send({ error: 'unauthorized' })
+    }
 
     // Collecter toutes les données de l'incident
     const [hitRow, fpRow, credRow, pixelRows, rtcRows] = await Promise.all([
@@ -1820,9 +1824,10 @@ export default async function honeypotRoutes(fastify: FastifyInstance) {
       return reply.code(400).send('ID incident invalide')
     }
 
-    const secret   = process.env.CERT_REPORT_SECRET || process.env.JWT_SECRET
-    const provided = request.headers['x-cert-secret'] || (request.query as Record<string, string>)['secret']
-    if (!secret || provided !== secret) return reply.code(403).send('Non autorisé')
+    if (!process.env.CERT_REPORT_SECRET) return reply.code(503).send('CERT_REPORT_SECRET not configured')
+    if (!secretMatches(request.headers['x-cert-secret'], process.env.CERT_REPORT_SECRET)) {
+      return reply.code(403).send('Non autorisé')
+    }
 
     const [hitRow, fpRow, credRow, pixelRows] = await Promise.all([
       db.query(`SELECT * FROM honeypot_hits WHERE incident_id = $1 LIMIT 1`, [incidentId]).catch(() => ({ rows: [] })),
@@ -2116,9 +2121,10 @@ export default async function honeypotRoutes(fastify: FastifyInstance) {
       return reply.code(400).send({ error: 'invalid incident id' })
     }
 
-    const secret   = process.env.CERT_REPORT_SECRET || process.env.JWT_SECRET
-    const provided = request.headers['x-cert-secret'] || (request.query as Record<string, string>)['secret']
-    if (!secret || provided !== secret) return reply.code(403).send({ error: 'unauthorized' })
+    if (!process.env.CERT_REPORT_SECRET) return reply.code(503).send({ error: 'CERT_REPORT_SECRET not configured' })
+    if (!secretMatches(request.headers['x-cert-secret'], process.env.CERT_REPORT_SECRET)) {
+      return reply.code(403).send({ error: 'unauthorized' })
+    }
 
     if (!process.env.CERT_EMAIL_TO) return reply.code(400).send({ error: 'CERT_EMAIL_TO non configuré' })
 
@@ -2311,9 +2317,9 @@ ${cred ? '  Code Pénal art. 323-3 — Extraction frauduleuse de données (5 ans
   // Appelé par Olympus Hub pour afficher le breakdown dans la page sécurité.
   // Protégé par le secret JWT (header X-Internal-Secret).
   fastify.get<{ Querystring: { ip?: string } }>('/honeypot/osint', async (request, reply) => {
-    const secret   = process.env.JWT_SECRET
-    const provided = request.headers['x-internal-secret'] as string | undefined
-    if (!secret || provided !== secret) return reply.code(403).send({ error: 'unauthorized' })
+    if (!secretMatches(request.headers['x-internal-secret'], process.env.JWT_SECRET)) {
+      return reply.code(403).send({ error: 'unauthorized' })
+    }
 
     const ip = (request.query as { ip?: string }).ip?.trim()
     if (!ip) return reply.code(400).send({ error: 'ip required' })

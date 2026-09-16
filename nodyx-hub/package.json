@@ -2,12 +2,14 @@
   "name": "nodyx-hub",
   "version": "1.0.0",
   "private": true,
+  "license": "AGPL-3.0",
   "type": "module",
   "scripts": {
     "dev": "vite dev --port 7777",
     "build": "vite build",
     "preview": "node build/index.js",
-    "check": "svelte-check --tsconfig ./tsconfig.json"
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "prepare": "svelte-kit sync || echo ''"
   },
   "dependencies": {
     "@types/leaflet": "^1.9.21",
@@ -15,7 +17,7 @@
     "better-sqlite3": "^9.6.0",
     "geoip-lite": "^2.0.2",
     "leaflet": "^1.9.4",
-    "nodemailer": "^9.0.1",
+    "nodemailer": "^9.1.1",
     "pg": "^8.11.5"
   },
   "devDependencies": {

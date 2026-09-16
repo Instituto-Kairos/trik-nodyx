@@ -26,7 +26,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js 22
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
@@ -43,7 +43,7 @@ jobs:
         working-directory: nodyx-core
         run: npx tsc --noEmit
 
-      - name: Vitest — 181 tests attendus
+      - name: Vitest — suite complète
         working-directory: nodyx-core
         # Valeur factice, requise par le bootstrap backend qui refuse de
         # démarrer sans JWT_SECRET >= 32 chars. La prod utilise son propre
@@ -63,7 +63,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js 22
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
@@ -75,6 +75,35 @@ jobs:
       - name: Install dependencies
         working-directory: nodyx-frontend
         run: npm ci
+
+      - name: i18n — clés référencées présentes (pas de clé affichée en brut)
+        working-directory: nodyx-frontend
+        run: npm run i18n:keys:check
+
+      - name: i18n — l'anglais reste à parité avec la source
+        working-directory: nodyx-frontend
+        run: npm run i18n:parity:check
+
+      - name: i18n — placeholders intacts dans chaque traduction
+        working-directory: nodyx-frontend
+        run: npm run i18n:placeholders:check
+
+      - name: i18n — aucune chaîne FR en dur (public + admin)
+        working-directory: nodyx-frontend
+        run: npm run i18n:check
+
+      # Les .ts échappaient entièrement au scanner jusqu'au 2026-08-20, ce qui
+      # cachait ~375 chaînes. Les résorber prend du temps, alors cette porte est
+      # un CLIQUET : la dette gelée dans dette-ts.json est tolérée, toute
+      # nouvelle chaîne fait tomber la construction. Elle peut baisser, jamais
+      # monter.
+      - name: i18n — pas de NOUVELLE chaîne FR en dur dans les .ts
+        working-directory: nodyx-frontend
+        run: npm run i18n:ts:check
+
+      - name: Vitest — tests frontend
+        working-directory: nodyx-frontend
+        run: npm test
 
       - name: Svelte — typecheck (svelte-check)
         working-directory: nodyx-frontend
@@ -111,7 +140,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Rust toolchain (stable, depuis rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable @ 2026-XX
@@ -131,3 +160,97 @@ jobs:
       - name: cargo test --workspace
         working-directory: nodyx-p2p
         run: cargo test --workspace
+
+  # ── 4. Applications satellites — typecheck + build ────────────────────────
+  # nodyx.dev (docs), start.nodyx.org (landing), le hub et l'authenticator sont
+  # DÉPLOYÉS mais n'avaient aucune CI : un build cassé pouvait partir en prod
+  # sans que rien ne l'arrête. Constaté le 2026-08-07, quand des modifications
+  # de landing et docs sont passées sans qu'aucun job ne les construise.
+  check-satellites:
+    name: "${{ matrix.app }} — typecheck + build"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false   # un satellite cassé ne doit pas masquer l'état des autres
+      matrix:
+        app: [nodyx-docs, nodyx-hub, nodyx-landing, nodyx-authenticator, nodyx-store]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: ${{ matrix.app }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ${{ matrix.app }}
+        run: npm ci
+
+      - name: Svelte — typecheck (svelte-check)
+        working-directory: ${{ matrix.app }}
+        run: npm run check
+
+      - name: Vitest — tests (si l'app en a)
+        if: hashFiles(format('{0}/vitest.config.ts', matrix.app)) != ''
+        working-directory: ${{ matrix.app }}
+        run: npm test
+
+      - name: Vite — build production
+        working-directory: ${{ matrix.app }}
+        run: npm run build
+
+  # ── 5. Hygiène du dépôt ───────────────────────────────────────────────────
+  # Une règle `.gitignore` n'a AUCUN effet sur un fichier déjà suivi. Deux
+  # images uploadées par un utilisateur sont ainsi restées publiques dans le
+  # dépôt d'avril à août 2026, alors que le .gitignore disait déjà « données
+  # personnelles, ne jamais publier ». Ce job transforme l'intention en règle.
+  repo-hygiene:
+    name: "hygiène du dépôt — aucun contenu privé suivi"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Aucun fichier uploadé par un utilisateur n'est suivi
+        run: |
+          # Seuls les .gitkeep (arborescence) et le widget de démonstration
+          # livré avec le produit ont le droit d'être suivis sous uploads/.
+          LEAKED=$(git ls-files 'nodyx-core/uploads/*' \
+            | grep -vE '\.gitkeep$|^nodyx-core/uploads/widgets/video-player/' || true)
+          if [ -n "$LEAKED" ]; then
+            echo "Du contenu utilisateur est suivi par git :"
+            echo "$LEAKED" | sed 's/^/  /'
+            echo ""
+            echo "Ces fichiers seraient publiés avec le dépôt. Retire-les du suivi :"
+            echo "  git rm --cached <fichier>   (le fichier reste sur le disque)"
+            exit 1
+          fi
+          echo "Aucun contenu utilisateur suivi."
+
+      - name: Aucun secret ni clé privée suivis
+        run: |
+          LEAKED=$(git ls-files \
+            | grep -iE '(^|/)\.env($|\.)|\.(pem|key|p12|pfx)$' \
+            | grep -v '\.env\.example' || true)
+          if [ -n "$LEAKED" ]; then
+            echo "Des fichiers sensibles sont suivis par git :"
+            echo "$LEAKED" | sed 's/^/  /'
+            exit 1
+          fi
+          echo "Aucun secret suivi."
+
+      - name: Le dossier .claude n'est jamais suivi
+        run: |
+          # Il contient des notes privées et des données personnelles : sa
+          # présence dans le dépôt serait une fuite, pas une maladresse.
+          LEAKED=$(git ls-files | grep '^\.claude/' || true)
+          if [ -n "$LEAKED" ]; then
+            echo "Le dossier .claude est suivi par git. Fuite de données privées :"
+            echo "$LEAKED" | sed 's/^/  /'
+            exit 1
+          fi
+          echo ".claude n'est pas suivi."

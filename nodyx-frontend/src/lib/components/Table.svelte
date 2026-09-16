@@ -1,10 +1,14 @@
 <script lang="ts">
-	import { voiceStore, setPeerVolume, inputLevel, peerStatsStore, getQuality, kickPeer } from '$lib/voice'
+	import { voiceStore, setPeerVolume, inputLevel, peerStatsStore, getQuality, kickPeer, voiceChannelMembersStore } from '$lib/voice'
 	import { jukeboxStore, initJukebox, cleanupJukebox, mountYTPlayer, jukeboxLoad } from '$lib/jukebox'
+	import VoiceEqualizer from '$lib/components/VoiceEqualizer.svelte'
 	import { goto } from '$app/navigation'
 	import { PUBLIC_API_URL } from '$env/static/public'
-	import { page } from '$app/stores'
+	import { page } from '$app/state'
 	import type { Socket } from 'socket.io-client'
+	import { t } from '$lib/i18n'
+
+	const tFn = $derived($t)
 
 	interface Props {
 		channelName: string
@@ -21,6 +25,13 @@
 	const vs       = $derived($voiceStore)
 	const jb       = $derived($jukeboxStore)
 	const statsMap = $derived($peerStatsStore)
+
+	// ── Qui est déjà dans le canal, AVANT de le rejoindre ────────────────────
+	// Le roster du canal arrive en temps réel (socket voice:channel_update) et ne
+	// dépend PAS de notre connexion : la sidebar l'affichait déjà. L'écran du canal,
+	// lui, restait aveugle (0 participant tant qu'on n'avait pas rejoint), ce qui
+	// n'avait aucun sens : on décide de rejoindre justement en voyant qui est là.
+	const present = $derived($voiceChannelMembersStore[channelId] ?? [])
 
 	type NetQuality = 'excellent' | 'good' | 'fair' | 'poor' | 'unknown'
 	const QUALITY_COLOR: Record<NetQuality, string> = {
@@ -122,7 +133,7 @@
 	}
 	function closeMenu() { menuPlayer = null }
 
-	const userRole = $derived(($page.data as any)?.user?.role as string | undefined)
+	const userRole = $derived((page.data as any)?.user?.role as string | undefined)
 	const canModerate = $derived(
 		userRole === 'owner' || userRole === 'admin' || userRole === 'moderator'
 	)
@@ -130,7 +141,7 @@
 	function kickPlayer(p: Player) {
 		if (!p.socketId) return
 		closeMenu()
-		const ok = window.confirm(`Exclure ${p.username} du salon vocal ?`)
+		const ok = window.confirm(tFn('table.kick_confirm', { name: p.username }))
 		if (ok) kickPeer(p.socketId)
 	}
 
@@ -158,7 +169,7 @@
 		jukeboxError = ''
 		const ok = jukeboxLoad(jukeboxUrl.trim())
 		if (ok) { showJukeboxInput = false; jukeboxUrl = '' }
-		else { jukeboxError = 'Lien YouTube invalide. Exemples : youtube.com/watch?v=... ou youtu.be/...' }
+		else { jukeboxError = tFn('table.invalid_youtube') }
 	}
 </script>
 
@@ -191,7 +202,7 @@
 		<div class="flex-1 flex flex-col items-center justify-center gap-10 p-8 relative z-10">
 
 			<div class="text-center space-y-1.5">
-				<p class="text-[10px] font-black uppercase tracking-[0.25em] text-gray-700">Canal vocal</p>
+				<p class="text-[10px] font-black uppercase tracking-[0.25em] text-gray-700">{tFn('table.voice_channel')}</p>
 				<h2 class="text-3xl font-black text-white tracking-tight">{channelName}</h2>
 			</div>
 
@@ -215,11 +226,80 @@
 					<svg class="w-10 h-10" fill="none" stroke="white" stroke-width="1.5" viewBox="0 0 24 24" style="opacity:0.9;">
 						<path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"/>
 					</svg>
-					<span class="text-[11px] font-black uppercase tracking-[0.18em] text-white/75">Rejoindre</span>
+					<span class="text-[11px] font-black uppercase tracking-[0.18em] text-white/75">{tFn('table.join')}</span>
 				</div>
 			</button>
 
-			<p class="text-xs text-gray-700">Microphone requis pour participer</p>
+			<!-- ── Qui est déjà là (aperçu avant de rejoindre) ─────────────────
+			     On voit la salle AVANT d'y entrer : c'est ce qui donne envie
+			     d'entrer, et ça évite le « je rejoins pour voir » micro ouvert. -->
+			{#if present.length > 0}
+				<div class="flex flex-col items-center gap-4">
+					<p class="text-[10px] font-black uppercase tracking-[0.25em]"
+					   style="color: rgb(var(--nx-accent-2-soft))">
+						{present.length > 1 ? tFn('table.here_many', { count: present.length }) : tFn('table.here_one', { count: present.length })}
+					</p>
+					<div class="flex flex-wrap items-start justify-center gap-4 max-w-lg">
+						{#each present.slice(0, 8) as m (m.userId)}
+							<div class="flex w-16 flex-col items-center gap-1.5"
+							     title={m.username + (m.sharing ? tFn('table.tt_sharing') : '') + (m.deafened ? tFn('table.tt_deafened') : m.muted ? tFn('table.tt_muted') : '')}>
+								<div class="relative">
+									<div class="h-12 w-12 overflow-hidden rounded-full transition-transform duration-300 hover:scale-110"
+									     style="box-shadow: 0 0 0 2px {m.sharing ? '#3b82f6' : 'rgb(var(--nx-accent-2-rgb) / 0.5)'}, 0 0 20px {m.sharing ? 'rgba(59,130,246,0.35)' : 'rgb(var(--nx-accent-2-rgb) / 0.25)'}">
+										{#if m.avatar}
+											<img src={m.avatar} alt={m.username} class="h-full w-full object-cover"/>
+										{:else}
+											<div class="flex h-full w-full items-center justify-center text-sm font-black text-white select-none"
+											     style="background: linear-gradient(135deg, var(--nx-accent-2-strong), var(--nx-cyan-deep))">
+												{m.username.charAt(0).toUpperCase()}
+											</div>
+										{/if}
+									</div>
+
+									<!-- Badges d'état : la vraie vie du salon, visible AVANT d'entrer.
+									     Sourd prime sur muet (on n'entend déjà plus rien). -->
+									{#if m.sharing}
+										<div class="absolute -left-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full"
+										     style="background:#3b82f6; border:2px solid #0d0d12" aria-label={tFn('table.sharing_aria')}>
+											<svg class="h-2 w-2" fill="none" stroke="white" stroke-width="3" viewBox="0 0 24 17">
+												<rect x="1" y="1" width="22" height="13" rx="2"/>
+											</svg>
+										</div>
+									{/if}
+									{#if m.deafened}
+										<div class="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full"
+										     style="background:#fb923c; border:2px solid #0d0d12" aria-label={tFn('table.deafened_aria')}>
+											<svg class="h-2.5 w-2.5" fill="none" stroke="white" stroke-width="3" viewBox="0 0 24 24">
+												<path stroke-linecap="round" d="M3 18v-6a9 9 0 0118 0v6"/>
+												<path stroke-linecap="round" d="M2 2l20 20"/>
+											</svg>
+										</div>
+									{:else if m.muted}
+										<div class="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full"
+										     style="background:#ef4444; border:2px solid #0d0d12" aria-label={tFn('table.muted_aria')}>
+											<svg class="h-2.5 w-2.5" fill="none" stroke="white" stroke-width="3" viewBox="0 0 24 24">
+												<path stroke-linecap="round" d="M12 15a3 3 0 003-3V6a3 3 0 00-6 0v6a3 3 0 003 3z"/>
+												<path stroke-linecap="round" d="M2 2l20 20"/>
+											</svg>
+										</div>
+									{/if}
+								</div>
+								<span class="w-full truncate text-center text-[10px] text-gray-500">{m.username}</span>
+							</div>
+						{/each}
+						{#if present.length > 8}
+							<div class="flex h-12 w-12 items-center justify-center rounded-full text-[11px] font-bold text-gray-400"
+							     style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08)">
+								+{present.length - 8}
+							</div>
+						{/if}
+					</div>
+				</div>
+			{:else}
+				<p class="text-xs text-gray-700">{tFn('table.nobody_yet')}</p>
+			{/if}
+
+			<p class="text-xs text-gray-800">{tFn('table.mic_required')}</p>
 		</div>
 
 	{:else}
@@ -278,13 +358,13 @@
 						{#if p.isMe}
 							<div class="absolute top-2.5 left-3 px-1.5 py-px pointer-events-none"
 							     style="background:rgb(var(--nx-accent-2-rgb) / 0.14);border:1px solid rgb(var(--nx-accent-2-rgb) / 0.35)">
-								<span class="text-[8px] font-black uppercase tracking-[0.15em]" style="color:rgba(167,139,250,0.85)">Vous</span>
+								<span class="text-[8px] font-black uppercase tracking-[0.15em]" style="color:rgba(167,139,250,0.85)">{tFn('table.you')}</span>
 							</div>
 						{/if}
 
 						<!-- Quality indicator — top-right -->
 						{#if !p.isMe && pStats}
-							<div class="absolute top-3 right-3 flex items-end gap-[2px]" title="Qualité réseau : {quality}">
+							<div class="absolute top-3 right-3 flex items-end gap-[2px]" title={tFn('table.network_quality', { quality })}>
 								{#each [1,2,3] as bar}
 									<div class="w-[3px] rounded-sm transition-colors duration-500"
 									     style="height:{4 + bar * 3}px; background:{bar <= qBars ? qColor : 'rgba(255,255,255,0.08)'}"></div>
@@ -354,16 +434,28 @@
 								{p.isMe ? 'Vous' : p.username}
 							</span>
 
-							<!-- 7-bar EQ — gradient violet → cyan, 16px tall -->
-							<div class="flex items-end gap-[2.5px] transition-opacity duration-300"
-							     style="height:16px; opacity:{isSpeaking || myActive ? 1 : 0};">
-								{#each [
-									{c:'var(--nx-accent-deep)',d:'0.00s'},{c:'var(--nx-accent-2-strong)',d:'0.14s'},{c:'var(--nx-accent-2-mid)',d:'0.05s'},
-									{c:'var(--nx-accent-2-soft)',d:'0.22s'},{c:'var(--nx-cyan-soft)',d:'0.09s'},{c:'#22d3ee',d:'0.17s'},
-									{c:'var(--nx-cyan-soft)',d:'0.03s'}
-								] as bar}
-									<div class="w-[2.5px] rounded-sm eq-bar" style="background:{bar.c}; animation-delay:{bar.d}"></div>
-								{/each}
+							<!-- ÉQUALISEUR RÉEL — dégradé violet → cyan.
+							     Avant : une animation CSS en boucle (animation-delay), donc le
+							     MÊME dessin pour tout le monde, en permanence. Maintenant chaque
+							     barre suit le vrai spectre de la personne. Ici on a la place, donc
+							     on est plus généreux qu'en sidebar (plus haut, plus large).
+							     Au repos les barres retombent d'elles-mêmes : on garde l'EQ
+							     visible en sourdine plutôt que de le faire disparaître, ça montre
+							     que la personne est là, simplement silencieuse. -->
+							<div class="transition-opacity duration-300"
+							     style="opacity:{isSpeaking || myActive ? 1 : 0.35};">
+								<VoiceEqualizer
+									socketId={p.socketId}
+									isMe={p.isMe}
+									height={26}
+									barWidth={3.5}
+									gap={3}
+									colors={[
+										'var(--nx-accent-deep)', 'var(--nx-accent-2-strong)', 'var(--nx-accent-2-mid)',
+										'var(--nx-accent-2-soft)', 'var(--nx-cyan-soft)', '#22d3ee',
+										'var(--nx-cyan-soft)',
+									]}
+								/>
 							</div>
 						</div>
 
@@ -451,10 +543,10 @@
 					</div>
 					<div>
 						<h3 class="text-sm font-bold text-gray-100">Jukebox</h3>
-						<p class="text-[11px] text-gray-600">Diffuse un lien YouTube pour tout le canal</p>
+						<p class="text-[11px] text-gray-600">{tFn('table.yt_broadcast_hint')}</p>
 					</div>
 					<button
-						aria-label="Fermer"
+						aria-label={tFn('table.close')}
 						class="ml-auto w-7 h-7 flex items-center justify-center text-gray-600 hover:text-gray-300 hover:bg-white/5 transition-colors focus:outline-none"
 						onclick={() => { showJukeboxInput = false; jukeboxError = '' }}
 					>
@@ -467,7 +559,7 @@
 				<input
 					type="url"
 					bind:value={jukeboxUrl}
-					placeholder="https://www.youtube.com/watch?v=..."
+					placeholder={tFn('table.youtube_ph')}
 					class="w-full px-4 py-3 text-sm text-gray-200 focus:outline-none mb-3"
 					style="background: rgba(255,255,255,0.04);
 					       border: 1px solid rgba(255,255,255,0.08);
@@ -484,7 +576,7 @@
 					style="background: rgba(200,145,74,0.9); color: #07070f; box-shadow: 0 0 24px rgba(200,145,74,0.25);"
 					onclick={handleJukeboxLoad}
 				>
-					Lancer pour tous
+					{tFn('table.launch_all')}
 				</button>
 
 				<p class="text-[10px] mt-4 text-center text-gray-700">
@@ -519,7 +611,7 @@
 				<svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 					<path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"/>
 				</svg>
-				Voir le profil
+				{tFn('table.view_profile')}
 			</button>
 
 			<button onclick={() => whisperPeer(mp)}
@@ -538,7 +630,7 @@
 						<svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 							<path stroke-linecap="round" stroke-linejoin="round" d="M19.114 5.636a9 9 0 010 12.728M16.463 8.288a5.25 5.25 0 010 7.424M6.75 8.25l4.72-4.72a.75.75 0 011.28.53v15.88a.75.75 0 01-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.01 9.01 0 012.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75z"/>
 						</svg>
-						Réactiver
+						{tFn('table.reactivate')}
 					{:else}
 						<svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 							<path stroke-linecap="round" stroke-linejoin="round" d="M17.25 9.75L19.5 12m0 0l2.25 2.25M19.5 12l2.25-2.25M19.5 12l-2.25 2.25m-10.5-6l4.72-4.72a.75.75 0 011.28.53v15.88a.75.75 0 01-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.01 9.01 0 012.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75z"/>
@@ -602,14 +694,6 @@
 	}
 
 	/* ── Barres égaliseur ────────────────────────────────────────────────── */
-	@keyframes eq-dance {
-		0%, 100% { height: 25%; }
-		50%       { height: 100%; }
-	}
-	.eq-bar {
-		height: 100%;
-		animation: eq-dance 0.75s ease-in-out infinite;
-	}
 
 	/* ── Mini vinyle Jukebox ─────────────────────────────────────────────── */
 	@keyframes vinyl-spin {

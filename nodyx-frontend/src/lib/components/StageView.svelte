@@ -1,17 +1,37 @@
 <script lang="ts">
     import { onDestroy } from 'svelte'
+    import { browser } from '$app/environment'
     import {
         localScreenStore,
         remoteScreenStore,
         stopScreenShare,
         voiceStore,
+        registerSinkElement,
     } from '$lib/voice'
+    import StageChat from './StageChat.svelte'
+    import { t } from '$lib/i18n'
+
+    const tFn = $derived($t)
 
     let { onclose }: { onclose: () => void } = $props()
 
     const localStream   = $derived($localScreenStore)
     const remoteScreens = $derived($remoteScreenStore)
     const peers         = $derived($voiceStore.peers)
+    const channelId     = $derived($voiceStore.channelId)
+
+    // ── Chat du salon dans la scène ───────────────────────────────────────────
+    // OUVERT par défaut : on suit la conversation en regardant, sans avoir à
+    // chercher un bouton. Une flèche le replie (et le rouvre). Le choix est
+    // mémorisé : on ne le rouvre pas de force à celui qui l'a replié.
+    let showChat = $state(
+        !browser || localStorage.getItem('nodyx:stage:chat') !== '0',
+    )
+    $effect(() => {
+        if (browser) {
+            localStorage.setItem('nodyx:stage:chat', showChat ? '1' : '0')
+        }
+    })
 
     // ── Unified stream list ────────────────────────────────────────
     type StreamEntry = {
@@ -27,7 +47,7 @@
             const peer = peers.find(p => p.socketId === socketId)
             return {
                 id:      socketId,
-                username: peer?.username ?? 'Participant',
+                username: peer?.username ?? tFn('stage.participant'),
                 avatar:   peer?.avatar ?? null,
                 stream,
                 isLocal:  false,
@@ -35,7 +55,7 @@
         }),
         ...(localStream ? [{
             id:       'local',
-            username: 'Vous',
+            username: tFn('stage.you'),
             avatar:   null,
             stream:   localStream,
             isLocal:  true,
@@ -83,11 +103,17 @@
     function onWindowMouseUp() { pipDragging = false }
 
     // ── Stream → <video> Svelte action ────────────────────────────
+    // ⚠ Réassigner srcObject réinitialise l'élément vidéo (l'algorithme de chargement
+    // du média s'exécute MÊME pour le même objet) : image noire jusqu'à la keyframe
+    // suivante. Le store étant republié souvent, ça donnait un clignotement rapide.
     function streamSrc(node: HTMLVideoElement, stream: MediaStream) {
         node.srcObject = stream
         return {
-            update(s: MediaStream) { node.srcObject = s },
-            destroy()             { node.srcObject = null },
+            update(s: MediaStream) {
+                if (node.srcObject === s) return
+                node.srcObject = s
+            },
+            destroy() { node.srcObject = null },
         }
     }
 
@@ -125,6 +151,69 @@
     // ── Actions ───────────────────────────────────────────────────
     let focusVideoElem: HTMLVideoElement | undefined = $state(undefined)
 
+    // ── Son du partage (réglage spectateur) ───────────────────────────────────
+    // Le son de l'écran arrive dans le MÊME MediaStream que l'image, mais le lire
+    // via la <video autoplay> échoue sur mobile : le navigateur bloque le son d'une
+    // vidéo autoplay non-mutée. On le sort donc par un <audio> DÉDIÉ, exactement
+    // comme les voix : ce chemin est débloqué dès qu'on a rejoint le vocal (geste
+    // utilisateur), donc il joue. La <video> reste muette (image seule) ; volume et
+    // coupure visent le <audio>. Ça ne touche jamais aux voix (leurs propres <audio>).
+    let screenAudioElem = $state<HTMLAudioElement | undefined>(undefined)
+    let screenVolume = $state(100)   // 0..100, volume « maître » du son de l'écran
+    let screenMuted  = $state(false)
+    let hasScreenAudio = $state(false)   // le partage focalisé diffuse-t-il du son ?
+
+    // Rattache le son de l'écran focalisé au <audio> dédié. Le son peut arriver
+    // APRÈS l'image (l'ordre n'est pas garanti), addTrack() programmatique ne
+    // déclenche pas l'event 'addtrack', et le miroir SFU dédpublie par référence de
+    // stream : rien ne nous réveillerait. On sonde donc brièvement jusqu'à ce que la
+    // piste apparaisse, puis on s'arrête (aucun son = on abandonne au bout de ~30 s).
+    $effect(() => {
+        const el = screenAudioElem
+        const entry = focusedEntry
+        if (!el) return
+        if (!entry || entry.isLocal) { hasScreenAudio = false; try { el.srcObject = null } catch { /* rien */ } return }
+        const stream = entry.stream
+        const attach = (): boolean => {
+            const tracks = stream.getAudioTracks()
+            hasScreenAudio = tracks.length > 0
+            if (tracks.length === 0) return false
+            const cur = el.srcObject as MediaStream | null
+            const same = !!cur && cur.getAudioTracks().length === tracks.length
+                && tracks.every(t => !!cur.getTrackById(t.id))
+            if (!same) {
+                el.srcObject = new MediaStream(tracks)
+                void el.play().catch(() => {})
+            }
+            return true
+        }
+        if (attach()) return
+        let tries = 0
+        const timer = setInterval(() => {
+            if (attach() || ++tries > 60) clearInterval(timer)
+        }, 500)
+        return () => clearInterval(timer)
+    })
+
+    // Volume / coupure → le <audio> du partage.
+    $effect(() => {
+        const el = screenAudioElem
+        if (!el) return
+        el.volume = screenVolume / 100
+        el.muted  = screenMuted
+    })
+
+    // Le son d'écran suit la sortie choisie (écouteur/haut-parleur), comme les voix.
+    $effect(() => {
+        const el = screenAudioElem
+        if (!el) return
+        return registerSinkElement(el)
+    })
+
+    // Filet de sécurité mobile : un clic sur une commande relance la lecture si le
+    // navigateur l'avait bloquée (le clic EST le geste utilisateur qui débloque).
+    function nudgeScreenAudio() { void screenAudioElem?.play().catch(() => {}) }
+
     function saveClip() {
         if (!clipsBuffer.length) return
         const blob = new Blob(clipsBuffer, { type: 'video/webm' })
@@ -155,6 +244,9 @@
 
     function onKeydown(e: KeyboardEvent) {
         if (isPiP) return
+        // On tape un message ? Les raccourcis (F/P) ne doivent PAS se déclencher.
+        const t = e.target as HTMLElement | null
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
         if (e.key === 'Escape') { e.stopPropagation(); onclose() }
         if (e.key === 'f' || e.key === 'F') requestFullscreen()
         if (e.key === 'p' || e.key === 'P') isPiP = true
@@ -230,17 +322,17 @@
                 onclick={() => isPiP = true}
                 class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all"
                 style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.07); color: rgb(156,163,175);"
-                title="Mode PiP (P)"
+                title={tFn('stage.pip_title')}
             >
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                     <rect x="2" y="3" width="20" height="14" rx="2"/>
                     <rect x="12" y="10" width="8" height="5" rx="1"/>
                 </svg>
-                <span class="hidden sm:inline">PiP</span>
+                <span class="hidden sm:inline">{tFn('stage.pip_label')}</span>
             </button>
             <button
                 onclick={onclose}
-                aria-label="Fermer le stage"
+                aria-label={tFn('stage.close_aria')}
                 class="w-8 h-8 flex items-center justify-center rounded-lg transition-all"
                 style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.07); color: rgb(107,114,128);"
             >
@@ -254,8 +346,14 @@
     <!-- Main area ───────────────────────────────────────────────── -->
     <div class="flex-1 flex min-h-0">
 
-        <!-- Focus stream -->
-        <div class="flex-1 relative flex items-center justify-center bg-black min-w-0">
+        <!-- Colonne vidéo : la scène, et les miniatures EN BAS. La droite est
+             réservée au chat : mettre les miniatures à droite les ferait se
+             disputer la largeur avec lui et rétrécirait la vidéo pour rien. -->
+        <div class="flex-1 flex flex-col min-w-0 min-h-0">
+
+        <!-- Focus stream. min-h-0 + object-contain = la vidéo TIENT toujours dans
+             la place disponible : jamais de scrollbar pour voir le bas. -->
+        <div class="flex-1 relative flex items-center justify-center bg-black min-w-0 min-h-0">
             {#if focusedEntry}
                 <!-- Username badge -->
                 <div class="absolute top-4 left-4 z-10 flex items-center gap-2 px-3 py-1.5 rounded-full"
@@ -281,20 +379,30 @@
                     {/if}
                 </div>
 
-                <!-- Keyboard hint -->
-                <div class="absolute top-4 right-4 z-10 text-[10px] select-none" style="color: rgba(255,255,255,0.12)">
-                    F — plein écran · P — PiP · Esc — fermer
+                <!-- Raccourcis : ils étaient en opacité 0.12, donc invisibles (on ne
+                     pouvait pas deviner « P »). Lisibles, et nommés en clair. -->
+                <div class="absolute top-4 right-4 z-10 flex items-center gap-2.5 rounded-full px-3 py-1.5 text-[10px] select-none"
+                     style="background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.1); color: rgba(255,255,255,0.6); backdrop-filter: blur(4px)">
+                    <span><kbd class="stage-kbd">F</kbd> {tFn('stage.kbd.fullscreen')}</span>
+                    <span><kbd class="stage-kbd">P</kbd> {tFn('stage.kbd.pip')}</span>
+                    <span><kbd class="stage-kbd">{tFn('stage.kbd.esc')}</kbd> {tFn('stage.kbd.close')}</span>
                 </div>
 
-                <!-- Main video — double-clic = plein écran -->
+                <!-- Vidéo principale : double-clic = plein écran.
+                     Le son de l'écran partagé vit DANS ce flux : c'est donc ici qu'il
+                     sort. On coupe le son de SON PROPRE partage (on l'entend déjà en
+                     vrai : le rejouer ferait un écho, voire un larsen). -->
                 <video
                     bind:this={focusVideoElem}
                     use:streamSrc={focusedEntry.stream}
                     autoplay playsinline muted
                     ondblclick={requestFullscreen}
                     class="w-full h-full object-contain cursor-pointer"
-                    title="Double-clic pour plein écran"
+                    title={tFn('stage.dblclick_title')}
                 ></video>
+                <!-- Son du partage : sorti par un <audio> dédié (fiable sur mobile,
+                     contrairement au son porté par la <video autoplay>). -->
+                <audio bind:this={screenAudioElem} autoplay class="hidden"></audio>
 
                 <!-- Bouton fullscreen permanent (coin bas-droit) -->
                 <button
@@ -302,46 +410,89 @@
                     class="absolute bottom-4 right-4 z-10 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg
                            opacity-40 hover:opacity-100 transition-opacity duration-150"
                     style="background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.12); color: white; backdrop-filter: blur(4px);"
-                    title="Plein écran (F)"
+                    title={tFn('stage.fullscreen_title_f')}
                 >
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/>
                     </svg>
-                    <span class="text-xs font-medium">Plein écran</span>
+                    <span class="text-xs font-medium">{tFn('stage.fullscreen')}</span>
                 </button>
+
+                <!-- Son du partage (coin bas-gauche) : mute + volume, côté spectateur.
+                     Pas pour son propre partage (on l'entend déjà en vrai). -->
+                {#if !focusedEntry.isLocal}
+                    <div class="absolute bottom-4 left-4 z-10 flex items-center gap-2 px-2.5 py-1.5 rounded-lg
+                                opacity-40 hover:opacity-100 transition-opacity duration-150"
+                         style="background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.12); color: white; backdrop-filter: blur(4px);">
+                        {#if hasScreenAudio}
+                            <button
+                                onclick={() => { screenMuted = !screenMuted; if (!screenMuted) nudgeScreenAudio() }}
+                                class="shrink-0 hover:text-indigo-300 transition-colors"
+                                title={screenMuted ? tFn('stage.unmute_share') : tFn('stage.mute_share')}
+                                aria-label={screenMuted ? tFn('stage.unmute_share') : tFn('stage.mute_share')}
+                            >
+                                {#if screenMuted || screenVolume === 0}
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M11 5 6 9H2v6h4l5 4V5z"/>
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M23 9l-6 6M17 9l6 6"/>
+                                    </svg>
+                                {:else}
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M11 5 6 9H2v6h4l5 4V5z"/>
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                                    </svg>
+                                {/if}
+                            </button>
+                            <input
+                                type="range" min="0" max="100" step="1"
+                                bind:value={screenVolume}
+                                oninput={() => { if (screenVolume > 0) { screenMuted = false; nudgeScreenAudio() } }}
+                                class="stage-vol"
+                                title={tFn('stage.share_volume_title', { vol: screenVolume })}
+                                aria-label={tFn('stage.share_volume_aria')}
+                            />
+                        {:else}
+                            <svg class="w-4 h-4 shrink-0" style="color: rgba(255,255,255,0.5)" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M11 5 6 9H2v6h4l5 4V5z"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M23 9l-6 6M17 9l6 6"/>
+                            </svg>
+                            <span class="text-xs" style="color: rgba(255,255,255,0.7)">{tFn('stage.share_no_sound')}</span>
+                        {/if}
+                    </div>
+                {/if}
 
                 <!-- Hover controls bar (actions secondaires) -->
                 <div class="absolute bottom-0 left-0 right-0 px-6 py-4 flex justify-center gap-2.5
                             opacity-0 hover:opacity-100 transition-opacity duration-200 pointer-events-none"
                      style="background: linear-gradient(to top, rgba(0,0,0,0.85), rgba(0,0,0,0.2), transparent)">
 
-                    <button onclick={requestFullscreen} class="stage-ctrl" title="Plein écran (F)">
+                    <button onclick={requestFullscreen} class="stage-ctrl" title={tFn('stage.fullscreen_title_f')}>
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/>
                         </svg>
-                        <span>Plein écran</span>
+                        <span>{tFn('stage.fullscreen')}</span>
                     </button>
 
                     {#if focusedEntry.isLocal}
-                        <button onclick={takeSnapshot} class="stage-ctrl" title="Capture d'écran">
+                        <button onclick={takeSnapshot} class="stage-ctrl" title={tFn('stage.snapshot_title')}>
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M3 9a2 2 0 0 1 2-2h.93a2 2 0 0 0 1.664-.89l.812-1.22A2 2 0 0 1 10.07 4h3.86a2 2 0 0 1 1.664.89l.812 1.22A2 2 0 0 0 18.07 7H19a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9z"/>
                                 <circle cx="12" cy="13" r="3"/>
                             </svg>
                             <span>Capture</span>
                         </button>
-                        <button onclick={saveClip} class="stage-ctrl" title="Sauvegarder le dernier clip (60s)">
+                        <button onclick={saveClip} class="stage-ctrl" title={tFn('stage.saveclip_title')}>
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25z"/>
                             </svg>
                             <span>Clip 60s</span>
                         </button>
-                        <button onclick={stopScreenShare} class="stage-ctrl-danger" title="Arrêter mon partage">
+                        <button onclick={stopScreenShare} class="stage-ctrl-danger" title={tFn('stage.stop_share')}>
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                                 <rect x="2" y="3" width="20" height="14" rx="2"/>
                                 <path d="M8 21h8M12 17v4"/>
                             </svg>
-                            <span>Arrêter mon partage</span>
+                            <span>{tFn('stage.stop_share')}</span>
                         </button>
                     {/if}
                 </div>
@@ -352,54 +503,71 @@
                         <rect x="2" y="3" width="20" height="14" rx="2"/>
                         <path d="M8 21h8M12 17v4"/>
                     </svg>
-                    <p class="text-sm">Aucun partage actif</p>
+                    <p class="text-sm">{tFn('stage.no_active_share')}</p>
                 </div>
             {/if}
         </div>
 
-        <!-- Thumbnail sidebar (shown when 2+ streams) -->
+        <!-- Miniatures des AUTRES partages, en bande horizontale. Hauteur FIXE :
+             la scène garde toute la place, et 2, 3, 5 ou 10 partages défilent
+             horizontalement sans jamais rogner la vidéo. -->
         {#if thumbnails.length > 0}
-            <div class="w-48 xl:w-56 shrink-0 flex flex-col overflow-y-auto"
-                 style="border-left: 1px solid rgba(255,255,255,0.04); background: rgba(4,4,10,0.6)">
-                {#each thumbnails as entry, i (entry.id)}
-                    {#if i > 0}
-                        <div style="height: 1px; background: rgba(255,255,255,0.03); shrink-0"></div>
-                    {/if}
+            <div class="shrink-0 flex gap-2 overflow-x-auto px-3 py-2"
+                 style="border-top: 1px solid rgba(255,255,255,0.04); background: rgba(4,4,10,0.6); scrollbar-width: thin">
+                {#each thumbnails as entry (entry.id)}
                     <button
                         onclick={() => focusedId = entry.id}
-                        class="relative aspect-video group overflow-hidden shrink-0 transition-all"
-                        style="background: black;"
-                        title="{entry.username} — cliquer pour mettre en avant"
+                        class="relative group shrink-0 overflow-hidden rounded-md transition-all"
+                        style="height: 5.5rem; aspect-ratio: 16/9; background: black; border: 1px solid rgba(255,255,255,0.08)"
+                        title={tFn('stage.feature_user', { username: entry.username })}
                     >
                         <video
                             use:streamSrc={entry.stream}
                             autoplay playsinline muted
                             class="w-full h-full object-contain"
                         ></video>
-                        <!-- Dim overlay -->
-                        <div class="absolute inset-0 transition-colors"
-                             style="background: rgba(0,0,0,0.45)"></div>
-                        <!-- Name badge -->
-                        <div class="absolute bottom-0 left-0 right-0 px-2 py-1.5 flex items-center gap-1.5"
-                             style="background: linear-gradient(to top, rgba(0,0,0,0.75), transparent)">
-                            <div class="w-4 h-4 rounded-full bg-indigo-700 flex items-center justify-center text-[7px] font-bold text-white shrink-0">
-                                {entry.username[0].toUpperCase()}
-                            </div>
-                            <span class="text-[11px] text-white font-medium truncate">{entry.username}</span>
+                        <div class="absolute inset-0 transition-colors" style="background: rgba(0,0,0,0.45)"></div>
+                        <div class="absolute bottom-0 left-0 right-0 flex items-center gap-1 px-1.5 py-1"
+                             style="background: linear-gradient(to top, rgba(0,0,0,0.8), transparent)">
+                            <span class="truncate text-[10px] font-medium text-white">{entry.username}</span>
                             {#if !entry.isLocal}
-                                <span class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse ml-auto shrink-0"></span>
+                                <span class="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-green-400 animate-pulse"></span>
                             {/if}
                         </div>
-                        <!-- Focus hint on hover -->
-                        <div class="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                            <div class="px-3 py-1 rounded-full text-[10px] text-white font-medium"
-                                 style="background: rgba(79,70,229,0.75); backdrop-filter: blur(4px)">
-                                Mettre en avant
-                            </div>
+                        <div class="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100">
+                            <span class="rounded-full px-2 py-0.5 text-[9px] font-medium text-white"
+                                  style="background: rgba(79,70,229,0.8); backdrop-filter: blur(4px)">Mettre en avant</span>
                         </div>
                     </button>
                 {/each}
             </div>
+        {/if}
+
+        </div><!-- /colonne vidéo -->
+
+        <!-- Chat du salon : OUVERT par défaut, repliable d'une flèche. Replié, il
+             laisse un onglet fin pour le rouvrir (on ne cherche pas un bouton). -->
+        {#if channelId}
+            {#if showChat}
+                <!-- Largeur FIXE à 320px, y compris sur très grand écran : le
+                     `xl:w-96` d'avant élargissait le chat à 384px là où c'est
+                     justement la vidéo qui doit récupérer la place gagnée. -->
+                <div class="w-80 shrink-0 min-h-0">
+                    <StageChat channelId={channelId} oncollapse={() => showChat = false}/>
+                </div>
+            {:else}
+                <button
+                    onclick={() => showChat = true}
+                    class="flex w-8 shrink-0 items-center justify-center transition-colors hover:bg-white/5"
+                    style="background: rgba(6,6,12,0.75); border-left: 1px solid rgba(255,255,255,0.05); color: rgb(148,163,184)"
+                    title={tFn('stage.show_chat')}
+                    aria-label={tFn('stage.show_chat')}
+                >
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+                    </svg>
+                </button>
+            {/if}
         {/if}
 
     </div>
@@ -421,7 +589,7 @@
         backdrop-filter: blur(16px);
     "
     role="dialog"
-    aria-label="Nodyx Stage — mode PiP"
+    aria-label={tFn('stage.pip_mode_aria')}
 >
     <!-- Drag handle / header -->
     <div
@@ -433,7 +601,7 @@
         onmousedown={startPipDrag}
         role="toolbar"
         tabindex="0"
-        aria-label="Déplacer le Stage"
+        aria-label={tFn('stage.move_aria')}
     >
         <div class="flex items-center gap-2 pointer-events-none">
             <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>
@@ -452,7 +620,7 @@
                 onclick={() => isPiP = false}
                 class="w-6 h-6 flex items-center justify-center rounded transition-colors"
                 style="color: rgb(107,114,128);"
-                title="Agrandir"
+                title={tFn('stage.expand_title')}
             >
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/>
@@ -462,7 +630,7 @@
                 onclick={onclose}
                 class="w-6 h-6 flex items-center justify-center rounded transition-colors"
                 style="color: rgb(107,114,128);"
-                aria-label="Fermer"
+                aria-label={tFn('stage.close')}
             >
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
@@ -474,9 +642,12 @@
     <!-- Main video -->
     <div class="relative bg-black" style="aspect-ratio: 16 / 9">
         {#if focusedEntry}
+            <!-- En fenêtre flottante aussi, on entend l'écran qu'on regarde (et jamais
+                 le sien : ce serait un écho). -->
             <video
                 use:streamSrc={focusedEntry.stream}
-                autoplay playsinline muted
+                autoplay playsinline
+                muted={focusedEntry.isLocal}
                 class="w-full h-full object-contain"
             ></video>
             {#if !focusedEntry.isLocal}
@@ -488,7 +659,7 @@
             {/if}
         {:else}
             <div class="w-full h-full flex items-center justify-center">
-                <p class="text-[11px]" style="color: rgba(255,255,255,0.2)">Aucun partage</p>
+                <p class="text-[11px]" style="color: rgba(255,255,255,0.2)">{tFn('stage.no_share')}</p>
             </div>
         {/if}
     </div>
@@ -560,5 +731,48 @@
     .stage-ctrl-danger:hover {
         background: rgba(239,68,68,0.22);
         color: white;
+    }
+
+    .stage-kbd {
+        display: inline-block;
+        min-width: 1.1rem;
+        padding: 0 0.25rem;
+        margin-right: 0.15rem;
+        border-radius: 0.2rem;
+        background: rgba(255,255,255,0.12);
+        border: 1px solid rgba(255,255,255,0.18);
+        color: rgba(255,255,255,0.9);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 9px;
+        line-height: 1.35;
+        text-align: center;
+    }
+
+    /* Slider de volume du partage : piste fine, pouce accent Nodyx. */
+    .stage-vol {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 84px;
+        height: 4px;
+        border-radius: 99px;
+        background: rgba(255,255,255,0.22);
+        cursor: pointer;
+        outline: none;
+    }
+    .stage-vol::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: var(--nx-accent-soft, #818cf8);
+        border: 2px solid rgba(0,0,0,0.4);
+    }
+    .stage-vol::-moz-range-thumb {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: var(--nx-accent-soft, #818cf8);
+        border: 2px solid rgba(0,0,0,0.4);
     }
 </style>

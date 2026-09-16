@@ -1,9 +1,10 @@
 <script lang="ts">
 	import '../app.css';
 	import { onMount } from 'svelte';
-	import { fade } from 'svelte/transition';
+	import { fade, fly } from 'svelte/transition';
+	import { cubicOut } from 'svelte/easing';
 	import type { LayoutData } from './$types';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { browser } from '$app/environment';
 	import { goto, beforeNavigate } from '$app/navigation';
 	import { initSocket, unreadCountStore, chatMentionStore, dmUnreadStore, onlineMembersStore, getSocket } from '$lib/socket';
@@ -13,9 +14,12 @@
 	import { resolveTheme, themeToVars } from '$lib/profileThemes';
 	import { buildNameStyle, buildAnimClass, ensureFontLoaded, GOOGLE_FONTS_URL } from '$lib/nameEffects';
 	import VoicePanel from '$lib/components/VoicePanel.svelte';
+	import StageView from '$lib/components/StageView.svelte';
+	import { stageOpenStore } from '$lib/stageStore';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
 	import MatrixRain from '$lib/components/MatrixRain.svelte';
 	import MemberScreenPreview from '$lib/components/MemberScreenPreview.svelte';
+	import VoiceEqualizer from '$lib/components/VoiceEqualizer.svelte';
 	import MaintenanceBanner from '$lib/components/MaintenanceBanner.svelte';
 	import NodyxVersionBadge from '$lib/components/NodyxVersionBadge.svelte';
 	import FloatingReactions from '$lib/components/FloatingReactions.svelte';
@@ -23,8 +27,9 @@
 	import ChannelIcon from '$lib/components/ChannelIcon.svelte';
 	import { get } from 'svelte/store';
 	import { voiceStore, voiceChannelMembersStore, voiceEventsStore, screenShareStore, remoteScreenStore } from '$lib/voice';
-	import { locale, t } from '$lib/i18n';
+	import { locale, t, LOCALES, type Locale } from '$lib/i18n';
 	import { unreadCountsStore, flashChannelIdStore } from '$lib/unreadStore';
+	import { activeCommunityNameStore, panelCollapsedStore, membersCollapsedStore } from '$lib/communityStore';
 	import { playMention, playDm } from '$lib/sounds';
 	const tFn = $derived($t)
 
@@ -39,11 +44,27 @@
 		'/users/[username]',
 		'/users/[username]/card',
 		'/calendar/[id]',
+		'/musique',
+		'/musique/[slug]',
 	]);
-	const ownsOgImage = $derived(PAGES_WITH_OWN_OG.has($page.route.id ?? ''));
+	const ownsOgImage = $derived(PAGES_WITH_OWN_OG.has(page.route.id ?? ''));
 
 	const user            = $derived(data.user);
 	const isBanned        = $derived(data.user?.is_banned === true);
+	// Fond de la sidebar membres : visibilité tout/visiteurs/connectés — pour
+	// les connectés la sidebar est fonctionnelle (liste des membres), un fond
+	// trop présent la rend illisible ; les visiteurs, eux, n'ont qu'une carte
+	// d'invitation, l'image peut y rester pleinement.
+	const sidebarBgVisible = $derived.by(() => {
+		const bg = data.sidebarBg;
+		if (!bg?.background_image_url) return false;
+		// Par défaut "visiteurs seulement" : la sidebar est un outil fonctionnel une
+		// fois connecté (liste des membres), pas juste une vitrine.
+		const vis = bg.visibility ?? 'guests';
+		if (vis === 'guests')  return !user;
+		if (vis === 'members') return !!user;
+		return true;
+	});
 	const announcement    = $derived((data as any).activeAnnouncement as { id: string; message: string; color: string } | null);
 	let announcementDismissed = $state<string | null>(null)
 	const showAnnouncement = $derived(
@@ -76,7 +97,7 @@
 
 	// Reset chat mention badge when user is on /chat
 	$effect(() => {
-		if ($page.url.pathname.startsWith('/chat') && $chatMentionStore > 0) {
+		if (page.url.pathname.startsWith('/chat') && $chatMentionStore > 0) {
 			chatMentionStore.set(0)
 		}
 	})
@@ -85,7 +106,7 @@
 	let _lastMentionCount = 0
 	$effect(() => {
 		const c = $chatMentionStore
-		if (c > _lastMentionCount && !$page.url.pathname.startsWith('/chat')) {
+		if (c > _lastMentionCount && !page.url.pathname.startsWith('/chat')) {
 			playMention()
 		}
 		_lastMentionCount = c
@@ -98,13 +119,19 @@
 		if (c > _lastDmCount) playDm()
 		_lastDmCount = c
 	})
+	const activeCommunityName = $derived($activeCommunityNameStore);
 	const communityName      = $derived(data.communityName ?? 'Nodyx');
+	const displayCommunityName = $derived(activeCommunityName ?? communityName);
 	const communityLogo      = $derived((data as any).communityLogoUrl  as string | null);
 	const communityBanner    = $derived((data as any).communityBannerUrl as string | null);
-	const networkInstances   = $derived((data as any).networkInstances as Array<{
+	const rawNetworkInstances = $derived((data as any).networkInstances as Array<{
 		slug: string; name: string; url: string;
 		logo_url: string | null; members: number; online: number; last_seen: string | null;
 	}> ?? []);
+
+	const networkInstances = $derived(rawNetworkInstances);
+	const activeCommunity = $derived(networkInstances.find(i => i.name === activeCommunityName));
+	const activeCommunityUrl = $derived(activeCommunity?.url ? activeCommunity.url.replace(/\/$/, '') : '');
 
 	function instanceOnline(last_seen: string | null): boolean {
 		if (!last_seen) return false;
@@ -115,8 +142,8 @@
 
 	const isActive = (href: string) =>
 		href === '/'
-			? $page.url.pathname === '/'
-			: $page.url.pathname.startsWith(href)
+			? page.url.pathname === '/'
+			: page.url.pathname.startsWith(href)
 
 	// App-wide theme — cascade : défaut → thème d'INSTANCE (owner, son univers) → thème du MEMBRE (override perso)
 	const appVars = $derived(themeToVars(resolveTheme((data as any).appTheme, (data as any).instanceTheme)))
@@ -128,16 +155,54 @@
 	// On ne recharge pas brutalement : on attend la PROCHAINE navigation de l'user
 	// pour faire un full reload vers sa destination -> il récupère la version fraîche
 	// sans jamais avoir à hard-refresh. Plus de "5-6 refresh après une mise à jour".
+	// ── Pourquoi un rechargement IMMÉDIAT et non plus « à la prochaine
+	//    navigation » (corrigé le 2026-08-15) ────────────────────────────────
+	// Le service worker fait `skipWaiting()` + `clients.claim()` : le NOUVEAU
+	// service worker prend donc le contrôle d'une page qui exécute encore
+	// l'ANCIEN JavaScript. Il lui sert alors les chunks de la nouvelle version,
+	// dont les noms hachés ne correspondent plus à ce que ce code attend :
+	// l'hydratation Svelte casse et plus AUCUN clic ne répond. La page a l'air
+	// normale, elle est morte.
+	//
+	// Attendre une navigation ne suffit pas : cliquer sur le menu burger n'en
+	// est pas une, et l'utilisateur reste bloqué indéfiniment. Symptôme constaté
+	// sur téléphone, y compris en « mode ordinateur », alors que tout
+	// fonctionnait en navigation privée, c'est-à-dire sans service worker.
+	//
+	// On recharge donc dès la prise de contrôle. Un rechargement automatique
+	// juste après un déploiement est infiniment préférable à une application
+	// figée.
 	let swUpdateReady = false;
+	let swReloading   = false;
 	onMount(() => {
 		if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
-		const markReady = () => { swUpdateReady = true; };
-		const onMessage = (e: MessageEvent) => { if ((e.data as any)?.type === 'sw:updated') markReady(); };
+
+		/** L'utilisateur est-il en train d'écrire ? On ne lui vole pas son texte. */
+		function enTrainDEcrire(): boolean {
+			const el = document.activeElement as HTMLInputElement | HTMLTextAreaElement | null;
+			if (!el) return false;
+			const editable = el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' || el.isContentEditable;
+			return editable && !!(el.value?.trim() || el.textContent?.trim());
+		}
+
+		function rechargerPourNouvelleVersion() {
+			// Garde-fou : `controllerchange` peut se déclencher plus d'une fois,
+			// et un rechargement en boucle serait pire que le bug d'origine.
+			if (swReloading) return;
+			swUpdateReady = true;
+			if (enTrainDEcrire()) return;   // le beforeNavigate ci-dessous prendra le relais
+			swReloading = true;
+			window.location.reload();
+		}
+
+		const onMessage = (e: MessageEvent) => {
+			if ((e.data as any)?.type === 'sw:updated') rechargerPourNouvelleVersion();
+		};
 		navigator.serviceWorker.addEventListener('message', onMessage);
-		navigator.serviceWorker.addEventListener('controllerchange', markReady);
+		navigator.serviceWorker.addEventListener('controllerchange', rechargerPourNouvelleVersion);
 		return () => {
 			navigator.serviceWorker.removeEventListener('message', onMessage);
-			navigator.serviceWorker.removeEventListener('controllerchange', markReady);
+			navigator.serviceWorker.removeEventListener('controllerchange', rechargerPourNouvelleVersion);
 		};
 	});
 	beforeNavigate((nav) => {
@@ -162,7 +227,11 @@
 	)
 	let showOffline = $state(false)
 
+	// SSR: set locale from cookie/accept-language BEFORE first render — avoids flash of default 'fr'
+	if (data.ssrLocale) locale.setSSR(data.ssrLocale as Locale)
+
 	onMount(async () => {
+		// Sync/initialize locale on the client side (e.g. read user choice from localStorage)
 		locale.init()
 
 		// Register <nodyx-audio-player> custom element (idempotent)
@@ -200,7 +269,7 @@
 			tryAutoConnect()
 		}
 
-		// Fetch full member list for the offline sidebar section + channels for layout sidebar
+		// Fetch full member list for the offline sidebar section + refresh channels client-side
 		if (data.user) {
 			try {
 				const { PUBLIC_API_URL } = await import('$env/static/public')
@@ -213,18 +282,204 @@
 						: Promise.resolve(null),
 				])
 				if (membersRes.ok) allMembers = (await membersRes.json()).members ?? []
-				if (channelsRes?.ok) layoutChannels = (await channelsRes.json()).channels ?? []
+				if (channelsRes?.ok) {
+					const fresh = (await channelsRes.json()).channels ?? []
+					if (fresh.length > 0) layoutChannels = fresh
+				}
 			} catch { /* ignore */ }
 		}
 	})
 
 	// ── Galaxy Bar mobile drawer ───────────────────────────────────────────────
 	let gallerySidebarOpen = $state(false)
+	// Ces deux etats viennent du cookie au premier rendu et n'en dependent plus
+	// ensuite : c'est une preference locale, elle ne doit PAS se reinitialiser a
+	// chaque navigation. Lire la valeur initiale est donc voulu.
+	// svelte-ignore state_referenced_locally
+	let panelCollapsed = $state(data.panelCollapsed ?? false)
+	// svelte-ignore state_referenced_locally
+	let membersCollapsed = $state(data.membersCollapsed ?? false)
+
+	function toggleC(velocity: number | MouseEvent = 0) {
+		if (typeof velocity === 'number') {
+			if (velocity > 500) membersCollapsed = false;
+			else if (velocity < -500) membersCollapsed = true;
+			else membersCollapsed = !membersCollapsed;
+		} else {
+			membersCollapsed = !membersCollapsed;
+		}
+	}
+
+	function toggleL() {
+		panelCollapsed = !panelCollapsed;
+	}
+
+	$effect(() => {
+		panelCollapsedStore.set(panelCollapsed);
+		if (browser) {
+			document.cookie = `nodyx_panel_collapsed=${panelCollapsed}; path=/; max-age=31536000; SameSite=Lax`;
+		}
+	});
+
+	$effect(() => {
+		membersCollapsedStore.set(membersCollapsed);
+		if (browser) {
+			document.cookie = `nodyx_members_collapsed=${membersCollapsed}; path=/; max-age=31536000; SameSite=Lax`;
+		}
+	});
+
+	// ── Panel resizing logic ──────────────────────────────────────────────────
+	// Meme logique que panelCollapsed : largeur initiale lue du cookie, bornee
+	// cote serveur dans +layout.server.ts, puis pilotee par le glisser.
+	// svelte-ignore state_referenced_locally
+	let leftPanelWidth = $state(data.leftPanelWidth ?? 220);
+	// svelte-ignore state_referenced_locally
+	let rightPanelWidth = $state(data.rightPanelWidth ?? 220);
+	let isDraggingLeft = $state(false);
+	let isDraggingRight = $state(false);
+	let draggingPastBoundaryLeft = $state(false);
+	let draggingPastBoundaryRight = $state(false);
+
+	let dragStartWidthLeft = 0;
+	let dragStartWidthRight = 0;
+	let leftDragMoved = false;
+	let rightDragMoved = false;
+
+	$effect(() => {
+		if (browser) {
+			document.cookie = `nodyx_left_panel_width=${leftPanelWidth}; path=/; max-age=31536000; SameSite=Lax`;
+		}
+	});
+
+	$effect(() => {
+		if (browser) {
+			document.cookie = `nodyx_right_panel_width=${rightPanelWidth}; path=/; max-age=31536000; SameSite=Lax`;
+		}
+	});
+
+	function startLeftDrag(e: PointerEvent) {
+		if (window.innerWidth < 1024) return;
+		if (e.button !== 0) return;
+		isDraggingLeft = true;
+		leftDragMoved = false;
+		dragStartWidthLeft = leftPanelWidth;
+		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+		e.preventDefault();
+	}
+
+	function handleLeftDragMove(e: PointerEvent) {
+		if (!isDraggingLeft) return;
+		leftDragMoved = true;
+		const width = e.clientX - 56;
+		if (width < 130) {
+			draggingPastBoundaryLeft = true;
+			leftPanelWidth = Math.max(0, width);
+		} else {
+			draggingPastBoundaryLeft = false;
+			leftPanelWidth = Math.max(160, Math.min(500, width));
+		}
+	}
+
+	function stopLeftDrag(e: PointerEvent) {
+		if (!isDraggingLeft) return;
+		isDraggingLeft = false;
+		try {
+			(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+		} catch { /* ignore */ }
+
+		if (!leftDragMoved) {
+			toggleL();
+		} else if (leftPanelWidth < 130) {
+			panelCollapsed = true;
+			leftPanelWidth = 220;
+		} else if (leftPanelWidth < 160) {
+			leftPanelWidth = 160;
+		}
+		draggingPastBoundaryLeft = false;
+	}
+
+	function startRightDrag(e: PointerEvent) {
+		if (window.innerWidth < 1280) return;
+		if (e.button !== 0) return;
+		isDraggingRight = true;
+		rightDragMoved = false;
+		dragStartWidthRight = rightPanelWidth;
+		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+		e.preventDefault();
+	}
+
+	function handleRightDragMove(e: PointerEvent) {
+		if (!isDraggingRight) return;
+		rightDragMoved = true;
+		const width = window.innerWidth - e.clientX;
+		if (width < 130) {
+			draggingPastBoundaryRight = true;
+			rightPanelWidth = Math.max(0, width);
+		} else {
+			draggingPastBoundaryRight = false;
+			rightPanelWidth = Math.max(160, Math.min(500, width));
+		}
+	}
+
+	function stopRightDrag(e: PointerEvent) {
+		if (!isDraggingRight) return;
+		isDraggingRight = false;
+		try {
+			(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+		} catch { /* ignore */ }
+
+		if (!rightDragMoved) {
+			toggleC();
+		} else if (rightPanelWidth < 130) {
+			membersCollapsed = true;
+			rightPanelWidth = 220;
+		} else if (rightPanelWidth < 160) {
+			rightPanelWidth = 160;
+		}
+		draggingPastBoundaryRight = false;
+	}
 
 	// Ferme le drawer sur changement de page (navigation SvelteKit)
 	$effect(() => {
-		const _ = $page.url.pathname
+		const _ = page.url.pathname
 		gallerySidebarOpen = false
+	})
+
+	// ── Diagnostic : « écran flouté sans sidebar » ───────────────────────────
+	// Symptôme signalé le 2026-08-16, intermittent et jamais reproduit ici : au
+	// clic sur le burger, le voile apparaît mais le panneau non. Le voile est
+	// désormais monté sous la MÊME condition que le panneau, ce qui rend ce cas
+	// impossible par construction. Ce garde-fou reste pour le cas où le panneau
+	// serait présent mais invisible pour une AUTRE raison (transform figé,
+	// z-index, contexte d'empilement) : il rend alors l'état lisible en console
+	// au lieu de laisser l'utilisateur face à un écran flou muet.
+	$effect(() => {
+		if (!gallerySidebarOpen || typeof document === 'undefined') return
+		const t = setTimeout(() => {
+			const tous = [...document.querySelectorAll<HTMLElement>('.nodyx-sb .panel')]
+			if (tous.length === 0) { console.warn('[nodyx] drawer ouvert, panneau ABSENT du DOM'); return }
+			const panneau = tous[tous.length - 1]
+			const r = panneau.getBoundingClientRect()
+			const st = getComputedStyle(panneau)
+			// Hors de l'écran, invisible ou derrière le voile : on le dit.
+			if (r.right <= 0 || r.left >= window.innerWidth || st.visibility === 'hidden' || st.display === 'none') {
+				console.warn('[nodyx] drawer ouvert mais panneau invisible', {
+					x: Math.round(r.x), largeur: Math.round(r.width),
+					transform: st.transform, display: st.display,
+					visibility: st.visibility, zIndex: st.zIndex,
+					// Les trois informations qui manquaient pour trancher :
+					// la classe est-elle encore la ? l'etat Svelte dit-il ouvert ?
+					// et la media query mobile s'applique-t-elle vraiment ?
+					nbPanneaux: tous.length,
+					classe: panneau.className,
+					etatSvelte: gallerySidebarOpen,
+					largeurEcran: window.innerWidth,
+					mobileActif: window.matchMedia('(max-width: 1023px)').matches,
+					styleInline: panneau.getAttribute('style'),
+				})
+			}
+		}, 400)   // après la transition d'ouverture
+		return () => clearTimeout(t)
 	})
 
 	// Bloque le scroll du body quand le drawer est ouvert
@@ -240,6 +495,47 @@
 
 	// ── User dropdown ──────────────────────────────────────────────────────────
 	let dropdownOpen = $state(false)
+	let langView = $state(false)
+	let langSaved = $state(false)
+	let langSavedTimeout: ReturnType<typeof setTimeout> | undefined
+	// Close the language pane when the route changes — otherwise it stays
+	// mounted over the new page until the user clicks "back".
+	let skipLangReset = false
+	$effect(() => {
+		page.url.pathname
+		if (skipLangReset) { skipLangReset = false; return }
+		langView = false
+	})
+	function openLang() {
+		skipLangReset = true
+		langView = true
+		goto('/', { noScroll: true })
+	}
+	const currentLocale = $derived($locale)
+	function pickLocale(code: Locale) {
+		locale.setLocale(code)
+		langSaved = true
+		clearTimeout(langSavedTimeout)
+		langSavedTimeout = setTimeout(() => langSaved = false, 2000)
+	}
+
+	// Swipe-to-dismiss for mobile — F12: spring-feel transition via CSS
+	let touchStartY = 0
+	let touchCurrentY = 0
+	let langDragY = $state(0)
+	function onLangTouchStart(e: TouchEvent) { touchStartY = e.touches[0].clientY }
+	function onLangTouchMove(e: TouchEvent) {
+		touchCurrentY = e.touches[0].clientY
+		const diff = touchCurrentY - touchStartY
+		if (diff > 0) langDragY = diff
+	}
+	function onLangTouchEnd() {
+		const diff = touchCurrentY - touchStartY
+		if (diff > 100) {
+			langView = false
+		}
+		langDragY = 0
+	}
 
 	// XP info — formule sqrt identique à ProfileCard / MiniProfileCard / page profil
 	const xpInfo = $derived((() => {
@@ -270,7 +566,8 @@
 		name_underline?: boolean
 		icon_emoji?:     string | null
 	}
-	let layoutChannels = $state<LayoutChannel[]>([])
+	let layoutChannels = $state<LayoutChannel[]>((data as any).channels ?? [])
+
 	const layoutTextChannels = $derived(layoutChannels.filter(c => !c.type || c.type === 'text'))
 	const layoutVoiceChannels = $derived(layoutChannels.filter(c => c.type === 'voice'))
 
@@ -285,23 +582,26 @@
 	}
 	const showChannelSidebar = $derived(
 		!isBanned &&
-		!$page.url.pathname.startsWith('/admin') &&
-		!$page.url.pathname.startsWith('/auth') &&
-		$page.url.pathname !== '/banned'
+		!page.url.pathname.startsWith('/admin') &&
+		!page.url.pathname.startsWith('/auth') &&
+		page.url.pathname !== '/banned'
 	)
 
 	// Routes /overlay/* sont des pages OBS browser source : fullscreen
 	// transparent, AUCUN chrome Nodyx (ni nav, ni sidebar, ni members bar).
 	// Routes /deck/* sont des pages mobile-first tactiles (Nodyx Deck) : même
 	// principe, on veut tout l'écran pour la grille de boutons.
+	// /translate est une page publique autonome (translate.nodyx.org) : elle
+	// porte sa propre barre d'application, le chrome de l'app ferait doublon.
 	// On bypass complètement le rendu du layout pour ces routes.
-	const isOverlayRoute = $derived(
-		$page.url.pathname.startsWith('/overlay/') ||
-		$page.url.pathname.startsWith('/deck/'),
+	const isBareRoute = $derived(
+		page.url.pathname.startsWith('/overlay/') ||
+		page.url.pathname.startsWith('/deck/') ||
+		page.url.pathname === '/translate',
 	)
 
 	// Active channel ID from URL (used on /chat to highlight the current channel)
-	const activeChatChannelId = $derived($page.url.searchParams.get('channel') ?? null)
+	const activeChatChannelId = $derived(page.url.searchParams.get('channel') ?? null)
 
 	// ── Voice state (for member roster in sidebar) ─────────────────────────────
 	const voiceState       = $derived($voiceStore)
@@ -419,8 +719,8 @@
 
 	// ── Contextual breadcrumb ──────────────────────────────────────────────────
 	const breadcrumbs = $derived((() => {
-		const path = $page.url.pathname;
-		const d = $page.data as any;
+		const path = page.url.pathname;
+		const d = page.data as any;
 		if (path === '/') return [];
 		const crumbs: { label: string; href?: string }[] = [];
 		if (path.startsWith('/forum')) {
@@ -432,7 +732,7 @@
 			if (d?.thread?.title) crumbs.push({ label: d.thread.title });
 		} else if (path.startsWith('/chat')) {
 			crumbs.push({ label: tFn('nav.chat') });
-			const chId = $page.url.searchParams.get('channel');
+			const chId = page.url.searchParams.get('channel');
 			if (chId) {
 				const ch = layoutChannels.find(c => c.id === chId);
 				if (ch) crumbs.push({ label: (ch.type === 'voice' ? '🔊 ' : '# ') + ch.name });
@@ -450,6 +750,7 @@
 		} else if (path.startsWith('/tasks'))        { crumbs.push({ label: tFn('nav.tasks') });
 		} else if (path.startsWith('/wiki'))         { crumbs.push({ label: tFn('nav.wiki') });
 		} else if (path.startsWith('/library'))      { crumbs.push({ label: tFn('nav.library') });
+		} else if (path.startsWith('/musique'))      { crumbs.push({ label: tFn('nav.music') });
 		} else if (path.startsWith('/search'))       { crumbs.push({ label: tFn('nav.search') });
 		} else if (path.startsWith('/garden'))       { crumbs.push({ label: tFn('nav.garden') });
 		} else {
@@ -477,7 +778,11 @@
 			paletteOpen = true
 			return
 		}
-		// Close on Escape only if palette is open (palette handles its own Esc)
+		// Escape closes language pane
+		if (e.key === 'Escape' && langView) {
+			e.preventDefault()
+			langView = false
+		}
 	}
 </script>
 
@@ -496,10 +801,10 @@
 	     s'affichait jamais dans les partages). Les pages qui définissent
 	     leur propre og:image (threads) ajoutent la leur en plus. -->
 	{#if !ownsOgImage}
-		<meta property="og:image" content="{$page.url.origin}/og-image.jpg" />
+		<meta property="og:image" content="{page.url.origin}/og-image.jpg" />
 		<meta property="og:image:width"  content="1200" />
 		<meta property="og:image:height" content="630" />
-		<meta name="twitter:image" content="{$page.url.origin}/og-image.jpg" />
+		<meta name="twitter:image" content="{page.url.origin}/og-image.jpg" />
 	{/if}
 	<meta name="twitter:card" content="summary_large_image" />
 	<meta name="theme-color" content="var(--nx-accent)" />
@@ -514,12 +819,12 @@
 	{/if}
 </svelte:head>
 
-{#if isOverlayRoute}
-	<!-- Overlay OBS : aucun chrome Nodyx, juste la page transparente. -->
+{#if isBareRoute}
+	<!-- Page autonome (overlay OBS, deck, /translate) : aucun chrome Nodyx. -->
 	{@render children()}
 {:else}
 {#if hasMatrix}<MatrixRain />{/if}
-<div class="min-h-screen flex flex-col" style="{appVars}; background: {hasMatrix ? 'transparent' : 'var(--p-bg)'}; color: var(--p-text)">
+<div class="min-h-dvh flex flex-col" style="{appVars}; background: {hasMatrix ? 'transparent' : 'var(--p-bg)'}; color: var(--p-text)">
 
 	<!-- Listener Streamer Hub : joue les sons de notif pour les admins/owners. -->
 	{#if data.user?.role}
@@ -533,19 +838,29 @@
 	<nav class="sticky top-0 z-50 shrink-0 h-12 flex items-center px-4 gap-3"
 	     style="background: #0d0d12; border-bottom: 1px solid rgba(255,255,255,.05)">
 
-		<!-- Mobile hamburger -->
-		{#if !isBanned}
+		<!-- Mobile hamburger : ne s'affiche que si le panneau qu'il ouvre existe -->
+		{#if !isBanned && showChannelSidebar}
 		<button
-			class="lg:hidden shrink-0 p-1.5 flex items-center justify-center transition-colors"
+			class="lg:hidden shrink-0 p-2.5 -m-1 flex items-center justify-center transition-colors"
 			style="color: {gallerySidebarOpen ? '#fff' : '#6b7280'}"
-			onclick={() => gallerySidebarOpen = !gallerySidebarOpen}
+			onclick={() => {
+				gallerySidebarOpen = !gallerySidebarOpen;
+				// Ouvrir le tiroir doit AUSSI le deplier. `panelCollapsed` est un
+				// etat de BUREAU (replier le panneau sur le rail), mais la regle
+				// `.panel.collapsed` pose son propre `translateX(-100%)`, qui
+				// survit sur mobile. Or la croix du panneau pose
+				// `panelCollapsed = true` en fermant : au clic suivant sur le
+				// burger, le voile revenait SANS le panneau, reste hors ecran.
+				// Bug du 16/08, reproduit puis corrige.
+				if (gallerySidebarOpen) panelCollapsed = false;
+			}}
 			aria-label={tFn('nav.community_menu')} aria-expanded={gallerySidebarOpen} aria-controls="galaxy-sidebar">
 			{#if gallerySidebarOpen}
-				<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+				<svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 					<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
 				</svg>
 			{:else}
-				<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+				<svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 					<path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/>
 				</svg>
 			{/if}
@@ -553,7 +868,10 @@
 		{/if}
 
 		<!-- Mobile: community name logo -->
-		<a href="/" class="lg:hidden shrink-0 font-black text-sm truncate max-w-[140px]"
+		<!-- min-w-0 (pas shrink-0) : sur écran étroit c'est le TITRE qui cède et se
+		     tronque, pas les boutons d'action à droite. Un nom long comme
+		     « Nodyx - Hub Communautaire » débordait sinon de ~25px. -->
+		<a href="/" class="lg:hidden min-w-0 font-black text-sm truncate max-w-[140px]"
 		   style="font-family: 'Space Grotesk', sans-serif; background: linear-gradient(135deg, var(--nx-accent-2-soft), var(--nx-cyan-soft)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; color: transparent">
 			{communityName}
 		</a>
@@ -578,7 +896,7 @@
 					{/if}
 					{#if crumb.href && i < breadcrumbs.length - 1}
 						<a href={crumb.href}
-						   class="text-xs font-medium shrink-0 transition-colors hover:text-white truncate max-w-[160px]"
+						   class="text-xs font-medium shrink-0 transition-colors hover:text-white truncate max-w-40"
 						   style="color: #6b7280">{crumb.label}</a>
 					{:else}
 						<span class="text-xs font-semibold truncate min-w-0"
@@ -596,11 +914,11 @@
 			style="background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.06); cursor: text; text-align: left;"
 			aria-label={tFn('common.command_palette_hint')}
 		>
-			<svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="color: #3b3f52; flex-shrink:0">
+			<svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="color: #3b3f52; shrink:0">
 				<circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
 			</svg>
 			<span class="flex-1 text-xs truncate" style="color: #3b3f52; font-family: 'Space Grotesk', sans-serif">{tFn('common.search_navigate')}</span>
-			<div style="display:flex;gap:2px;flex-shrink:0">
+			<div style="display:flex;gap:2px;shrink:0">
 				<kbd style="font-size:0.6rem;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);padding:0.05rem 0.28rem;color:rgba(255,255,255,.18);font-family:ui-monospace,monospace">Ctrl</kbd>
 				<kbd style="font-size:0.6rem;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);padding:0.05rem 0.28rem;color:rgba(255,255,255,.18);font-family:ui-monospace,monospace">K</kbd>
 			</div>
@@ -608,35 +926,57 @@
 
 		<!-- Right: actions (notifs + DMs + account) -->
 		<div class="flex items-center gap-1 shrink-0 ml-auto lg:ml-0">
+			<!-- Language button (guest + logged-in) -->
+			<button
+				onclick={openLang}
+				class="lang-nav-btn p-2 transition-colors flex items-center gap-1.5 text-gray-500"
+				title={tFn('settings.language.label')}
+				aria-label={tFn('settings.language.label')}>
+				<span class="flex items-center leading-none"><ChannelIcon value={LOCALES.find(l => l.code === currentLocale)?.flagIcon} fallback="🌐" size={18} /></span>
+				<svg class="hidden sm:block w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 8l6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6"/></svg>
+			</button>
+			<!-- Toggle members sidebar (guest + logged-in, XL only to match sidebar) -->
+			<button type="button"
+			        onclick={toggleC}
+			        class="nx-icon-btn hidden xl:flex items-center justify-center w-8 h-8 rounded-lg transition-all relative"
+			        class:active={!membersCollapsed}
+			        title={tFn('common.members')}
+			        aria-label={tFn('members.toggle_aria')}
+			        aria-expanded={!membersCollapsed}>
+				<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 0 0-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 0 1 5.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 0 1 9.288 0M15 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0zm6 3a2 2 0 1 1-4 0 2 2 0 0 1 4 0zM7 10a2 2 0 1 1-4 0 2 2 0 0 1 4 0z"/>
+				</svg>
+			</button>
 			{#if user}
 				<!-- Notifications -->
 				<a href="/notifications"
-				   class="relative p-2 transition-colors"
-				   style="color: {isActive('/notifications') ? 'var(--nx-accent-2-soft)' : '#6b7280'}"
+				   class="nx-icon-btn relative flex items-center justify-center w-8 h-8 rounded-lg transition-all"
+				   class:active={isActive('/notifications')}
 				   title={tFn('nav.notifications')}>
 					<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
 						<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>
 					</svg>
 					{#if unreadCount > 0}
-						<span class="absolute top-0.5 right-0.5 min-w-[14px] h-3.5 px-0.5 flex items-center justify-center text-[9px] font-black text-white rounded-full" style="background: #ef4444; line-height: 1">{unreadCount > 9 ? '9+' : unreadCount}</span>
+						<span class="absolute top-0.5 right-0.5 min-w-3.5 h-3.5 px-0.5 flex items-center justify-center text-[9px] font-black text-white rounded-full bg-red-500 leading-none ring-1 ring-[#0a0a0a]">{unreadCount > 9 ? '9+' : unreadCount}</span>
 					{/if}
 				</a>
 				<!-- DMs -->
 				<a href="/dm"
-				   class="relative p-2 transition-colors"
-				   style="color: {isActive('/dm') ? 'var(--nx-accent-2-soft)' : '#6b7280'}"
+				   class="nx-icon-btn relative flex items-center justify-center w-8 h-8 rounded-lg transition-all"
+				   class:active={isActive('/dm')}
 				   title={tFn('nav.dm')}>
 					<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
 						<path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-5l-4 4v-4z"/>
 					</svg>
 					{#if dmUnread > 0}
-						<span class="absolute top-0.5 right-0.5 min-w-[14px] h-3.5 px-0.5 flex items-center justify-center text-[9px] font-black text-white rounded-full" style="background: var(--nx-accent-2-strong); line-height: 1">{dmUnread > 9 ? '9+' : dmUnread}</span>
+						<span class="absolute top-0.5 right-0.5 min-w-3.5 h-3.5 px-0.5 flex items-center justify-center text-[9px] font-black text-white rounded-full bg-[var(--nx-accent-2-strong)] leading-none ring-1 ring-[#0a0a0a]">{dmUnread > 9 ? '9+' : dmUnread}</span>
 					{/if}
 				</a>
 				{#if user.role === 'owner' || user.role === 'admin'}
 					<a href="/admin"
-					   class="hidden sm:flex items-center px-2.5 h-7 text-[10px] font-black uppercase tracking-wider transition-colors"
-					   style="color: {isActive('/admin') ? 'var(--nx-accent-2-soft)' : '#4b5563'}; border: 1px solid {isActive('/admin') ? 'rgb(var(--nx-accent-2-rgb) / .4)' : 'rgba(255,255,255,.06)'}">{tFn('nav.admin')}</a>
+					   class="nx-admin-pill hidden sm:flex items-center px-2.5 h-7 text-[10px] font-black uppercase tracking-wider rounded-md transition-all"
+					   class:active={isActive('/admin')}
+					   >{tFn('nav.admin')}</a>
 				{/if}
 				<!-- User dropdown -->
 				<div class="relative">
@@ -646,11 +986,11 @@
 					        aria-haspopup="true" aria-expanded={dropdownOpen}>
 						<div class="relative shrink-0">
 							{#if user.avatar}
-								<img src={user.avatar} alt="Avatar" class="w-6 h-6 object-cover" style="outline: 1px solid rgba(255,255,255,.15)" />
+								<img src={user.avatar} alt={tFn('common.avatar_alt')} class="w-6 h-6 object-cover" style="outline: 1px solid rgba(255,255,255,.15)" />
 							{:else}
 								<div class="w-6 h-6 flex items-center justify-center text-xs font-bold text-white select-none" style="background: linear-gradient(135deg, var(--nx-accent-2-strong), var(--nx-cyan-deep))">{user.username.charAt(0).toUpperCase()}</div>
 							{/if}
-							<span class="absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full" style="background: #4ade80; border: 1.5px solid #0d0d12"></span>
+							<span class="absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full bg-green-400 border-[1.5px] border-[#0d0d12]"></span>
 						</div>
 						<span class="hidden sm:inline text-xs font-semibold max-w-[90px] truncate" style="color: #d1d5db; font-family: 'Space Grotesk', sans-serif">{user.username}</span>
 						<svg class="hidden sm:block w-2.5 h-2.5 transition-transform {dropdownOpen ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" style="color: #4b5563"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
@@ -662,7 +1002,7 @@
 								<div class="px-4 pt-4 pb-3 bg-gray-800/50">
 									<div class="flex items-center gap-3">
 										{#if user.avatar}
-											<img src={user.avatar} alt="Avatar" class="w-12 h-12 rounded-full object-cover border-2 border-gray-600 shrink-0" />
+											<img src={user.avatar} alt={tFn('common.avatar_alt')} class="w-12 h-12 rounded-full object-cover border-2 border-gray-600 shrink-0" />
 										{:else}
 											<div class="w-12 h-12 rounded-full bg-indigo-700 flex items-center justify-center text-white text-xl font-bold border-2 border-gray-600 shrink-0 select-none">{user.username.charAt(0).toUpperCase()}</div>
 										{/if}
@@ -681,7 +1021,7 @@
 											<span class="text-[11px] text-indigo-400 font-medium">{xpInfo.pct}%</span>
 										</div>
 										<div class="h-1.5 rounded-full bg-gray-700 overflow-hidden">
-											<div class="h-full rounded-full bg-gradient-to-r from-indigo-600 to-indigo-400 transition-all" style="width: {xpInfo.pct}%"></div>
+											<div class="h-full rounded-full bg-linear-to-r from-indigo-600 to-indigo-400 transition-all" style="width: {xpInfo.pct}%"></div>
 										</div>
 									</div>
 								</div>
@@ -732,414 +1072,341 @@
 					</div>
 			{:else}
 				<a href="/auth/login"
-				   class="px-2.5 h-6 flex items-center text-xs transition-colors"
-				   style="color: #9ca3af; border: 1px solid rgba(255,255,255,.06)">{tFn('common.login')}</a>
+				   class="nx-auth-btn flex items-center justify-center h-8 px-2.5 sm:min-w-[5.5rem] sm:px-3 text-xs font-medium rounded-lg transition-all whitespace-nowrap">{tFn('common.login')}</a>
 				<a href="/auth/register"
-				   class="px-2.5 h-6 flex items-center text-xs font-bold transition-colors"
-				   style="background: var(--nx-accent-2-strong); color: #fff">{tFn('common.register')}</a>
+				   class="nx-auth-btn nx-auth-btn--primary flex items-center justify-center h-8 px-2.5 sm:min-w-[5.5rem] sm:px-3 text-xs font-bold rounded-lg transition-all whitespace-nowrap">{tFn('common.register')}</a>
 			{/if}
 		</div>
 	</nav>
 
 	<!-- ══ BODY ═══════════════════════════════════════════════════════════════ -->
-	<div class="flex flex-1">
+	<div class="flex flex-1"
+	     style="--left-panel-width: {leftPanelWidth}px; --right-panel-width: {rightPanelWidth}px;"
+	     class:layout-dragging={isDraggingLeft || isDraggingRight}>
 
 		<!-- ── Backdrop Channel Sidebar — mobile ──────────────────────────────── -->
-		{#if !isBanned && gallerySidebarOpen}
+		<!-- Le voile est monte sous la MEME condition que le panneau, `showChannelSidebar`
+		     comprise. Avant, le voile ne dependait que de `gallerySidebarOpen` et le
+		     panneau aussi de `showChannelSidebar` : des que la seconde devenait fausse
+		     (routes /admin, /auth, /banned), on obtenait un ECRAN FLOUTE SANS SIDEBAR,
+		     exactement le symptome signale le 16/08. Les lier rend ce cas impossible,
+		     quelle que soit la sequence qui y menait. -->
+		{#if !isBanned && showChannelSidebar && gallerySidebarOpen}
 		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-		<div class="lg:hidden fixed inset-0 bg-black/60 z-[54] backdrop-blur-sm"
+		<div class="lg:hidden fixed inset-0 bg-black/60 z-[54] backdrop-blur-xs"
 		     role="button" tabindex="-1" aria-label={tFn('common.close_menu')}
 		     onclick={() => gallerySidebarOpen = false}
 		     onkeydown={e => e.key === 'Escape' && (gallerySidebarOpen = false)}
 		     transition:fade={{ duration: 200 }}></div>
 		{/if}
 
-		<!-- ── Instance Switcher (72px) — desktop only ────────────────────────── -->
+		<!-- ── Instance Switcher (56px rail) — desktop only ───────────────────── -->
 		{#if !isBanned}
-		<aside class="hidden lg:flex flex-col items-center fixed left-0 top-12 bottom-0 w-[72px]
-		              border-r border-gray-800/60 py-3 gap-2 z-[55] overflow-y-auto overflow-x-hidden"
-		       style="background: var(--p-bg)">
-
-			<!-- Current instance — active with violet ring -->
-			<div class="relative flex items-center group">
-				<span class="absolute -left-3 w-1 h-8 rounded-r-full bg-white pointer-events-none"></span>
-				<a href="/" title={communityName}
-				   class="w-12 h-12 flex items-center justify-center rounded-[30%]
-				          hover:rounded-[40%] transition-all duration-200 overflow-hidden shrink-0
-				          ring-2 ring-indigo-500 ring-offset-2 ring-offset-gray-950">
+		<div class="nodyx-sb">
+		<aside class="rail">
+			<div class="scroll">
+				<!-- Current instance (logo) — click toggles panel open -->
+				<button type="button" class="icon logo {!activeCommunityName ? 'active' : ''}" data-tip={communityName} title={communityName} onclick={() => {
+					if (activeCommunityName) {
+						activeCommunityNameStore.set(null);
+						panelCollapsed = false;
+					} else {
+						panelCollapsed = !panelCollapsed;
+					}
+				}}>
 					{#if communityLogo}
-						<img src={communityLogo} alt="Logo" class="w-full h-full object-cover" />
+						<img src={communityLogo} alt={tFn('common.logo_alt')} class="w-full h-full object-cover" />
 					{:else}
-						<div class="w-full h-full bg-indigo-600 flex items-center justify-center text-white font-bold text-lg select-none">
-							{communityName.charAt(0).toUpperCase()}
-						</div>
+						{communityName.charAt(0).toUpperCase()}
 					{/if}
-				</a>
-			</div>
+				</button>
 
-			<!-- Separator -->
-			{#if networkInstances.length > 0}
-			<div class="w-8 border-t border-gray-700/60 my-0.5 shrink-0"></div>
-			{/if}
+				{#if networkInstances.length > 0}
+				<div class="w-8 h-px bg-neutral-900 my-1"></div>
+				{/if}
 
-			<!-- Network instances -->
-			{#each networkInstances as inst}
-				<a href={inst.url} target="_blank" rel="noopener noreferrer" title={inst.name}
-				   class="relative w-11 h-11 flex items-center justify-center rounded-[30%]
-				          hover:rounded-[40%] transition-all duration-200
-				          bg-gray-700/80 hover:bg-gray-600 overflow-hidden shrink-0">
-					{#if inst.logo_url}
-						<img src={inst.logo_url.startsWith('http') ? inst.logo_url : inst.url.replace(/\/$/, '') + inst.logo_url}
-						     alt={inst.name} class="w-full h-full object-cover" />
-					{:else}
-						<span class="text-sm font-bold text-gray-200 select-none">
+				<!-- Network instances -->
+				{#each networkInstances as inst}
+					<!-- Decentralized: each instance is its own deployment (own design + data). -->
+					<!-- Clicking simply opens that instance's site; we never render a remote instance in place. -->
+					<a href={inst.url} target="_blank" rel="noopener noreferrer" class="icon net" data-tip={inst.name} title={inst.name}>
+						{#if inst.logo_url}
+							<img src={inst.logo_url.startsWith('http') ? inst.logo_url : inst.url.replace(/\/$/, '') + inst.logo_url}
+							     alt={inst.name} class="w-full h-full object-cover" />
+						{:else}
 							{inst.name.charAt(0).toUpperCase()}
-						</span>
-					{/if}
-					<span class="absolute bottom-0.5 right-0.5 w-2.5 h-2.5 rounded-full border-2 border-gray-900
-					             {instanceOnline(inst.last_seen) ? 'bg-green-400' : 'bg-gray-600'}"></span>
-				</a>
-			{/each}
+						{/if}
+						<span class="absolute bottom-0.5 right-0.5 w-2 h-2 rounded-full border-2 border-black {!instanceOnline(inst.last_seen) ? 'bg-neutral-700' : 'bg-green-500'}"></span>
+					</a>
+				{/each}
 
-			<!-- Add / discover -->
-			<a href="/communities" title={tFn('nav.discover_title')}
-			   class="w-11 h-11 flex items-center justify-center rounded-full shrink-0
-			          border-2 border-dashed border-gray-600 hover:border-indigo-500
-			          text-gray-500 hover:text-indigo-400 transition-all duration-200
-			          text-xl font-light leading-none">
-				+
-			</a>
-
-			<!-- Settings at bottom -->
-			{#if user}
-			<div class="mt-auto flex flex-col items-center gap-1">
-				<a href="https://nodyx.dev" target="_blank" rel="noopener" title="Documentation"
-				   class="w-11 h-11 flex items-center justify-center rounded-[30%]
-				          hover:rounded-[40%] bg-gray-800/60 hover:bg-gray-700 transition-all
-				          text-gray-500 hover:text-indigo-400">
-					<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-						<path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
-					</svg>
-				</a>
-				<a href="/settings" title={tFn('nav.settings')}
-				   class="w-11 h-11 flex items-center justify-center rounded-[30%]
-				          hover:rounded-[40%] bg-gray-800 hover:bg-gray-700 transition-all
-				          text-gray-500 hover:text-gray-300">
-					<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-						<circle cx="12" cy="12" r="3"/>
-						<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-					</svg>
-				</a>
+				<!-- Add / discover -->
+				<a href="/communities" class="icon add" data-tip={tFn('nav.discover_title')} title={tFn('nav.discover_title')}>+</a>
 			</div>
-			{/if}
+
+			<!-- Docs: pinned at bottom -->
+			<a href="https://nodyx.dev" target="_blank" rel="noopener" class="icon docs" data-tip={tFn('nav.docs')} title={tFn('nav.documentation')}>
+				<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
+				</svg>
+			</a>
 		</aside>
+		</div>
 		{/if}
 
-		<!-- ── Channel Sidebar (220px) — mobile drawer + desktop conditional ──── -->
-		{#if !isBanned}
-		<aside
-			id="galaxy-sidebar"
-			class="flex flex-col fixed top-12 bottom-0
-			       max-lg:left-0 max-lg:w-[280px] max-lg:z-[55]
-			       lg:left-[72px] lg:w-[220px] lg:z-30
-			       {showChannelSidebar ? 'lg:flex' : 'lg:hidden'}
-			       transition-transform duration-300 ease-in-out
-			       {gallerySidebarOpen ? 'translate-x-0' : 'max-lg:-translate-x-full'}"
-			style="background: #12121a; border-right: 1px solid rgba(255,255,255,.05)"
-			role={gallerySidebarOpen ? 'dialog' : undefined}
-			aria-modal={gallerySidebarOpen ? 'true' : undefined}
-			aria-label={tFn('nav.community_menu')}>
+		<!-- ── Channel Sidebar (220px panel) — sketch 001 ────────────────────── -->
+		<!--
+		     Le panneau est `position: fixed` : s'il est rendu sur une route qui ne
+		     lui appartient pas (/admin, /auth), il PEINT par-dessus le contenu,
+		     notamment la sidebar du panel admin. On le rend donc seulement quand
+		     showChannelSidebar est vrai, au lieu de le laisser vivre caché.
+		-->
+		{#if !isBanned && showChannelSidebar}
+		<div class="nodyx-sb">
+		<aside class="panel {panelCollapsed ? 'collapsed' : ''} {gallerySidebarOpen ? '' : 'max-lg:!translate-x-[-100%]'}"
+		       id="variant-a-panel"
+		       role={gallerySidebarOpen ? 'dialog' : undefined}
+		       aria-modal={gallerySidebarOpen ? 'true' : undefined}
+		       aria-label={tFn('nav.community_menu')}
+		       style="width: var(--left-panel-width, 220px);"
+		       class:dragging={isDraggingLeft}>
 
-			<!-- Community header -->
-			<div class="flex items-center justify-between px-4 py-3 shrink-0"
-			     style="border-bottom: 1px solid rgba(255,255,255,.06); background: #0d0d12">
-				<span class="text-sm font-bold truncate"
-				      style="font-family: 'Space Grotesk', sans-serif; color: #e2e8f0; letter-spacing: -.01em">
-					{communityName}
-				</span>
+			<button class="edge-handle"
+			        onpointerdown={startLeftDrag}
+			        onpointermove={handleLeftDragMove}
+			        onpointerup={stopLeftDrag}
+			        onclick={(e) => {
+			            if (leftDragMoved) {
+			                e.preventDefault();
+			                e.stopPropagation();
+			            } else {
+			                toggleL();
+			            }
+			        }}
+			        class:dragging-past-boundary={draggingPastBoundaryLeft}
+			        aria-label={tFn('nav.panel_toggle_aria')}
+			        title={tFn('nav.panel_toggle_aria')}></button>
+
+			<!-- Panel head -->
+			<div class="panel-head">
+				<span class="community-name" id="variant-a-community">{displayCommunityName}</span>
 				{#if user?.role === 'owner' || user?.role === 'admin'}
-				<a href="/admin" title="Administration" class="shrink-0 transition-colors" style="color: #4b5563">
-					<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+				<a href="/admin" title={tFn('nav.admin')} class="head-icon text-gray-600">
+					<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
 						<circle cx="12" cy="12" r="3"/>
 						<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
 					</svg>
 				</a>
 				{/if}
+				<button type="button" class="close" onclick={() => { gallerySidebarOpen = false; panelCollapsed = true; }} aria-label={tFn('common.close')}>×</button>
 			</div>
 
-			<!-- Nav -->
-			<nav class="flex-1 overflow-y-auto py-4 px-3 space-y-5" style="scrollbar-width: none">
+			<!-- Panel scroll: nav + channels together as one block (sketch) -->
+			<div class="panel-scroll">
 
-				<!-- NAVIGATION -->
-				<div>
-					<p class="px-2 mb-1.5 text-[9px] uppercase tracking-[.2em] font-black"
-					   style="color: #374151">{tFn('nav.section.navigation')}</p>
-					<div class="space-y-px">
-						{#each [
-							{ href: '/',         label: tFn('nav.home'),    icon: 'M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z',                                                                                                                                                 show: true },
-							{ href: '/feed',     label: tFn('nav.feed'),    icon: 'M3 12h18M3 6h18M3 18h18',                                                                                                                                                               show: !!user },
-							{ href: '/forum',    label: tFn('nav.forum'),   icon: 'M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z',                          show: true },
-							{ href: '/chat',     label: tFn('nav.chat'),    icon: 'M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z',                                                                                                                                    show: mods.chat !== false },
-							{ href: '/dm',       label: tFn('nav.dm'),      icon: 'M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z',                                                                                    show: mods.dm !== false },
-						].filter(i => i.show) as item}
-						<a href={item.href}
-						   class="relative flex items-center gap-2.5 px-2.5 py-2 text-sm transition-all"
-						   style="color: {isActive(item.href) ? '#e2e8f0' : '#6b7280'}; background: {isActive(item.href) ? 'rgb(var(--nx-accent-2-rgb) / .12)' : 'transparent'}">
-							{#if isActive(item.href)}
-								<span class="absolute left-0 top-1 bottom-1 w-0.5"
-								      style="background: linear-gradient(to bottom, var(--nx-accent-2-strong), var(--nx-cyan))"></span>
-							{/if}
+				<!-- Nav section -->
+				<div class="nav-section">
+					{#each [
+						{ href: '/',         label: tFn('nav.home'),    icon: 'M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z',                                                                                                                                                 show: true },
+						{ href: '/feed',     label: tFn('nav.feed'),    icon: 'M3 12h18M3 6h18M3 18h18',                                                                                                                                                               show: !!user },
+						{ href: '/forum',    label: tFn('nav.forum'),   icon: 'M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z',                          show: true },
+						{ href: '/dm',       label: tFn('nav.dm'),      icon: 'M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z',                                                                                    show: mods.dm !== false },
+					].filter(i => i.show) as item}
+						<a href={activeCommunityUrl ? activeCommunityUrl + item.href : item.href} class="nav-link {isActive(item.href) ? 'active' : ''}">
 							<svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 								<path stroke-linecap="round" stroke-linejoin="round" d={item.icon}/>
 							</svg>
-							<span class="text-xs font-semibold">{item.label}</span>
+							{item.label}
 						</a>
-						{/each}
-					</div>
+					{/each}
 				</div>
 
-				<!-- MODULES -->
-				<div>
-					<p class="px-2 mb-1.5 text-[9px] uppercase tracking-[.2em] font-black"
-					   style="color: #374151">{tFn('nav.section.modules')}</p>
-					<div class="space-y-px">
-						{#each [
-							{ href: '/canvas',   label: 'Canvas',             icon: 'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',                                                                                                                                                              show: !!mods.canvas },
-							{ href: '/calendar', label: tFn('nav.calendar'),   icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z',                                                                                                                                                                                                          show: mods.calendar !== false },
-							{ href: '/polls',    label: tFn('nav.polls'),     icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z',                                                                                          show: mods.polls !== false },
-							{ href: '/tasks',    label: tFn('nav.tasks'),       icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4',                                                                                                                                                    show: mods.tasks !== false },
-							{ href: '/wiki',     label: tFn('nav.wiki'),         icon: 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253',                                             show: !!mods.wiki },
-							{ href: '/library',  label: tFn('nav.library'), icon: 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253',                                             show: true },
-							{ href: '/garden',   label: tFn('nav.garden'),       icon: 'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z',                                                                                                                                            show: true },
-							{ href: '/discover', label: tFn('nav.discover'),    icon: 'M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z',                                                                                         show: true },
-						].filter(i => i.show) as item}
-						<a href={item.href}
-						   class="relative flex items-center gap-2.5 px-2.5 py-2 text-sm transition-all"
-						   style="color: {isActive(item.href) ? '#e2e8f0' : '#6b7280'}; background: {isActive(item.href) ? 'rgb(var(--nx-accent-2-rgb) / .12)' : 'transparent'}">
-							{#if isActive(item.href)}
-								<span class="absolute left-0 top-1 bottom-1 w-0.5"
-								      style="background: linear-gradient(to bottom, var(--nx-accent-2-strong), var(--nx-cyan))"></span>
-							{/if}
+				<!-- Modules section -->
+				<div class="nav-section">
+					{#each [
+						{ href: '/canvas',   label: 'Canvas',             icon: 'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',                                                                                                                                                              show: !!mods.canvas },
+						{ href: '/calendar', label: tFn('nav.calendar'),   icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z',                                                                                                                                                                                                          show: mods.calendar !== false },
+						{ href: '/polls',    label: tFn('nav.polls'),     icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z',                                                                                          show: mods.polls !== false },
+						{ href: '/tasks',    label: tFn('nav.tasks'),       icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4',                                                                                                                                                    show: mods.tasks !== false },
+						{ href: '/wiki',     label: tFn('nav.wiki'),         icon: 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253',                                             show: !!mods.wiki },
+						{ href: '/library',  label: tFn('nav.library'), icon: 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253',                                             show: true },
+						{ href: '/musique',  label: tFn('nav.music'),   icon: 'M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z',                                                                                                                                                              show: true },
+						{ href: '/garden',   label: tFn('nav.garden'),       icon: 'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z',                                                                                                                                            show: true },
+						{ href: '/discover', label: tFn('nav.discover'),    icon: 'M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z',                                                                                         show: true },
+					].filter(i => i.show) as item}
+						<a href={activeCommunityUrl ? activeCommunityUrl + item.href : item.href} class="nav-link {isActive(item.href) ? 'active' : ''}">
 							<svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 								<path stroke-linecap="round" stroke-linejoin="round" d={item.icon}/>
 							</svg>
-							<span class="text-xs font-medium">{item.label}</span>
+							{item.label}
 						</a>
-						{/each}
-					</div>
+					{/each}
 				</div>
 
-				<!-- COMMUNICATIONS -->
-				<!-- Mobile : masqué pour éviter la duplication avec ChannelSidebar (le drawer
-				     dédié au chat sur /chat). En mobile, la galaxy-sidebar = nav site + modules
-				     uniquement, ChannelSidebar = canaux. Évite les 2 hamburgers concurrents qui
-				     ouvrent 2 drawers avec les mêmes canaux + le bug de navigation des <a href>
-				     en mode déjà-sur-/chat. En desktop (≥ lg), comportement strictement inchangé. -->
-				{#if (layoutTextChannels.length > 0 && mods.chat !== false) || (layoutVoiceChannels.length > 0 && mods.voice !== false)}
-				<div class="hidden lg:block">
-					<p class="px-2 mb-1.5 text-[9px] uppercase tracking-[.2em] font-black"
-					   style="color: #374151">{tFn('nav.section.communications')}</p>
-					<div class="space-y-px">
-						{#if mods.chat !== false && layoutTextChannels.length > 0}
-						<!-- Sous-label Texte -->
-						<div class="lch-sublabel">
-							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-								<path stroke-linecap="round" stroke-linejoin="round" d="M7.875 14.25l1.214 1.942a2.25 2.25 0 001.908 1.058h2.006c.776 0 1.497-.4 1.908-1.058l1.214-1.942M2.41 9h4.636a2.25 2.25 0 011.872 1.002l.164.246a2.25 2.25 0 001.872 1.002h2.092a2.25 2.25 0 001.872-1.002l.164-.246A2.25 2.25 0 0116.954 9h4.636M2.41 9a2.25 2.25 0 00-.16.832V12a2.25 2.25 0 002.25 2.25h15a2.25 2.25 0 002.25-2.25V9.832c0-.287-.055-.57-.16-.832M2.41 9a2.25 2.25 0 01.382-.632l3.285-3.832a2.25 2.25 0 011.708-.786h8.43c.657 0 1.281.287 1.709.786l3.284 3.832c.163.19.291.404.382.632"/>
-							</svg>
-							<span>{tFn('channels.text')}</span>
-						</div>
-					{#each layoutTextChannels as ch}
-						{@const chActive = activeChatChannelId === ch.id}
-						{@const chUnread = ($unreadCountsStore[ch.id] ?? 0)}
-						{@const chFlash  = $flashChannelIdStore === ch.id}
-						{@const hasUnread = chUnread > 0 && !chActive}
-						<a href="/chat?channel={ch.id}"
-						   class="lch-item relative flex items-center gap-2.5 px-2.5 py-2 text-sm
-						          {chActive ? 'lch-active' : hasUnread ? 'lch-unread' : 'lch-idle'}
-						          {chFlash ? 'lch-flash' : ''}">
-							{#if chActive}
-								<span class="absolute left-0 top-1 bottom-1 w-0.5" style="background: linear-gradient(to bottom, var(--nx-accent-2-strong), var(--nx-cyan))"></span>
-							{/if}
-							<span class="text-base leading-none shrink-0 inline-flex items-center justify-center">
-								<ChannelIcon
-									value={ch.icon_emoji}
-									fallback="#"
-									size={16}
-									color={ch.name_color ?? (chActive ? 'var(--nx-accent-2-soft)' : hasUnread ? 'var(--nx-accent-2-strong)' : '#374151')}
-								/>
-							</span>
-							<span class="text-xs truncate flex-1" class:font-semibold={hasUnread}
-							      style={chNameStyle(ch)}>{ch.name}</span>
-							{#if hasUnread}
-								<span class="lch-badge">{chUnread > 99 ? '99+' : chUnread}</span>
-							{/if}
-						</a>
-						{/each}
-					{/if}
-					{#if mods.voice !== false && layoutVoiceChannels.length > 0}
-						<!-- Sous-label Vocal -->
-						<div class="lch-sublabel lch-sublabel--voice">
-							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-								<path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"/>
-							</svg>
-							<span>{tFn('channels.voice')}</span>
-						</div>
-						{#each layoutVoiceChannels as ch}
-						{@const chActive = activeChatChannelId === ch.id}
-						{@const inThis   = voiceState.active && voiceState.channelId === ch.id}
-						{@const members  = inThis
-							? [
-								...voiceState.peers.map((p: any) => ({ username: p.username, avatar: p.avatar ?? null, speaking: p.speaking ?? false, muted: false, deafened: false, isMe: false, userId: p.userId ?? null, socketId: p.socketId ?? null })),
-								{ username: user?.username ?? tFn('common.you'), avatar: user?.avatar ?? null, speaking: voiceState.mySpeaking, muted: voiceState.muted, deafened: voiceState.deafened, isMe: true, userId: (user as any)?.id ?? null, socketId: null },
-							]
-							: (vcMembers[ch.id] ?? []).map((m: any) => ({ ...m, speaking: false, muted: false, deafened: false, isMe: false, userId: m.userId ?? null, socketId: null }))}
-						<a href="/chat?channel={ch.id}"
-						   class="relative flex items-center gap-2.5 px-2.5 py-2 text-sm transition-all"
-						   style="color: {chActive ? '#e2e8f0' : '#4b5563'}; background: {chActive ? 'rgb(var(--nx-accent-2-rgb) / .12)' : 'transparent'}">
-							{#if chActive}
-								<span class="absolute left-0 top-1 bottom-1 w-0.5" style="background: linear-gradient(to bottom, var(--nx-accent-2-strong), var(--nx-cyan))"></span>
-							{/if}
-							{#if ch.icon_emoji}
-								<span class="lch-voice-ico inline-flex items-center justify-center">
-									<ChannelIcon
-										value={ch.icon_emoji}
-										size={14}
-										color={ch.name_color ?? (inThis ? '#4ade80' : chActive ? 'var(--nx-accent-2-soft)' : '#374151')}
-									/>
-								</span>
-							{:else}
-								<svg class="lch-voice-ico" fill="none" stroke="{ch.name_color ?? (inThis ? '#4ade80' : chActive ? 'var(--nx-accent-2-soft)' : '#374151')}" stroke-width="2" viewBox="0 0 24 24">
-									<path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"/>
-								</svg>
-							{/if}
-							<span class="text-xs truncate flex-1" style={chNameStyle(ch)}>{ch.name}</span>
-							{#if members.length > 0}
-								<span class="text-[10px] font-bold shrink-0" style="color: {inThis ? 'var(--nx-accent-2-soft)' : '#374151'}">{members.length}</span>
-							{/if}
-						</a>
-						<!-- Membres connectés -->
+				<!-- Text channels (flat, like sketch) -->
+				{#if mods.chat !== false && layoutTextChannels.length > 0}
+				<div class="channel-group-label">{tFn('channels.text')}</div>
+				{#each layoutTextChannels as ch}
+					{@const chActive = activeChatChannelId === ch.id}
+					{@const chUnread = ($unreadCountsStore[ch.id] ?? 0)}
+					{@const hasUnread = chUnread > 0 && !chActive}
+					<a href={activeCommunityUrl ? activeCommunityUrl + "/chat?channel=" + ch.id : "/chat?channel=" + ch.id} class="channel {chActive ? 'active' : ''}">
+						<span class="text-neutral-700"><ChannelIcon value={ch.icon_emoji} fallback="#" size={14} color={ch.name_color ?? null} /></span>
+						<span style={chNameStyle(ch)}>{ch.name}</span>
+						{#if hasUnread}<span class="ml-auto w-1.5 h-1.5 rounded-full bg-indigo-400"></span>{/if}
+					</a>
+				{/each}
+				{/if}
+
+				<!-- Voice channels (flat, like sketch) -->
+				{#if mods.voice !== false && layoutVoiceChannels.length > 0}
+				<div class="channel-group-label">{tFn('channels.voice')}</div>
+				{#each layoutVoiceChannels as ch}
+					{@const chActive = activeChatChannelId === ch.id}
+					{@const inThis   = voiceState.active && voiceState.channelId === ch.id}
+					{@const members  = inThis
+						? [
+							...voiceState.peers.map((p: any) => ({ username: p.username, avatar: p.avatar ?? null, speaking: p.speaking ?? false, muted: false, deafened: false, isMe: false, userId: p.userId ?? null, socketId: p.socketId ?? null })),
+							{ username: user?.username ?? tFn('common.you'), avatar: user?.avatar ?? null, speaking: voiceState.mySpeaking, muted: voiceState.muted, deafened: voiceState.deafened, isMe: true, userId: (user as any)?.id ?? null, socketId: null },
+						]
+						: (vcMembers[ch.id] ?? []).map((m: any) => ({ ...m, speaking: false, muted: false, deafened: false, isMe: false, userId: m.userId ?? null, socketId: null }))}
+					<a href={activeCommunityUrl ? activeCommunityUrl + "/chat?channel=" + ch.id : "/chat?channel=" + ch.id} class="channel {chActive ? 'active' : ''}">
+						<span class="text-neutral-700"><ChannelIcon value={ch.icon_emoji} fallback="🔊" size={14} color={ch.name_color ?? null} /></span>
+						<span style={chNameStyle(ch)}>{ch.name}</span>
 						{#if members.length > 0}
-							<div class="flex flex-col pl-5 pr-1 pt-0.5 pb-1.5 gap-0.5">
-								{#each members.slice(0, 6) as m}
-									{@const mSharing = !!(m.userId && screenSharingUserIds.has(m.userId))}
-									{@const borderColor = m.speaking ? 'rgba(74,222,128,0.6)' : m.deafened ? 'rgba(249,115,22,0.45)' : m.muted ? 'rgba(239,68,68,0.35)' : mSharing ? 'rgba(59,130,246,0.35)' : 'rgba(255,255,255,0.04)'}
-									{@const bgColor    = m.speaking ? 'rgba(74,222,128,0.07)' : m.deafened ? 'rgba(249,115,22,0.05)' : m.muted ? 'rgba(239,68,68,0.04)' : 'rgba(255,255,255,0.02)'}
-									{@const nameColor  = m.speaking ? '#86efac' : m.deafened ? '#fdba74' : m.muted ? '#fca5a5' : m.isMe ? 'var(--nx-accent-2-soft2)' : '#6b7280'}
-									<!-- svelte-ignore a11y_no_static_element_interactions -->
-									<div class="vc-member-card relative flex items-center gap-2 px-2 py-1.5 transition-all duration-200"
-									     style="background:{bgColor}; border-left:2px solid {borderColor};"
-									     onmouseenter={mSharing ? (e: MouseEvent) => showScreenPreview(e, m.userId, m.username, m.avatar, 'right') : undefined}
-									     onmouseleave={() => { screenPreview = null }}>
-
-										<!-- Avatar -->
-										<div class="relative shrink-0">
-											<div class="w-[22px] h-[22px] rounded-full overflow-hidden transition-all duration-200"
-											     style="box-shadow:{m.speaking ? '0 0 0 2px rgba(74,222,128,0.55), 0 0 8px rgba(74,222,128,0.25)' : 'none'}">
-												{#if m.avatar}
-													<img src={m.avatar} alt={m.username} class="w-full h-full object-cover"/>
-												{:else}
-													<div class="w-full h-full flex items-center justify-center text-[9px] font-black text-white select-none"
-													     style="background:linear-gradient(135deg,var(--nx-accent-2-strong),var(--nx-cyan-deep))">
-														{m.username.charAt(0).toUpperCase()}
-													</div>
-												{/if}
-											</div>
-											<!-- Screen share badge -->
-											{#if mSharing}
-												<div class="absolute -bottom-0.5 -right-0.5 w-[11px] h-[11px] rounded-full flex items-center justify-center"
-												     style="background:#3b82f6;border:1.5px solid #0d0d12">
-													<svg style="width:6px;height:5px" fill="none" stroke="white" stroke-width="3" viewBox="0 0 24 17">
-														<rect x="1" y="1" width="22" height="13" rx="2"/>
-													</svg>
+							<span style="margin-left:auto;font-size:10px;color:{inThis ? '#818cf8' : '#333'}">{members.length}</span>
+						{/if}
+					</a>
+					{#if members.length > 0}
+						<div class="flex flex-col pl-5 pr-1 pt-0.5 pb-1.5 gap-0.5">
+							{#each members.slice(0, 6) as m}
+								{@const mSharing = !!(m.userId && screenSharingUserIds.has(m.userId))}
+								{@const borderColor = m.speaking ? 'rgba(74,222,128,0.6)' : m.deafened ? 'rgba(249,115,22,0.45)' : m.muted ? 'rgba(239,68,68,0.35)' : mSharing ? 'rgba(59,130,246,0.35)' : 'rgba(255,255,255,0.04)'}
+								{@const bgColor    = m.speaking ? 'rgba(74,222,128,0.07)' : m.deafened ? 'rgba(249,115,22,0.05)' : m.muted ? 'rgba(239,68,68,0.04)' : 'rgba(255,255,255,0.02)'}
+								{@const nameColor  = m.speaking ? '#86efac' : m.deafened ? '#fdba74' : m.muted ? '#fca5a5' : m.isMe ? 'var(--nx-accent-2-soft2)' : '#6b7280'}
+								<!-- svelte-ignore a11y_no_static_element_interactions -->
+								<div class="vc-member-card relative flex items-center gap-2 px-2 py-1.5 transition-all duration-200"
+								     style="background:{bgColor}; border-left:2px solid {borderColor};"
+								     onmouseenter={mSharing ? (e: MouseEvent) => showScreenPreview(e, m.userId, m.username, m.avatar, 'right') : undefined}
+								     onmouseleave={() => { screenPreview = null }}>
+									<div class="relative shrink-0">
+										<div class="w-[22px] h-[22px] rounded-full overflow-hidden transition-all duration-200"
+										     style="box-shadow:{m.speaking ? '0 0 0 2px rgba(74,222,128,0.55), 0 0 8px rgba(74,222,128,0.25)' : 'none'}">
+											{#if m.avatar}
+												<img src={m.avatar} alt={m.username} class="w-full h-full object-cover"/>
+											{:else}
+												<div class="w-full h-full flex items-center justify-center text-[9px] font-black text-white select-none bg-linear-to-br from-[var(--nx-accent-2-strong)] to-[var(--nx-cyan-deep)]">
+													{m.username.charAt(0).toUpperCase()}
 												</div>
 											{/if}
 										</div>
-
-										<!-- Username -->
-										<span class="text-[11px] font-medium truncate flex-1 transition-colors duration-200"
-										      style="color:{nameColor}">
-											{m.isMe ? tFn('common.you') : m.username}
-										</span>
-
-										<!-- Right: wave bars if speaking, else status icons -->
-										{#if m.speaking && !m.muted && !m.deafened}
-											<div class="vc-wave-bars shrink-0" aria-label="Parle">
-												<span class="vc-bar" style="animation-delay:0s"></span>
-												<span class="vc-bar" style="animation-delay:0.18s"></span>
-												<span class="vc-bar" style="animation-delay:0.09s"></span>
-											</div>
-										{:else}
-											<div class="flex items-center gap-0.5 shrink-0">
-												{#if m.deafened}
-													<svg class="w-[11px] h-[11px]" aria-label="Écouteurs coupés" style="color:#fb923c" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
-														<path stroke-linecap="round" d="M3 18v-6a9 9 0 0118 0v6"/>
-														<path stroke-linecap="round" d="M21 19a2 2 0 01-2 2h-1a2 2 0 01-2-2v-3a2 2 0 012-2h3zM3 19a2 2 0 002 2h1a2 2 0 002-2v-3a2 2 0 00-2-2H3z"/>
-														<path stroke-linecap="round" d="M2 2l20 20"/>
-													</svg>
-												{/if}
-												{#if m.muted}
-													<svg class="w-[11px] h-[11px]" aria-label="Micro coupé" style="color:#f87171" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
-														<path stroke-linecap="round" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"/>
-														<path stroke-linecap="round" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2"/>
-													</svg>
-												{/if}
+										{#if mSharing}
+											<div class="absolute -bottom-0.5 -right-0.5 w-[11px] h-[11px] rounded-full flex items-center justify-center bg-blue-500 border-[1.5px] border-[#0d0d12]">
+												<svg class="w-1.5 h-1" fill="none" stroke="white" stroke-width="3" viewBox="0 0 24 17">
+													<rect x="1" y="1" width="22" height="13" rx="2"/>
+												</svg>
 											</div>
 										{/if}
 									</div>
-								{/each}
-								{#if members.length > 6}
-									<span class="text-[10px] pl-2 pt-0.5" style="color:#374151">{tFn('common.others_more', { n: members.length - 6 })}</span>
-								{/if}
-							</div>
-						{/if}
-						{/each}
-					{/if}
-					</div>
-				</div>
-				{/if}
-
-				</nav>
-
-			<!-- Voice controls (micro, déconnexion, statut) -->
-			<VoicePanel mode="sidebar" />
-
-			<!-- User footer -->
-			{#if user}
-			<div class="shrink-0 px-3 py-3 flex items-center gap-2.5"
-			     style="border-top: 1px solid rgba(255,255,255,.05); background: #0d0d12">
-				<div class="relative shrink-0">
-					{#if user.avatar}
-						<img src={user.avatar} alt="" class="w-8 h-8 object-cover" style="outline: 1px solid rgba(255,255,255,.1)" />
-					{:else}
-						<div class="w-8 h-8 flex items-center justify-center text-xs font-bold text-white select-none"
-						     style="background: linear-gradient(135deg, var(--nx-accent-2-strong), var(--nx-cyan-deep))">
-							{user.username.charAt(0).toUpperCase()}
+									<span class="text-[11px] font-medium truncate flex-1 transition-colors duration-200"
+									      style="color:{nameColor}">
+										{m.isMe ? tFn('common.you') : m.username}
+									</span>
+									{#if m.speaking && !m.muted && !m.deafened}
+										<VoiceEqualizer socketId={m.socketId} isMe={m.isMe} />
+									{:else}
+										<div class="flex items-center gap-0.5 shrink-0">
+											{#if m.deafened}
+												<svg class="w-[11px] h-[11px] text-orange-400" aria-label={tFn('voice.deafened_aria')} fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+													<path stroke-linecap="round" d="M3 18v-6a9 9 0 0118 0v6"/>
+													<path stroke-linecap="round" d="M21 19a2 2 0 01-2 2h-1a2 2 0 01-2-2v-3a2 2 0 012-2h3zM3 19a2 2 0 002 2h1a2 2 0 002-2v-3a2 2 0 00-2-2H3z"/>
+													<path stroke-linecap="round" d="M2 2l20 20"/>
+												</svg>
+											{/if}
+											{#if m.muted}
+												<svg class="w-[11px] h-[11px] text-red-400" aria-label={tFn('voice.muted_aria')} fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+													<path stroke-linecap="round" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"/>
+													<path stroke-linecap="round" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2"/>
+												</svg>
+											{/if}
+										</div>
+									{/if}
+								</div>
+							{/each}
+							{#if members.length > 6}
+								<span class="text-[10px] pl-2 pt-0.5 text-gray-700">{tFn('common.others_more', { n: members.length - 6 })}</span>
+							{/if}
 						</div>
 					{/if}
-					<span class="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2"
-					      style="background: #4ade80; border-color: #0d0d12"></span>
-				</div>
-				<div class="flex-1 min-w-0">
-					<div class="text-xs font-bold truncate" style="color: #e2e8f0; font-family: 'Space Grotesk', sans-serif">{user.username}</div>
-					<div class="text-[10px] uppercase tracking-wide" style="color: {user.role === 'owner' || user.role === 'admin' ? 'var(--nx-accent-2-soft)' : '#4b5563'}; font-weight: 700">
-						{user.role === 'owner' ? 'Owner' : user.role === 'admin' ? 'Admin' : tFn('common.member')}
+				{/each}
+				{/if}
+
+			</div>
+
+			<!-- Voice controls -->
+			<VoicePanel mode="sidebar" />
+
+			<!-- Panel bottom: user group + settings gear -->
+			{#if user}
+			<div class="panel-bottom">
+				<button type="button" class="user-group" onclick={openStatusModal}>
+					<div class="user-avatar">
+						{#if user.avatar}
+							<img src={user.avatar} alt="" class="w-full h-full object-cover" />
+						{:else}
+							{user.username.charAt(0).toUpperCase()}
+						{/if}
+						<span class="status"></span>
 					</div>
-				</div>
-				<button onclick={openStatusModal} title="Statut" class="shrink-0 transition-colors" style="color: #374151">
-					<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/>
-					</svg>
+					<div class="flex-1 min-w-0">
+						<div class="user-name">{user.username}</div>
+						<div class="user-role">{user.role === 'owner' ? 'Owner' : user.role === 'admin' ? 'Admin' : tFn('common.member')}</div>
+					</div>
 				</button>
+				<a href="/settings" title={tFn('nav.settings')} class="quick-icon">
+					<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+						<circle cx="12" cy="12" r="3"/>
+						<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+					</svg>
+				</a>
+			</div>
+			{:else}
+			<div class="panel-bottom">
+				<a href="/auth/login" class="user-group">
+					<div class="user-avatar">?<span class="status"></span></div>
+					<div class="flex-1 min-w-0">
+						<div class="user-name">{tFn('common.login')}</div>
+					</div>
+				</a>
+				<a class="quick-icon" title={tFn('nav.settings')} href="/settings">
+					<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+						<circle cx="12" cy="12" r="3"/>
+						<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+					</svg>
+				</a>
 			</div>
 			{/if}
 
 		</aside>
+		</div>
 		{/if}
 
 
 		<!-- ── Contenu principal ───────────────────────────────────────────────── -->
 		<div class="flex-1 overflow-hidden">
-		<main class="h-full overflow-y-auto min-w-0 {isBanned ? '' : showChannelSidebar ? 'lg:pl-[292px] xl:mr-[220px]' : 'lg:pl-[72px] xl:mr-[220px]'}" style="padding-bottom: var(--bottom-nav-h)">
+		<!-- app-shell-main : marqueur pour scoper les décalages (padding-left rail+sidebar,
+		     margin-right membres) à CE main uniquement. Sans ça, `:global(main.app-shell-main)` frappait
+		     AUSSI les <main> imbriqués des pages (profil, settings, admin, dm) et leur
+		     collait un padding-left 276px + margin-right 220px parasites → contenu poussé
+		     au milieu et rétréci. -->
+		<!-- overflow-x-hidden : zone de contenu d'appli = défilement vertical seul.
+		     `overflow-y-auto` force sinon overflow-x à `auto` (spec CSS), et le
+		     moindre debordement (ex: banniere full-bleed -mx-6 du profil, +24px)
+		     faisait apparaitre une scrollbar horizontale + du contenu glissant
+		     sous les sidebars. On clippe l'horizontal, plus jamais de scrollbar. -->
+		<main class="app-shell-main {langView ? 'h-[calc(100dvh-48px)] overflow-hidden' : 'h-full overflow-y-auto overflow-x-hidden'} min-w-0 pb-[var(--bottom-nav-h)]"
+		      class:panel-collapsed={isBanned || !showChannelSidebar || panelCollapsed}
+		      class:members-collapsed={membersCollapsed}>
 
             <!-- ── System announcement banner ─────────────────────────────────── -->
             {#if showAnnouncement && announcement}
@@ -1159,7 +1426,7 @@
                     <button
                         onclick={() => announcementDismissed = announcement!.id}
                         class="shrink-0 opacity-60 hover:opacity-100 transition-opacity ml-2"
-                        aria-label="Fermer l'annonce"
+                        aria-label={tFn('announcement.dismiss')}
                     >
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
@@ -1169,233 +1436,262 @@
             {/if}
 
 
-            <div class="w-full flex-1 flex flex-col {$page.url.pathname === '/' || $page.url.pathname.startsWith('/chat') || $page.url.pathname.startsWith('/admin') || $page.url.pathname.startsWith('/users/') || $page.url.pathname.startsWith('/feed') || $page.url.pathname.startsWith('/settings') || $page.url.pathname.startsWith('/garden') || $page.url.pathname.startsWith('/calendar') || $page.url.pathname.startsWith('/discover') || $page.url.pathname.startsWith('/wiki') || $page.url.pathname.startsWith('/library') || $page.url.pathname.startsWith('/dm') ? '' : $page.url.pathname.startsWith('/forum') ? 'px-4 sm:px-6 py-8' : 'max-w-5xl mx-auto px-4 py-8'}">
-                {@render children()}
+            <div class="w-full flex-1 flex flex-col {langView ? 'lang-view-wrap h-full' : (page.url.pathname === '/' || page.url.pathname.startsWith('/chat') || page.url.pathname.startsWith('/admin') || page.url.pathname.startsWith('/users/') || page.url.pathname.startsWith('/feed') || page.url.pathname.startsWith('/settings') || page.url.pathname.startsWith('/garden') || page.url.pathname.startsWith('/calendar') || page.url.pathname.startsWith('/discover') || page.url.pathname.startsWith('/wiki') || page.url.pathname.startsWith('/library') || page.url.pathname.startsWith('/musique') || page.url.pathname.startsWith('/dm') || page.url.pathname.startsWith('/auth/') ? 'h-full' : (page.url.pathname.startsWith('/forum') || page.url.pathname.startsWith('/tasks')) ? 'px-4 sm:px-6 py-8' : 'max-w-5xl mx-auto px-4 py-8')}">
+                {#if langView}
+                    <!-- svelte-ignore a11y_no_static_element_interactions -->
+                    <div class="fixed inset-0 bg-black/40 backdrop-blur-xs z-40" onclick={() => langView = false} transition:fade={{ duration: 200 }}></div>
+                    <div
+                        class="lang-view flex flex-col gap-4 w-full h-full min-h-0 p-6 sm:p-8 relative z-41"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="lang-title"
+                        aria-describedby="lang-desc"
+                        style="transform: translateY({langDragY}px); transition: transform {langDragY > 0 ? 'none' : '0.3s cubic-bezier(0.16, 1, 0.3, 1)'};"
+                        transition:fly={{ y: 20, duration: 300, easing: cubicOut }}
+                        ontouchstart={onLangTouchStart}
+                        ontouchmove={onLangTouchMove}
+                        ontouchend={onLangTouchEnd}
+                    >
+                        <button onclick={() => langView = false} class="lang-back inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-gray-400 shrink-0 bg-transparent border border-white/[0.12] rounded-md px-3 py-2 cursor-pointer" aria-label={tFn('common.back')}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M19 12H5M12 5l-7 7 7 7"/>
+                            </svg>
+                            {tFn('common.back')}
+                        </button>
+                        <div class="flex flex-col gap-4 min-h-0 flex-1">
+                            <div class="flex items-start gap-4 mb-1 shrink-0">
+                                <div class="lang-icon w-12 h-12 rounded-lg flex items-center justify-center shrink-0 border">
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
+                                        <path d="M5 8l6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6"/>
+                                    </svg>
+                                </div>
+                                <div>
+                                    <h2 id="lang-title" class="lang-title text-xl font-bold text-slate-100 m-0 mb-1 leading-tight">{tFn('settings.language.title')}</h2>
+                                    <p id="lang-desc" class="text-[13px] text-gray-500 leading-relaxed m-0">{tFn('settings.language.desc')}</p>
+                                </div>
+                            </div>
+                            <div class="lang-card rounded-lg p-5 min-h-0 flex flex-col flex-1">
+                                <div class="lang-segments flex flex-col gap-2 overflow-y-auto overflow-x-hidden flex-1 min-h-0 px-2">
+                                    {#each LOCALES as loc}
+                                    <button
+                                        onclick={() => pickLocale(loc.code)}
+                                        class="lang-seg flex items-center gap-4 p-4 rounded-lg border border-white/[0.06] bg-white/[0.02] cursor-pointer w-full relative overflow-hidden shrink-0 text-left {currentLocale === loc.code ? 'active' : ''}"
+                                    >
+                                        <span class="shrink-0 flex items-center leading-none"><ChannelIcon value={loc.flagIcon} size={26} /></span>
+                                        <span class="flex-1 min-w-0">
+                                            <span class="lang-label text-sm font-semibold text-slate-200 block leading-relaxed">{loc.label}</span>
+                                        </span>
+                                        {#if currentLocale === loc.code}
+                                        <svg class="lang-seg-check w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+                                        </svg>
+                                        {/if}
+                                    </button>
+                                    {/each}
+                                </div>
+                            </div>
+                            {#if langSaved}
+                            <div class="lang-success mt-3 py-2 px-3 rounded-md text-[13px] font-medium shrink-0 bg-green-400/10 border border-green-400/20 text-green-400">{tFn('settings.language.saved')}</div>
+                            {/if}
+                        </div>
+                    </div>
+                {:else}
+                    {@render children()}
+                {/if}
             </div>
         </main>
 		</div>
 
-		<!-- ── Members Bar (droite, 200px) ────────────────────────────────────── -->
-		<aside class="hidden xl:flex fixed right-0 top-12 bottom-0 w-[220px] flex-col overflow-hidden z-30"
-		       style="background: #0d0d12; border-left: 1px solid rgba(255,255,255,.05)">
-
-			<!-- ── Header ──────────────────────────────────────────────────────── -->
-			<div class="shrink-0 px-4 py-3 flex items-center justify-between"
-			     style="border-bottom: 1px solid rgba(255,255,255,.05); background: rgba(255,255,255,.02)">
-				<span class="text-[10px] font-black uppercase tracking-[.18em]" style="color: #374151; font-family: 'Space Grotesk', sans-serif">{tFn('common.members')}</span>
-				{#if user}
-					<div class="flex items-center gap-1.5">
-						<span class="relative flex h-1.5 w-1.5">
-							<span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style="background: #4ade80"></span>
-							<span class="relative inline-flex h-1.5 w-1.5 rounded-full" style="background: #4ade80"></span>
-						</span>
-						<span class="text-[10px] font-bold tabular-nums" style="color: #4ade80">{onlineMembers.length}</span>
-					</div>
-				{/if}
+		<aside class="hidden xl:flex members members-c"
+		       class:collapsed={membersCollapsed}
+		       class:has-bg={sidebarBgVisible}
+		       id="members-c"
+		       style="width: {membersCollapsed ? '0px' : 'var(--right-panel-width, 220px)'};"
+		       class:dragging={isDraggingRight}>
+			{#if sidebarBgVisible && data.sidebarBg?.background_image_url}
+				<img class="members-bg" src={data.sidebarBg.background_image_url} alt=""
+					style="object-position:{data.sidebarBg.background_offset_x ?? 50}% {data.sidebarBg.background_offset_y ?? 50}%; transform-origin:{data.sidebarBg.background_offset_x ?? 50}% {data.sidebarBg.background_offset_y ?? 50}%; transform: scale({Math.min(2.5, Math.max(0.4, data.sidebarBg.background_scale ?? 1))})" />
+				<div class="members-bg-overlay" style="opacity:{data.sidebarBg.overlay_opacity ?? 0.6}"></div>
+			{/if}
+			<button class="edge-handle"
+			        onpointerdown={startRightDrag}
+			        onpointermove={handleRightDragMove}
+			        onpointerup={stopRightDrag}
+			        onclick={(e) => {
+			            if (rightDragMoved) {
+			                e.preventDefault();
+			                e.stopPropagation();
+			            } else {
+			                toggleC();
+			            }
+			        }}
+			        class:dragging-past-boundary={draggingPastBoundaryRight}
+			        aria-label={tFn('members.toggle_aria')}
+			        title={tFn('members.toggle_aria')}></button>
+			<div class="members-header">
+				<span class="label">{tFn('common.members')}</span>
+				<div class="online-count">
+					<span class="online-dot"></span>
+					<span class="online-num">{onlineMembers.length}</span>
+				</div>
 			</div>
 
 			{#if user}
-			<div class="flex-1 overflow-y-auto overflow-x-hidden" style="scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.06) transparent">
-				<div class="px-2 py-2 space-y-px">
+			<div class="members-scroll">
+				<div class="scroll-inner">
 
 					<!-- ── Grouped by grade ──────────────────────────────────────── -->
 					{#each [...memberGroups.groups.entries()] as [gradeName, members]}
-						<!-- Grade label -->
-						<div class="flex items-center gap-2 px-2 pt-3 pb-1.5">
-							<span class="w-1.5 h-1.5 shrink-0" style="background: {members[0]?.grade?.color ?? '#6b7280'}"></span>
-							<span class="text-[9px] font-black uppercase tracking-[.18em] truncate flex-1" style="color: {members[0]?.grade?.color ?? '#6b7280'}; font-family: 'Space Grotesk', sans-serif">{gradeName}</span>
-							<span class="text-[9px] font-bold tabular-nums shrink-0" style="color: #374151">{members.length}</span>
+						<div class="group-label">
+							<span class="w-1.5 h-1.5 rounded-full shrink-0" style="background: {members[0]?.grade?.color ?? '#6b7280'}"></span>
+							<span class="gt">{gradeName}</span>
+							<span class="gc">{members.length}</span>
 						</div>
 						{#each members as member (member.userId)}
 							{@const isMe        = member.userId === (user as any)?.id}
 							{@const hasStatus   = !!(member.status?.text || member.status?.emoji)}
 							{@const isSharing   = screenSharingUserIds.has(member.userId)}
 							{@const isStreaming = streamingUserIds.has(member.userId)}
-							<!-- svelte-ignore a11y_no_static_element_interactions -->
-							<svelte:element
-								this={isMe ? 'button' : 'a'}
-								href={isMe ? undefined : `/users/${member.username}`}
-								onclick={isMe ? openStatusModal : undefined}
-								onmouseenter={isSharing && !isMe ? (e: MouseEvent) => showScreenPreview(e, member.userId, member.username, member.avatar, 'left') : undefined}
-								onmouseleave={() => { screenPreview = null }}
-								class="relative w-full flex items-center gap-2.5 px-2 py-2 transition-all group"
-								style="background: {isMe ? 'rgb(var(--nx-accent-2-rgb) / .06)' : 'transparent'}; text-align: left">
-								<!-- Hover bar -->
-								<span class="absolute left-0 top-0.5 bottom-0.5 w-0.5 opacity-0 group-hover:opacity-100 transition-opacity" style="background: linear-gradient(to bottom, var(--nx-accent-2-strong), var(--nx-cyan))"></span>
-								<!-- Avatar -->
-								<div class="relative shrink-0">
+							{@const avatarColor = members[0]?.grade?.color ?? 'var(--nx-accent-2-strong)'}
+
+							<button type="button"
+							        class="member {isMe ? 'me' : ''}"
+							        onclick={isMe ? openStatusModal : () => goto(`/users/${member.username}`)}
+							        onmouseenter={isSharing && !isMe ? (e: MouseEvent) => showScreenPreview(e, member.userId, member.username, member.avatar, 'left') : undefined}
+							        onmouseleave={() => { screenPreview = null }}>
+								<span class="hover-bar"></span>
+								<div class="avatar-wrap">
 									{#if member.avatar}
-										<img src={member.avatar} alt="" class="w-7 h-7 object-cover" style="outline: 1px solid rgba(255,255,255,.08)" />
+										<img src={member.avatar} alt="" class="avatar object-cover" />
 									{:else}
-										<div class="w-7 h-7 flex items-center justify-center text-[11px] font-black text-white select-none"
-										     style="background: linear-gradient(135deg, {members[0]?.grade?.color ?? 'var(--nx-accent-2-strong)'}80, var(--nx-cyan-deep))">{member.username.charAt(0).toUpperCase()}</div>
+										<div class="avatar" style="background: linear-gradient(135deg, {avatarColor}80, var(--nx-cyan-deep))">{member.username.charAt(0).toUpperCase()}</div>
 									{/if}
-									<!-- Online dot — remplacé par icône activité si besoin -->
-									<span class="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 flex items-center justify-center"
-									      style="background: #0d0d12">
+									<span class="status-dot">
 										{#if isSharing}
 											<svg style="width:10px;height:10px;color:rgb(96,165,250)" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
 												<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
 											</svg>
 										{:else if isStreaming}
-											<span style="width:8px;height:8px;border-radius:50%;background:#ef4444;animation:pulse 1.5s infinite;display:block"></span>
+											<span class="w-2 h-2 rounded-full bg-red-500 block animate-pulse"></span>
 										{:else}
-											<span class="w-1.5 h-1.5 rounded-full" style="background: #4ade80; box-shadow: 0 0 4px #4ade8088"></span>
+											<span class="d"></span>
 										{/if}
 									</span>
 								</div>
-								<!-- Info -->
-								<div class="min-w-0 flex-1">
-									<div class="flex items-center gap-1 min-w-0">
-										<span class="text-[11px] font-semibold leading-tight truncate transition-colors group-hover:brightness-125 {buildAnimClass(member)}"
-										      style={buildNameStyle(member, isMe ? 'var(--nx-accent-2-soft2)' : '#9ca3af')}>{member.username}</span>
-										{#if isMe}
-											<span class="shrink-0 text-[8px] font-black uppercase px-1 py-px leading-none" style="background: rgb(var(--nx-accent-2-rgb) / .25); color: var(--nx-accent-2-soft)">vous</span>
-										{/if}
+								<div class="info">
+									<div class="name-row">
+										<span class="name {buildAnimClass(member)}" style={buildNameStyle(member, isMe ? 'var(--nx-accent-2-soft2)' : '#9ca3af')}>{member.username}</span>
+										{#if isMe}<span class="you-tag">{tFn('common.you')}</span>{/if}
 									</div>
-									<!-- Activité temps réel -->
 									{#if isSharing || isStreaming}
-										<div class="flex items-center gap-1 mt-0.5">
+										<div class="status-text flex items-center gap-1">
 											{#if isSharing}
-												<span style="display:inline-flex;align-items:center;gap:3px;font-size:9px;font-weight:700;padding:1px 5px;background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.22);color:rgb(96,165,250)">
-													<svg style="width:7px;height:7px;shrink:0" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-													ÉCRAN
-												</span>
+												<span class="text-[9px] font-bold px-1 py-px bg-blue-500/10 border border-blue-500/20 text-blue-400">{tFn('voice.screen_badge')}</span>
 											{/if}
 											{#if isStreaming}
-												<span style="display:inline-flex;align-items:center;gap:3px;font-size:9px;font-weight:700;padding:1px 5px;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.22);color:rgb(248,113,113)">
-													<span style="width:5px;height:5px;border-radius:50%;background:currentColor;animation:pulse 1.5s infinite;display:inline-block"></span>
-													LIVE
-												</span>
+												<span class="text-[9px] font-bold px-1 py-px bg-red-500/10 border border-red-500/20 text-red-400">LIVE</span>
 											{/if}
 										</div>
 									{:else if hasStatus}
-										<div class="text-[10px] truncate leading-tight mt-px" style="color: #4b5563">{member.status?.emoji} {member.status?.text}</div>
+										<div class="status-text">{member.status?.emoji} {member.status?.text}</div>
 									{:else if isMe}
-										<div class="text-[10px] leading-tight mt-px transition-colors group-hover:opacity-80" style="color: #374151">{tFn('common.set_status')}</div>
-									{/if}
-									<!-- Statut custom affiché sous l'activité si les deux existent -->
-									{#if (isSharing || isStreaming) && hasStatus}
-										<div class="text-[10px] truncate leading-tight" style="color: #374151">{member.status?.emoji} {member.status?.text}</div>
+										<div class="status-text">{tFn('common.set_status')}</div>
 									{/if}
 								</div>
-							</svelte:element>
+							</button>
 						{/each}
 					{/each}
 
 					<!-- ── No-grade online members ───────────────────────────────── -->
 					{#if memberGroups.ungrouped.length > 0}
-						<div class="flex items-center gap-2 px-2 pt-3 pb-1.5">
-							<span class="w-1.5 h-1.5 shrink-0 rounded-full" style="background: #4ade80"></span>
-							<span class="text-[9px] font-black uppercase tracking-[.18em] flex-1" style="color: #374151; font-family: 'Space Grotesk', sans-serif">{tFn('members.online')}</span>
-							<span class="text-[9px] font-bold tabular-nums" style="color: #374151">{memberGroups.ungrouped.length}</span>
+						<div class="group-label">
+							<span class="w-1.5 h-1.5 rounded-full shrink-0 bg-green-400"></span>
+							<span class="gt">{tFn('members.online')}</span>
+							<span class="gc">{memberGroups.ungrouped.length}</span>
 						</div>
 						{#each memberGroups.ungrouped as member (member.userId)}
 							{@const isMe        = member.userId === (user as any)?.id}
 							{@const hasStatus   = !!(member.status?.text || member.status?.emoji)}
 							{@const isSharing   = screenSharingUserIds.has(member.userId)}
 							{@const isStreaming = streamingUserIds.has(member.userId)}
-							<!-- svelte-ignore a11y_no_static_element_interactions -->
-							<svelte:element
-								this={isMe ? 'button' : 'a'}
-								href={isMe ? undefined : `/users/${member.username}`}
-								onclick={isMe ? openStatusModal : undefined}
-								onmouseenter={isSharing && !isMe ? (e: MouseEvent) => showScreenPreview(e, member.userId, member.username, member.avatar, 'left') : undefined}
-								onmouseleave={() => { screenPreview = null }}
-								class="relative w-full flex items-center gap-2.5 px-2 py-2 transition-all group"
-								style="background: {isMe ? 'rgb(var(--nx-accent-2-rgb) / .06)' : 'transparent'}; text-align: left">
-								<span class="absolute left-0 top-0.5 bottom-0.5 w-0.5 opacity-0 group-hover:opacity-100 transition-opacity" style="background: linear-gradient(to bottom, var(--nx-accent-2-strong), var(--nx-cyan))"></span>
-								<div class="relative shrink-0">
+
+							<button type="button"
+							        class="member {isMe ? 'me' : ''}"
+							        onclick={isMe ? openStatusModal : () => goto(`/users/${member.username}`)}
+							        onmouseenter={isSharing && !isMe ? (e: MouseEvent) => showScreenPreview(e, member.userId, member.username, member.avatar, 'left') : undefined}
+							        onmouseleave={() => { screenPreview = null }}>
+								<span class="hover-bar"></span>
+								<div class="avatar-wrap">
 									{#if member.avatar}
-										<img src={member.avatar} alt="" class="w-7 h-7 object-cover" style="outline: 1px solid rgba(255,255,255,.08)" />
+										<img src={member.avatar} alt="" class="avatar object-cover" />
 									{:else}
-										<div class="w-7 h-7 flex items-center justify-center text-[11px] font-black text-white select-none"
-										     style="background: linear-gradient(135deg, #7c3aed80, var(--nx-cyan-deep))">{member.username.charAt(0).toUpperCase()}</div>
+										<div class="avatar bg-linear-to-br from-[#7c3aed80] to-[var(--nx-cyan-deep)]">{member.username.charAt(0).toUpperCase()}</div>
 									{/if}
-									<span class="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 flex items-center justify-center" style="background: #0d0d12">
+									<span class="status-dot">
 										{#if isSharing}
 											<svg style="width:10px;height:10px;color:rgb(96,165,250)" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
 												<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
 											</svg>
 										{:else if isStreaming}
-											<span style="width:8px;height:8px;border-radius:50%;background:#ef4444;animation:pulse 1.5s infinite;display:block"></span>
+											<span class="w-2 h-2 rounded-full bg-red-500 block animate-pulse"></span>
 										{:else}
-											<span class="w-1.5 h-1.5 rounded-full" style="background: #4ade80; box-shadow: 0 0 4px #4ade8088"></span>
+											<span class="d"></span>
 										{/if}
 									</span>
 								</div>
-								<div class="min-w-0 flex-1">
-									<div class="flex items-center gap-1 min-w-0">
-										<span class="text-[11px] font-semibold leading-tight truncate transition-colors group-hover:brightness-125 {buildAnimClass(member)}"
-										      style={buildNameStyle(member, isMe ? 'var(--nx-accent-2-soft2)' : '#9ca3af')}>{member.username}</span>
-										{#if isMe}
-											<span class="shrink-0 text-[8px] font-black uppercase px-1 py-px leading-none" style="background: rgb(var(--nx-accent-2-rgb) / .25); color: var(--nx-accent-2-soft)">vous</span>
-										{/if}
+								<div class="info">
+									<div class="name-row">
+										<span class="name {buildAnimClass(member)}" style={buildNameStyle(member, isMe ? 'var(--nx-accent-2-soft2)' : '#9ca3af')}>{member.username}</span>
+										{#if isMe}<span class="you-tag">{tFn('common.you')}</span>{/if}
 									</div>
 									{#if isSharing || isStreaming}
-										<div class="flex items-center gap-1 mt-0.5">
+										<div class="status-text flex items-center gap-1">
 											{#if isSharing}
-												<span style="display:inline-flex;align-items:center;gap:3px;font-size:9px;font-weight:700;padding:1px 5px;background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.22);color:rgb(96,165,250)">
-													<svg style="width:7px;height:7px" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-													ÉCRAN
-												</span>
+												<span class="text-[9px] font-bold px-1 py-px bg-blue-500/10 border border-blue-500/20 text-blue-400">{tFn('voice.screen_badge')}</span>
 											{/if}
 											{#if isStreaming}
-												<span style="display:inline-flex;align-items:center;gap:3px;font-size:9px;font-weight:700;padding:1px 5px;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.22);color:rgb(248,113,113)">
-													<span style="width:5px;height:5px;border-radius:50%;background:currentColor;animation:pulse 1.5s infinite;display:inline-block"></span>
-													LIVE
-												</span>
+												<span class="text-[9px] font-bold px-1 py-px bg-red-500/10 border border-red-500/20 text-red-400">LIVE</span>
 											{/if}
 										</div>
 									{:else if hasStatus}
-										<div class="text-[10px] truncate leading-tight mt-px" style="color: #4b5563">{member.status?.emoji} {member.status?.text}</div>
+										<div class="status-text">{member.status?.emoji} {member.status?.text}</div>
 									{:else if isMe}
-										<div class="text-[10px] leading-tight mt-px" style="color: #374151">{tFn('common.set_status')}</div>
-									{/if}
-									{#if (isSharing || isStreaming) && hasStatus}
-										<div class="text-[10px] truncate leading-tight" style="color: #374151">{member.status?.emoji} {member.status?.text}</div>
+										<div class="status-text">{tFn('common.set_status')}</div>
 									{/if}
 								</div>
-							</svelte:element>
+							</button>
 						{/each}
 					{/if}
 
-					{#if onlineMembers.length === 0}
-						<div class="flex flex-col items-center gap-2 px-3 py-8">
-							<div class="w-8 h-8 flex items-center justify-center" style="background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.06)">
-								<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" style="color: #374151"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
-							</div>
-							<p class="text-[10px] text-center" style="color: #374151">{tFn('members.none_online')}</p>
-						</div>
-					{/if}
-
-					<!-- ── Offline ───────────────────────────────────────────────── -->
+					<!-- ── Offline members ───────────────────────────────────────── -->
 					{#if offlineMembers.length > 0}
-						<div class="flex items-center gap-2 px-2 pt-4 pb-1.5" style="border-top: 1px solid rgba(255,255,255,.04); margin-top: 8px">
-							<span class="w-1.5 h-1.5 shrink-0" style="background: #374151"></span>
-							<span class="text-[9px] font-black uppercase tracking-[.18em] flex-1" style="color: #2d3748; font-family: 'Space Grotesk', sans-serif">{tFn('members.offline')}</span>
-							<span class="text-[9px] font-bold tabular-nums" style="color: #2d3748">{offlineMembers.length}</span>
+						<div class="group-label">
+							<span class="w-1.5 h-1.5 rounded-full shrink-0 bg-gray-700"></span>
+							<span class="gt">{tFn('members.offline')}</span>
+							<span class="gc">{offlineMembers.length}</span>
 						</div>
 						{#each offlineMembers.slice(0, 10) as member (member.user_id)}
-							<a href="/users/{member.username}"
-							   class="relative flex items-center gap-2.5 px-2 py-1.5 transition-all group"
-							   style="opacity: 0.35">
-								<div class="relative shrink-0">
+							<button type="button"
+							        class="member offline"
+							        onclick={() => goto(`/users/${member.username}`)}>
+								<div class="avatar-wrap">
 									{#if member.avatar}
-										<img src={member.avatar} alt="" class="w-6 h-6 object-cover grayscale" style="outline: 1px solid rgba(255,255,255,.04)" />
+										<img src={member.avatar} alt="" class="avatar grayscale object-cover" />
 									{:else}
-										<div class="w-6 h-6 flex items-center justify-center text-[10px] font-bold select-none" style="background: rgba(255,255,255,.04); color: #4b5563">{member.username.charAt(0).toUpperCase()}</div>
+										<div class="avatar">{member.username.charAt(0).toUpperCase()}</div>
 									{/if}
+									<span class="status-dot"><span class="d offline"></span></span>
 								</div>
-								<span class="text-[11px] truncate group-hover:opacity-100 transition-opacity" style="color: #6b7280; font-family: 'Space Grotesk', sans-serif">{member.username}</span>
-							</a>
+								<div class="info">
+									<div class="name-row">
+										<span class="name">{member.username}</span>
+									</div>
+								</div>
+							</button>
 						{/each}
 						{#if offlineMembers.length > 10}
-							<a href="/members"
-							   class="flex items-center justify-center gap-1 mx-2 my-1 py-1.5 text-[10px] font-bold uppercase tracking-wider transition-colors"
-							   style="color: #374151; border: 1px solid rgba(255,255,255,.05)">
-								{tFn('members.see_all')}
-								<span class="text-[9px]" style="color: #4b5563">({offlineMembers.length})</span>
+							<a href="/members" class="flex items-center justify-center gap-1 mx-2 my-1 py-1.5 text-[10px] font-bold uppercase tracking-wider transition-colors text-gray-700 border border-white/5">
+								{tFn('members.see_all')} <span class="text-[9px] text-gray-600">({offlineMembers.length})</span>
 							</a>
 						{/if}
 					{/if}
@@ -1404,24 +1700,18 @@
 			</div>
 			{:else}
 				<!-- Not logged in — invite card -->
-				<a href="/auth/login" class="guest-members-card" aria-label="Se connecter pour voir les membres">
-
+				<a href="/auth/login" class="guest-members-card" aria-label={tFn('members.guest_aria')}>
 					<!-- Radar animé -->
 					<div class="guest-radar">
 						<div class="guest-radar-ring r1"></div>
 						<div class="guest-radar-ring r2"></div>
 						<div class="guest-radar-ring r3"></div>
-						<!-- Icône centrale -->
 						<div class="guest-radar-core">
 							<svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75">
-								<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-								<circle cx="9" cy="7" r="4"/>
-								<path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
-								<path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+								<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
 							</svg>
 						</div>
 					</div>
-
 					<!-- Avatars fantômes -->
 					<div class="guest-ghosts">
 						{#each ['M','J','A','K','S','T','R','L'] as letter, i}
@@ -1430,33 +1720,22 @@
 						</div>
 						{/each}
 					</div>
-
-					<!-- Live badge + compteur -->
 					<div class="guest-live-row">
 						<span class="guest-live-dot"></span>
 						<span class="guest-live-label">
-							{memberCount > 0 ? `${memberCount} membre${memberCount > 1 ? 's' : ''}` : 'Communauté active'}
+							{memberCount > 0 ? tFn('members.guest_count', { count: memberCount }) : tFn('members.guest_active')}
 						</span>
 					</div>
-
-					<!-- Texte -->
-					<p class="guest-tagline">Connecte-toi pour voir<br>qui est en ligne</p>
-
-					<!-- CTA -->
+					<p class="guest-tagline">{tFn('members.guest_tagline')}</p>
 					<div class="guest-cta">
 						<svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
-							<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
-							<polyline points="10 17 15 12 10 7"/>
-							<line x1="15" y1="12" x2="3" y2="12"/>
+							<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/>
 						</svg>
-						Se connecter
+						{tFn('common.login')}
 					</div>
 				</a>
 			{/if}
-
-			<!-- Version badge — bas du panneau membres -->
-			<div class="shrink-0 px-3 py-2 mt-auto"
-			     style="border-top: 1px solid rgba(255,255,255,.04); background: rgba(0,0,0,.15)">
+			<div class="members-footer">
 				<NodyxVersionBadge version={data.nodyxVersion ?? 'unknown'} variant="footer" />
 			</div>
 		</aside>
@@ -1465,81 +1744,88 @@
 
 	<!-- ══ BOTTOM NAV mobile (lg:hidden) — hidden for banned users ═════════ -->
 	{#if !isBanned}
+	<!-- Fond OPAQUE, et surtout pas `--p-card-bg`. Celui-ci est un fond de CARTE :
+	     six thèmes sur sept sont translucides par construction, dont un à 5%
+	     d'opacité. Une carte translucide posée sur un fond de page est voulue,
+	     une barre FIXE avec du contenu qui défile dessous devient du verre. Le
+	     2026-08-15, on lisait « Dernier message » et « Pokled » au travers, par
+	     dessus les icônes. `--p-bg` est opaque sur les sept thèmes.
+	     Gardé par tests/responsive/bottom-nav.spec.ts. -->
 	<nav class="lg:hidden fixed bottom-0 left-0 right-0 z-45 border-t border-gray-800 flex items-stretch"
-	     style="background: var(--p-card-bg); border-color: var(--p-card-border); padding-bottom: env(safe-area-inset-bottom, 0px)">
+	     style="background: var(--p-bg); border-color: var(--p-card-border); padding-bottom: env(safe-area-inset-bottom, 0px)">
 
 		<!-- Fil d'actu (si connecté) -->
 		{#if user}
-		<a href="/feed" class="flex-1 flex flex-col items-center justify-center py-2 min-h-[56px] gap-0.5 {isActive('/feed') ? 'text-indigo-400' : 'text-gray-500'}">
+		<a href="/feed" class="flex-1 flex flex-col items-center justify-center py-2 min-h-14 gap-0.5 {isActive('/feed') ? 'text-indigo-400' : 'text-gray-500'}">
 			<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" d="M3 12h18M3 6h18M3 18h12"/>
 			</svg>
-			<span class="text-[10px] font-medium">Actu</span>
+			<span class="text-xs font-medium">{tFn('nav.bar_feed')}</span>
 		</a>
 		{/if}
 
 		<!-- Forum -->
-		<a href="/forum" class="flex-1 flex flex-col items-center justify-center py-2 min-h-[56px] gap-0.5 {isActive('/forum') ? 'text-indigo-400' : 'text-gray-500'}">
+		<a href="/forum" class="flex-1 flex flex-col items-center justify-center py-2 min-h-14 gap-0.5 {isActive('/forum') ? 'text-indigo-400' : 'text-gray-500'}">
 			<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
 				<polyline stroke-linecap="round" stroke-linejoin="round" points="9 22 9 12 15 12 15 22"/>
 			</svg>
-			<span class="text-[10px] font-medium">Forum</span>
+			<span class="text-xs font-medium">{tFn('nav.bar_forum')}</span>
 		</a>
 
 		<!-- Chat (si connecté) -->
 		{#if user}
-		<a href="/chat" class="flex-1 flex flex-col items-center justify-center py-2 min-h-[56px] gap-0.5 relative {isActive('/chat') ? 'text-indigo-400' : 'text-gray-500'}">
+		<a href="/chat" class="flex-1 flex flex-col items-center justify-center py-2 min-h-14 gap-0.5 relative {isActive('/chat') ? 'text-indigo-400' : 'text-gray-500'}">
 			<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
 			</svg>
 			{#if unreadCount > 0}
-				<span class="absolute top-1.5 right-[calc(50%-14px)] min-w-[16px] h-4 rounded-full bg-red-500 text-white text-[9px] font-bold px-1 flex items-center justify-center">
+				<span class="absolute top-1.5 right-[calc(50%-14px)] min-w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold px-1 flex items-center justify-center">
 					{unreadCount > 9 ? '9+' : unreadCount}
 				</span>
 			{/if}
-			<span class="text-[10px] font-medium">Chat</span>
+			<span class="text-xs font-medium">{tFn('nav.bar_chat')}</span>
 		</a>
 		{/if}
 
 		<!-- Messages privés (si connecté) -->
 		{#if user}
-		<a href="/dm" class="flex-1 flex flex-col items-center justify-center py-2 min-h-[56px] gap-0.5 relative {isActive('/dm') ? 'text-indigo-400' : 'text-gray-500'}">
+		<a href="/dm" class="flex-1 flex flex-col items-center justify-center py-2 min-h-14 gap-0.5 relative {isActive('/dm') ? 'text-indigo-400' : 'text-gray-500'}">
 			<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-5l-4 4v-4z"/>
 			</svg>
 			{#if dmUnread > 0}
-				<span class="absolute top-1.5 right-[calc(50%-14px)] min-w-[16px] h-4 rounded-full bg-indigo-500 text-white text-[9px] font-bold px-1 flex items-center justify-center">
+				<span class="absolute top-1.5 right-[calc(50%-14px)] min-w-4 h-4 rounded-full bg-indigo-500 text-white text-[9px] font-bold px-1 flex items-center justify-center">
 					{dmUnread > 9 ? '9+' : dmUnread}
 				</span>
 			{/if}
-			<span class="text-[10px] font-medium">DMs</span>
+			<span class="text-xs font-medium">{tFn('nav.bar_dm')}</span>
 		</a>
 		{/if}
 
 		<!-- Bibliothèque -->
-		<a href="/library" class="flex-1 flex flex-col items-center justify-center py-2 min-h-[56px] gap-0.5 {isActive('/library') ? 'text-indigo-400' : 'text-gray-500'}">
+		<a href="/library" class="flex-1 flex flex-col items-center justify-center py-2 min-h-14 gap-0.5 {isActive('/library') ? 'text-indigo-400' : 'text-gray-500'}">
 			<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
 				<path stroke-linecap="round" stroke-linejoin="round" d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
 			</svg>
-			<span class="text-[10px] font-medium">Biblio</span>
+			<span class="text-xs font-medium">{tFn('nav.bar_library')}</span>
 		</a>
 
 		<!-- Annuaire -->
-		<a href="/communities" class="flex-1 flex flex-col items-center justify-center py-2 min-h-[56px] gap-0.5 {isActive('/communities') ? 'text-indigo-400' : 'text-gray-500'}">
+		<a href="/communities" class="flex-1 flex flex-col items-center justify-center py-2 min-h-14 gap-0.5 {isActive('/communities') ? 'text-indigo-400' : 'text-gray-500'}">
 			<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 				<circle cx="12" cy="12" r="10"/>
 				<line x1="2" y1="12" x2="22" y2="12"/>
 				<path stroke-linecap="round" stroke-linejoin="round" d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
 			</svg>
-			<span class="text-[10px] font-medium">Annuaire</span>
+			<span class="text-xs font-medium">{tFn('nav.bar_directory')}</span>
 		</a>
 
 		<!-- Profil / Connexion -->
 		{#if user}
 		<a href="/users/{user.username}"
-		   class="flex-1 flex flex-col items-center justify-center py-2 min-h-[56px] gap-0.5 {$page.url.pathname.startsWith('/users/') ? 'text-indigo-400' : 'text-gray-500'}">
+		   class="flex-1 flex flex-col items-center justify-center py-2 min-h-14 gap-0.5 {page.url.pathname.startsWith('/users/') ? 'text-indigo-400' : 'text-gray-500'}">
 			{#if user.avatar}
 				<img src={user.avatar} class="w-5 h-5 rounded-full object-cover" alt="" />
 			{:else}
@@ -1547,38 +1833,38 @@
 					{user.username.charAt(0).toUpperCase()}
 				</div>
 			{/if}
-			<span class="text-[10px] font-medium">Profil</span>
+			<span class="text-xs font-medium">{tFn('nav.bar_profile')}</span>
 		</a>
 		{:else}
-		<a href="/auth/login" class="flex-1 flex flex-col items-center justify-center py-2 min-h-[56px] gap-0.5 text-gray-500">
+		<a href="/auth/login" class="flex-1 flex flex-col items-center justify-center py-2 min-h-14 gap-0.5 text-gray-500">
 			<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
 				<polyline stroke-linecap="round" stroke-linejoin="round" points="10 17 15 12 10 7"/>
 				<line x1="15" y1="12" x2="3" y2="12"/>
 			</svg>
-			<span class="text-[10px] font-medium">{tFn("common.login")}</span>
+			<span class="text-xs font-medium">{tFn("common.login")}</span>
 		</a>
 		{/if}
 	</nav>
 	{/if}
 </div>
-{/if}<!-- /isOverlayRoute -->
+{/if}<!-- /isBareRoute -->
 
 <!-- ── Status modal ──────────────────────────────────────────────────────── -->
 {#if showStatusModal}
 	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-	<div class="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+	<div class="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-xs"
 		role="presentation"
 		onclick={(e) => { if (e.target === e.currentTarget) showStatusModal = false }}>
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div class="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-sm mx-4 p-5"
 			onclick={(e) => e.stopPropagation()}>
-			<h2 class="text-sm font-bold text-white mb-4">Définir ton statut</h2>
+			<h2 class="text-sm font-bold text-white mb-4">{tFn('status.modal_title')}</h2>
 
 			<!-- Current status preview -->
 			<div class="flex items-center gap-2.5 mb-4 px-3 py-2 bg-gray-800 rounded-xl border border-gray-700">
 				<span class="text-xl w-8 text-center">{statusEmoji || '😶'}</span>
-				<span class="text-sm text-gray-300 flex-1 truncate">{statusText || 'Aucun statut'}</span>
+				<span class="text-sm text-gray-300 flex-1 truncate">{statusText || tFn('status.none')}</span>
 			</div>
 
 			<!-- Emoji + text inputs -->
@@ -1588,14 +1874,14 @@
 					placeholder="😀"
 					bind:value={statusEmoji}
 					maxlength={8}
-					class="w-14 bg-gray-800 border border-gray-700 rounded-lg px-2 py-2 text-center text-lg outline-none focus:border-indigo-600 transition-colors"
+					class="w-14 bg-gray-800 border border-gray-700 rounded-lg px-2 py-2 text-center text-lg outline-hidden focus:border-indigo-600 transition-colors"
 				/>
 				<input
 					type="text"
-					placeholder="Ce que tu fais…"
+					placeholder={tFn('status.placeholder')}
 					bind:value={statusText}
 					maxlength={60}
-					class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 outline-none focus:border-indigo-600 transition-colors"
+					class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 outline-hidden focus:border-indigo-600 transition-colors"
 				/>
 			</div>
 
@@ -1615,14 +1901,14 @@
 			<div class="flex gap-2">
 				{#if myStatus}
 					<button onclick={clearStatus} class="px-3 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-xs text-gray-400 hover:text-white transition-colors">
-						Effacer
+						{tFn('common.clear')}
 					</button>
 				{/if}
 				<button onclick={() => showStatusModal = false} class="px-3 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-xs text-gray-400 hover:text-white transition-colors ml-auto">
-					Annuler
+					{tFn('common.cancel')}
 				</button>
 				<button onclick={saveStatus} class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs text-white font-medium transition-colors">
-					Enregistrer
+					{tFn('common.save')}
 				</button>
 			</div>
 		</div>
@@ -1648,7 +1934,7 @@
 				{/if}
 				<span class="text-xs whitespace-nowrap">
 					<span class="font-bold" style="color: #e2e8f0">{evt.username}</span>
-					<span style="color: #4b5563"> {evt.action === 'join' ? 'a rejoint' : 'a quitté'} </span>
+					<span style="color: #4b5563"> {evt.action === 'join' ? tFn('presence.joined') : tFn('presence.left')} </span>
 					<span style="color: var(--nx-accent-2-soft)"># {evt.channelName}</span>
 				</span>
 				<div class="w-4 h-4 rounded-full flex items-center justify-center shrink-0"
@@ -1679,6 +1965,17 @@
      quand un composant (MessageBody, etc.) demande à ouvrir un lien externe. -->
 <ExternalLinkWarning />
 
+<!-- ── La Scène (partage d'écran) ────────────────────────────────────────────
+     Montée ICI, à la RACINE, et surtout PAS dans VoicePanel : celui-ci vit dans
+     <aside id="galaxy-sidebar">, qui est `fixed` + `z-30` et crée donc un contexte
+     d'empilement. Un enfant en z-[500] y restait prisonnier, et la sidebar des
+     membres (z-30, plus loin dans le DOM) peignait par-dessus la Scène : écran
+     rogné à droite, en-tête de la Scène (boutons Chat / PiP) invisible.
+     À la racine, le plein écran est vraiment plein écran. -->
+{#if $stageOpenStore}
+	<StageView onclose={() => stageOpenStore.set(false)} />
+{/if}
+
 <!-- ── Command Palette ────────────────────────────────────────────────────── -->
 <CommandPalette
 	open={paletteOpen}
@@ -1693,6 +1990,180 @@
 {/if}
 
 <style>
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* ── Main content transition during collapse/expand ──────────────────────── */
+:global(main.app-shell-main) {
+  transition: padding-left .25s cubic-bezier(.4,0,.2,1), margin-right .25s cubic-bezier(.4,0,.2,1);
+}
+
+.layout-dragging :global(main.app-shell-main) {
+  transition: none !important;
+}
+
+@media (min-width: 1024px) {
+  :global(main.app-shell-main) {
+    padding-left: calc(56px + var(--left-panel-width, 220px)) !important;
+  }
+  :global(main.panel-collapsed) {
+    padding-left: 56px !important;
+  }
+}
+
+@media (min-width: 1280px) {
+  :global(main.app-shell-main) {
+    margin-right: var(--right-panel-width, 220px) !important;
+  }
+  :global(main.members-collapsed) {
+    margin-right: 0px !important;
+  }
+}
+
+/* ── Sketch 001: Discord two-tier sidebar — exact sketch CSS, scoped ────── */
+/* Sur mobile le rail et le panneau forment un TIROIR qui recouvre la page.
+   Les 48px reserves a la barre du haut y sont une bande morte : le tiroir a
+   sa propre croix de fermeture, il n'a pas besoin de laisser voir la barre.
+   Au-dessus de lg ils redeviennent des colonnes, sous la barre. */
+.nodyx-sb .rail {
+  position: fixed; top: 0; bottom: 0; left: 0; width: 56px;
+  background: #000; border-right: 1px solid #111;
+  display: flex; flex-direction: column; align-items: center; padding: 8px 0; gap: 4px; z-index: 40;
+}
+.nodyx-sb .rail .scroll {
+  flex: 1; overflow-y: auto; width: 100%; display: flex; flex-direction: column;
+  align-items: center; gap: 4px; padding: 4px 0; scrollbar-width: none;
+}
+.nodyx-sb .rail .scroll::-webkit-scrollbar { display: none; }
+.nodyx-sb .rail .icon {
+  width: 32px; height: 32px; border-radius: 6px; shrink: 0; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; position: relative;
+  transition: all .12s; font-weight: 700; font-size: 12px; font-family: 'JetBrains Mono', monospace;
+  text-decoration: none;
+}
+.nodyx-sb .rail .icon.logo { background: #6366f1; color: #fff; }
+.nodyx-sb .rail .icon.logo:hover { border-radius: 8px; }
+.nodyx-sb .rail .icon.net { background: #1a1a1a; color: #9ca3af; border: 1px solid #222; }
+.nodyx-sb .rail .icon.net:hover { background: #222; border-radius: 8px; }
+.nodyx-sb .rail .icon.net.active { background: #222; color: #e2e8f0; border-color: #333; }
+.nodyx-sb .rail .icon.add { background: transparent; border: 1px dashed #333; color: #4b5563; font-size: 15px; font-weight: 300; }
+.nodyx-sb .rail .icon.add:hover { border-color: #6366f1; color: #6366f1; border-radius: 8px; }
+.nodyx-sb .rail .icon.docs { background: transparent; color: #4b5563; border: none; margin-top: auto; }
+.nodyx-sb .rail .icon.docs:hover { background: #111; color: #818cf8; border-radius: 8px; }
+
+.nodyx-sb .panel {
+  position: fixed; top: 0; bottom: 0; left: 56px;
+  width: var(--left-panel-width, 220px);
+  background: #0a0a0a; border-right: 1px solid #111;
+  z-index: 39; display: flex; flex-direction: column;
+  transform: translateX(0); transition: transform .25s cubic-bezier(.4,0,.2,1), width .25s cubic-bezier(.4,0,.2,1);
+}
+
+/* Au-dessus de lg le rail et le panneau ne sont plus un tiroir mais deux
+   colonnes permanentes : ils reprennent leur place SOUS la barre du haut,
+   qui doit rester visible et cliquable. Cette regle DOIT venir apres les
+   deux definitions ci-dessus : a specificite egale, c'est l'ordre qui
+   tranche, et placee avant elle etait purement et simplement annulee. */
+@media (min-width: 1024px) {
+  .nodyx-sb .rail,
+  .nodyx-sb .panel { top: 48px; }
+}
+.nodyx-sb .panel.collapsed { transform: translateX(-100%); }
+.nodyx-sb .panel.dragging {
+  transition: none !important;
+}
+.nodyx-sb .panel .panel-head {
+  padding: 12px 14px; border-bottom: 1px solid #111; display: flex; align-items: center; gap: 8px;
+  font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 13px; color: #e2e8f0;
+}
+.nodyx-sb .panel .panel-head .community-name { letter-spacing: -.01em; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nodyx-sb .panel .panel-head .close {
+  margin-left: auto; cursor: pointer; color: #4b5563; padding: 2px 6px; border-radius: 4px;
+  font-size: 16px; transition: all .12s; line-height: 1; background: none; border: none;
+}
+.nodyx-sb .panel .panel-head .close:hover { background: #111; color: #e2e8f0; }
+.nodyx-sb .panel .panel-head .head-icon {
+  shrink: 0; color: #4b5563; cursor: pointer; padding: 4px; border-radius: 4px;
+  transition: all .12s; display: flex; align-items: center; justify-content: center;
+  text-decoration: none;
+}
+.nodyx-sb .panel .panel-head .head-icon:hover { background: #111; color: #818cf8; }
+
+.nodyx-sb .panel .panel-scroll {
+  flex: 1; overflow-y: auto; padding: 6px 8px 12px;
+  scrollbar-width: thin; scrollbar-color: #1a1a1a transparent;
+}
+.nodyx-sb .panel .panel-scroll::-webkit-scrollbar { width: 4px; }
+.nodyx-sb .panel .panel-scroll::-webkit-scrollbar-thumb { background: #1a1a1a; border-radius: 2px; }
+.nodyx-sb .panel .panel-scroll::-webkit-scrollbar-track { background: transparent; }
+.nodyx-sb .panel .panel-scroll .nav-section {
+  padding: 6px 0; display: flex; flex-direction: column; gap: 1px;
+  border-bottom: 1px solid #111; margin-bottom: 4px;
+}
+.nodyx-sb .panel .panel-scroll .nav-link {
+  border-radius: 4px; padding: 6px 10px; font-family: 'JetBrains Mono', monospace;
+  font-size: 12px; color: #6b7280; gap: 10px; display: flex; align-items: center; cursor: pointer;
+  transition: all .12s; text-decoration: none;
+}
+.nodyx-sb .panel .panel-scroll .nav-link:hover { background: #111; color: #e2e8f0; }
+.nodyx-sb .panel .panel-scroll .nav-link.active { background: rgba(99,102,241,.12); color: #818cf8; }
+
+.nodyx-sb .panel .panel-scroll .nav-link .badge { margin-left: auto; background: #ef4444; color: #fff; font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 8px; }
+.nodyx-sb .panel .panel-scroll .channel-group-label {
+  font-family: 'JetBrains Mono', monospace; font-size: 9px; padding: 10px 8px 4px;
+  letter-spacing: .15em; font-weight: 700; color: #333;
+}
+.nodyx-sb .panel .panel-scroll .channel {
+  border-radius: 4px; padding: 5px 8px; font-family: 'JetBrains Mono', monospace;
+  font-size: 12px; color: #6b7280; gap: 6px; display: flex; align-items: center; cursor: pointer;
+  transition: all .12s; text-decoration: none;
+}
+.nodyx-sb .panel .panel-scroll .channel:hover { background: #111; color: #e2e8f0; }
+.nodyx-sb .panel .panel-scroll .channel.active { background: rgba(99,102,241,.12); color: #818cf8; }
+.nodyx-sb .panel .panel-bottom {
+  padding: 8px 10px; border-top: 1px solid #111; background: #0d0d12;
+  display: flex; align-items: center; gap: 8px;
+}
+.nodyx-sb .panel .panel-bottom .user-group {
+  display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0;
+  cursor: pointer; padding: 4px 6px; margin: -4px -6px; border-radius: 6px;
+  transition: background .12s; background: none; border: none; text-align: left;
+}
+.nodyx-sb .panel .panel-bottom .user-group:hover { background: #111; }
+.nodyx-sb .panel .panel-bottom .user-avatar {
+  width: 32px; height: 32px; border-radius: 6px; shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 12px; color: #fff; font-family: 'JetBrains Mono', monospace;
+  background: linear-gradient(135deg, #6366f1, #3730a3);
+  position: relative; overflow: hidden;
+}
+.nodyx-sb .panel .panel-bottom .user-avatar .status {
+  position: absolute; bottom: -2px; right: -2px; width: 10px; height: 10px;
+  border-radius: 50%; background: #22c55e; border: 2px solid #0d0d12;
+}
+.nodyx-sb .panel .panel-bottom .user-name {
+  font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 12px;
+  color: #e2e8f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.nodyx-sb .panel .panel-bottom .user-role {
+  font-family: 'JetBrains Mono', monospace; font-size: 9px; font-weight: 700;
+  color: #818cf8; text-transform: uppercase; letter-spacing: .1em;
+}
+.nodyx-sb .panel .panel-bottom .quick-icon {
+  shrink: 0; color: #333; cursor: pointer; padding: 6px; border-radius: 4px;
+  transition: all .12s; display: flex; align-items: center; justify-content: center;
+}
+.nodyx-sb .panel .panel-bottom .quick-icon:hover { background: #111; color: #818cf8; }
+
+
+/* Mobile drawer overrides */
+@media (max-width: 1023px) {
+  .nodyx-sb .rail { display: none; }
+  .nodyx-sb .panel { left: 0; width: 280px; z-index: 55; }
+}
+
 /* ── Guest members sidebar ───────────────────────────────────────────────── */
 .guest-members-card {
 	display: flex;
@@ -1728,7 +2199,7 @@
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	flex-shrink: 0;
+	shrink: 0;
 }
 .guest-radar-ring {
 	position: absolute;
@@ -1811,7 +2282,7 @@
 	background: #4ade80;
 	box-shadow: 0 0 6px rgba(74,222,128,0.6);
 	animation: guest-live-pulse 1.8s ease-in-out infinite;
-	flex-shrink: 0;
+	shrink: 0;
 }
 @keyframes guest-live-pulse {
 	0%, 100% { box-shadow: 0 0 6px rgba(74,222,128,0.6); }
@@ -1864,26 +2335,7 @@
 }
 
 /* Animated equalizer bars — shown when a member is speaking */
-.vc-wave-bars {
-	display: flex;
-	align-items: flex-end;
-	gap: 2px;
-	height: 12px;
-	width: 14px;
-}
-.vc-bar {
-	display: block;
-	width: 2.5px;
-	background: #4ade80;
-	border-radius: 1px;
-	transform-origin: bottom center;
-	animation: vc-wave 0.65s ease-in-out infinite;
-	height: 100%;
-}
-@keyframes vc-wave {
-	0%, 100% { transform: scaleY(0.25); opacity: 0.55 }
-	50%       { transform: scaleY(1);    opacity: 1    }
-}
+
 
 /* ── Layout channel sub-labels (Texte / Vocal) ───────────────────────────── */
 .lch-sublabel {
@@ -1893,11 +2345,11 @@
 	text-transform: uppercase; letter-spacing: .16em;
 	color: #374151;
 }
-.lch-sublabel svg { width: 10px; height: 10px; flex-shrink: 0; }
+.lch-sublabel svg { width: 10px; height: 10px; shrink: 0; }
 .lch-sublabel--voice { color: #14532d; margin-top: 4px; }
 .lch-sublabel--voice svg { stroke: #166834; }
 
-.lch-voice-ico { width: 14px; height: 14px; flex-shrink: 0; transition: stroke .15s; }
+.lch-voice-ico { width: 14px; height: 14px; shrink: 0; transition: stroke .15s; }
 
 /* ── Layout channel items — unread glow ──────────────────────────────────── */
 .lch-item {
@@ -1955,7 +2407,7 @@
 }
 
 .lch-badge {
-	flex-shrink: 0;
+	shrink: 0;
 	min-width: 15px;
 	height: 15px;
 	padding: 0 4px;
@@ -1972,4 +2424,624 @@
 	from { transform: scale(0); opacity: 0; }
 	to   { transform: scale(1); opacity: 1; }
 }
+
+/* ── Language view (state-swapped, no route) ────────────────────────────── */
+.lang-view-wrap {
+    background: rgba(6, 6, 10, 0.85);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    color: #e2e8f0;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+/* ── Top bar icon buttons + auth buttons ─────────────────────────────────── */
+.nx-icon-btn {
+    color: #6b7280;
+    background: transparent;
+    border: 1px solid transparent;
+}
+.nx-icon-btn:hover {
+    color: #d1d5db;
+    background: rgba(255,255,255,0.05);
+    border-color: rgba(255,255,255,0.06);
+}
+.nx-icon-btn:active { transform: scale(0.94); }
+.nx-icon-btn.active {
+    color: var(--nx-accent-2-soft, #818cf8);
+    background: rgba(var(--nx-accent-2-rgb, 99, 102, 241), 0.08);
+    border-color: rgba(var(--nx-accent-2-rgb, 99, 102, 241), 0.2);
+}
+.nx-icon-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(var(--nx-accent-rgb, 99, 102, 241), 0.4);
+}
+/* Admin pill — uses .nx-icon-btn.active styles */
+a.nx-icon-btn[class*="active"],
+.nx-icon-btn.active {
+    color: var(--nx-accent-2-soft, #818cf8);
+}
+/* Admin pill in top bar */
+.nx-admin-pill {
+    color: #4b5563;
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.06);
+}
+.nx-admin-pill:hover {
+    color: #d1d5db;
+    background: rgba(255,255,255,0.04);
+    border-color: rgba(255,255,255,0.12);
+}
+.nx-admin-pill.active {
+    color: var(--nx-accent-2-soft, #818cf8);
+    background: rgba(var(--nx-accent-2-rgb, 99, 102, 241), 0.08);
+    border-color: rgba(var(--nx-accent-2-rgb, 99, 102, 241), 0.3);
+}
+/* Auth buttons (Sign in / Register) */
+.nx-auth-btn {
+    color: #9ca3af;
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.08);
+}
+.nx-auth-btn:hover {
+    color: #f3f4f6;
+    background: rgba(255,255,255,0.05);
+    border-color: rgba(255,255,255,0.14);
+}
+.nx-auth-btn:active { transform: scale(0.97); }
+.nx-auth-btn--primary {
+    color: #fff;
+    background: var(--nx-accent-2-strong, #6366f1);
+    border-color: transparent;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.2), 0 0 12px rgba(var(--nx-accent-2-rgb, 99, 102, 241), 0.25);
+}
+.nx-auth-btn--primary:hover {
+    background: var(--nx-accent-2-strong, #6366f1);
+    filter: brightness(1.1);
+    border-color: transparent;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.25), 0 0 18px rgba(var(--nx-accent-2-rgb, 99, 102, 241), 0.4);
+}
+.nx-auth-btn--primary:active { transform: scale(0.97); }
+
+.lang-nav-btn {
+    border-radius: 6px;
+    transition: color 200ms cubic-bezier(0.25, 0.1, 0.25, 1),
+                background 200ms cubic-bezier(0.25, 0.1, 0.25, 1),
+                transform 100ms ease-out;
+}
+.lang-nav-btn:hover {
+    color: #9ca3af !important;
+    background: rgba(255,255,255,0.05);
+}
+.lang-nav-btn:active { transform: scale(0.95); }
+.lang-nav-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(var(--nx-accent-rgb), 0.4);
+}
+.lang-back {
+    transition: all 200ms cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+.lang-back:hover { color: #fff; border-color: rgba(255,255,255,0.25); }
+.lang-back:active { transform: scale(0.98); }
+.lang-back:focus-visible { outline: none; border-color: var(--nx-accent); }
+.lang-card {
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.06);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+}
+.lang-icon {
+    border-color: rgba(var(--nx-accent-rgb), 0.2);
+    background: rgba(var(--nx-accent-rgb), 0.1);
+    color: var(--nx-accent-soft);
+}
+.lang-title {
+    font-family: 'Space Grotesk', sans-serif;
+    letter-spacing: -0.03em;
+}
+.lang-label {
+    font-family: 'Space Grotesk', sans-serif;
+    letter-spacing: -0.005em;
+}
+.lang-segments {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255,255,255,.06) transparent;
+}
+.lang-segments::-webkit-scrollbar { width: 5px; position: absolute; }
+.lang-segments::-webkit-scrollbar-track { background: transparent; }
+.lang-segments::-webkit-scrollbar-thumb { background: rgba(255,255,255,.06); border-radius: 99px; }
+.lang-segments::-webkit-scrollbar-thumb:hover { background: rgba(var(--nx-accent-rgb), 0.4); }
+.lang-seg {
+    transition: all 300ms cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+.lang-seg::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 2px;
+    background: linear-gradient(180deg, var(--nx-accent), var(--nx-accent-2));
+    opacity: 0;
+    transform: translateX(-100%);
+    transition: all 300ms cubic-bezier(0.25, 0.1, 0.25, 1);
+    box-shadow: 0 0 8px var(--nx-accent);
+}
+.lang-seg:hover {
+    border-color: rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.04);
+}
+.lang-seg:active {
+    transform: scale(0.98);
+    background: rgba(255, 255, 255, 0.05);
+    transition: transform 100ms ease-out, background 100ms ease-out;
+}
+.lang-seg:focus-visible {
+    outline: none;
+    border-color: var(--nx-accent);
+    box-shadow: 0 0 0 3px rgba(var(--nx-accent-rgb), 0.3);
+}
+.lang-seg.active {
+    border-color: #4f46e5;
+    background: #4f46e5;
+}
+.lang-seg.active::before { opacity: 1; transform: translateX(0); }
+.lang-seg.active .text-slate-200 { color: #fff; }
+.lang-seg.active .lang-seg-check { color: #fff; }
+.lang-seg-check {
+    color: var(--nx-accent);
+    transform: scale(0);
+    transition: transform 350ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.lang-seg.active .lang-seg-check { transform: scale(1); }
+.lang-success {
+    animation: lang-success-in 200ms ease-out;
+}
+@keyframes lang-success-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Reduced motion ──────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+    .lang-back,
+    .lang-seg,
+    .lang-seg::before,
+    .lang-seg-check,
+    .lang-success {
+        transition: none !important;
+        animation: none !important;
+        transform: none !important;
+    }
+}
+
+/* ── Members Sidebar (members-c) ─────────────────────────────────────────── */
+.members-c {
+  position: fixed;
+  right: 0;
+  top: 48px;
+  bottom: 0;
+  width: var(--right-panel-width, 220px);
+  background: #0d0d12;
+  border-left: 1px solid rgba(255, 255, 255, 0.05);
+  /* PAS de `display: flex` ici : ce sélecteur scopé (spécificité + hash Svelte)
+     écrasait le `hidden` de Tailwind et la sidebar restait visible sous 1280px,
+     superposée au contenu sur mobile. On laisse Tailwind piloter l'affichage
+     (`hidden xl:flex` sur l'aside) ; flex-direction ne s'applique que quand
+     Tailwind a mis display:flex à >=1280px. */
+  flex-direction: column;
+  z-index: 30;
+  transition: transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1), width 280ms cubic-bezier(0.34, 1.56, 0.64, 1), opacity 200ms ease-out;
+  will-change: transform, width;
+  overflow: hidden;
+}
+
+.members-c.dragging {
+  transition: none !important;
+}
+
+.members-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: -1;
+}
+.members-bg-overlay {
+  position: absolute;
+  inset: 0;
+  background: #0d0d12;
+  z-index: -1;
+}
+
+/* Lisibilité du texte/avatars quand un fond d'image est actif : la teinte de
+   l'overlay assure l'essentiel, ce filet supplémentaire évite que le texte se
+   perde sur les zones les plus claires d'une image chargée. */
+.members-c.has-bg .members-header .label,
+.members-c.has-bg .members-header .online-num,
+.members-c.has-bg .guest-members-card {
+  text-shadow: 0 1px 4px rgba(0, 0, 0, .85);
+}
+.members-c.has-bg .members-header {
+  background: rgba(13, 13, 18, .35);
+  backdrop-filter: blur(3px);
+}
+
+.members-c.collapsed {
+  width: 0;
+  border-left-color: transparent;
+  pointer-events: none;
+}
+
+/* Poignee de redimensionnement des panneaux.
+   MASQUEE sous lg : redimensionner n'a de sens que pour des COLONNES, or sous ce
+   point de rupture le panneau est un TIROIR. Elle y restait pourtant, invisible,
+   large de 6px et haute de tout l'ecran, a intercepter les touchers au bord.
+   L'audit du 15/08 la remontait comme la pire cible tactile du produit
+   (6 x 752px). Au doigt, elle est de toute facon inattrapable.
+   Elargie a 10px sur grand ecran : 6px se rate a la souris, et comme elle est
+   transparente, l'elargir ne change rien a l'apparence. */
+.panel .edge-handle,
+.members-c .edge-handle {
+  display: none;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  cursor: ew-resize;
+  z-index: 10;
+  background: transparent;
+  transition: background-color 120ms ease-out, transform 80ms ease-out;
+  border: none;
+  padding: 0;
+}
+
+.panel .edge-handle {
+  right: 0;
+}
+
+.members-c .edge-handle {
+  left: 0;
+}
+
+/* La poignee ne sert que sur de vraies COLONNES. Cette reprise DOIT venir
+   apres la regle `display: none` ci-dessus : a specificite egale c'est
+   l'ordre qui tranche, et placee avant elle etait purement annulee (piege
+   deja rencontre le 15/08 sur le `top` du tiroir, dans cette meme feuille). */
+@media (min-width: 1024px) {
+  .panel .edge-handle,
+  .members-c .edge-handle { display: block; }
+}
+
+.panel .edge-handle:hover,
+.members-c .edge-handle:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.panel .edge-handle:active,
+.members-c .edge-handle:active {
+  transform: scaleX(1.1);
+}
+
+.panel .edge-handle.dragging-past-boundary,
+.members-c .edge-handle.dragging-past-boundary {
+  transform: scaleX(1.1);
+  opacity: 0.7;
+  background: rgba(239, 68, 68, 0.15) !important;
+}
+
+.members-c .members-header {
+  height: 48px;
+  padding: 0 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.02);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  shrink: 0;
+  overflow: hidden;
+}
+
+.members-c.collapsed .members-header {
+  padding: 0;
+  justify-content: center;
+  transition: padding 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.members-c .members-header .label {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: #374151;
+}
+
+.members-c.collapsed .members-header .label {
+  opacity: 0;
+  transform: translateX(-8px);
+  transition: opacity 200ms ease-out, transform 200ms ease-out;
+}
+
+.members-c .members-header .online-count {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.members-c.collapsed .members-header .online-count {
+  opacity: 0;
+  transform: translateX(-8px);
+  transition: opacity 200ms ease-out, transform 200ms ease-out;
+}
+
+.members-c .members-header .online-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4ade80;
+  box-shadow: 0 0 8px #4ade8088;
+}
+
+.members-c .members-header .online-num {
+  font-size: 10px;
+  font-weight: 700;
+  color: #4ade80;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.members-c .members-header .toggle-btn {
+  background: transparent;
+  border: none;
+  color: #4b5563;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 120ms ease-out, background-color 120ms ease-out, transform 80ms ease-out;
+}
+
+.members-c .members-header .toggle-btn:hover {
+  color: #818cf8;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.members-c .members-header .toggle-btn:active {
+  transform: scale(0.95);
+}
+
+.members-c .members-header .toggle-btn svg {
+  width: 14px;
+  height: 14px;
+  transition: transform 320ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.members-c.collapsed .members-header .toggle-btn svg {
+  transform: rotate(180deg);
+}
+
+.members-c .members-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.06) transparent;
+}
+
+/* Pied de la sidebar membres : le badge version est centré (avant ce wrapper il
+   était un enfant flex nu, donc collé au bord gauche = décentré). Bordure haute
+   comme l'en-tête, épinglé en bas (flex-shrink: 0). */
+.members-c .members-footer {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: center;
+  padding: 8px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.members-c .scroll-inner {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.members-c .group-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 8px 6px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 9px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: #374151;
+  overflow: hidden;
+}
+
+.members-c.collapsed .group-label {
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+  transition: opacity 200ms ease-out, transform 200ms ease-out;
+}
+
+.members-c .group-label .gt {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.members-c .group-label .gc {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+}
+
+.members-c .member {
+  position: relative;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease-out, transform 80ms ease-out;
+}
+
+.members-c .member:active {
+  transform: scale(0.98);
+}
+
+.members-c.collapsed .member {
+  justify-content: center;
+  padding: 6px 0;
+  transition: padding 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.members-c .member:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.members-c .member.me {
+  background: rgba(99, 102, 241, 0.06);
+}
+
+.members-c .member.offline {
+  opacity: 0.35;
+}
+
+.members-c .member .hover-bar {
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+  background: linear-gradient(to bottom, var(--nx-accent-2-strong), var(--nx-cyan));
+  opacity: 0;
+  transition: opacity 180ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.members-c .member:hover .hover-bar {
+  opacity: 1;
+}
+
+.members-c.collapsed .member .hover-bar {
+  opacity: 0;
+}
+
+.members-c .member .avatar-wrap {
+  position: relative;
+  shrink: 0;
+}
+
+.members-c .member .avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 900;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  user-select: none;
+}
+
+.members-c .member .status-dot {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #0d0d12;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.members-c .member .status-dot .d {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4ade80;
+  box-shadow: 0 0 4px #4ade8088;
+}
+
+.members-c .member .status-dot .d.offline {
+  background: #374151;
+  box-shadow: none;
+}
+
+.members-c .member .info {
+  flex: 1;
+  min-w: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.members-c.collapsed .member .info {
+  opacity: 0;
+  transform: translateX(-8px);
+  pointer-events: none;
+  transition: opacity 200ms ease-out, transform 200ms ease-out;
+}
+
+.members-c .member .name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-w: 0;
+}
+
+.members-c .member .name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #9ca3af;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.members-c .member.me .name {
+  color: var(--nx-accent-2-soft2);
+}
+
+.members-c .member .you-tag {
+  font-size: 8px;
+  font-weight: 900;
+  text-transform: uppercase;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(99, 102, 241, 0.25);
+  color: var(--nx-accent-2-soft);
+  line-height: 1;
+  shrink: 0;
+}
+
+.members-c .member .status-text {
+  font-size: 10px;
+  color: #374151;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.members-c .member.me .status-text {
+  color: #4b5563;
+}
+
+
 </style>

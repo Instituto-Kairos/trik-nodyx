@@ -24,13 +24,24 @@
 
 use crate::{
     ConsumerId, Layer, MediaEngine, MediaError, ParticipantId, ProducerId, RoomId,
-    RouterHandle, TrackKind, TransportHandle,
+    RouterHandle, SignalingBlob, TrackKind, TransportHandle,
 };
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Mutex, MutexGuard};
 
 // ── Mode & configuration ────────────────────────────────────────────────────
+
+/// Direction d'un transport WebRTC côté client. mediasoup-client fixe la
+/// direction à la création (send XOR recv) et un transport client = un
+/// transport serveur : chaque participant SFU a donc DEUX transports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    /// Le participant émet (publish) sur ce transport.
+    Send,
+    /// Le participant reçoit (subscribe) sur ce transport.
+    Recv,
+}
 
 /// Mode de distribution d'un salon : maillage P2P direct, ou SFU centralisé.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,6 +95,9 @@ pub enum VoiceError {
     NotInSfu,
     /// Souscription à une publication inexistante.
     NoSuchPublication,
+    /// Tentative de fermer une publication qu'on ne possède pas (arrêt d'un flux
+    /// appartenant à autrui : refusé).
+    NotOwner,
     /// Réglage de couche sur une publication à laquelle on n'est pas abonné.
     NotSubscribed,
     /// Le moteur média a échoué (remonté tel quel pour diagnostic).
@@ -98,6 +112,7 @@ impl fmt::Display for VoiceError {
             VoiceError::NotInRoom => f.write_str("absent du salon"),
             VoiceError::NotInSfu => f.write_str("participant pas en mode SFU"),
             VoiceError::NoSuchPublication => f.write_str("publication inexistante"),
+            VoiceError::NotOwner => f.write_str("publication appartenant à un autre participant"),
             VoiceError::NotSubscribed => f.write_str("pas abonné à cette publication"),
             VoiceError::Engine(e) => write!(f, "moteur média : {e}"),
         }
@@ -119,11 +134,10 @@ impl From<MediaError> for VoiceError {
 pub struct JoinOutcome {
     /// Mode effectif du salon (le client sait s'il monte une PC mesh ou SFU).
     pub mode: Mode,
-    /// Transport SFU du joiner (présent seulement en mode SFU).
-    pub transport: Option<TransportHandle>,
-    /// AUTRES participants qui viennent d'être basculés en SFU par cette arrivée
-    /// (franchissement du seuil) → à notifier `voice:mode=sfu` (§17-B).
-    pub migrated: Vec<(ParticipantId, TransportHandle)>,
+    /// AUTRES participants qui viennent d'être basculés en SFU par cette
+    /// arrivée (franchissement du seuil) → à notifier `voice:mode=sfu`
+    /// (§17-B). Chacun récupère ensuite SES params par direction.
+    pub migrated: Vec<ParticipantId>,
 }
 
 /// Résultat d'une bascule/migration vers SFU.
@@ -131,8 +145,17 @@ pub struct JoinOutcome {
 pub struct SfuMigration {
     /// `true` si on vient de créer le router (première bascule du salon).
     pub switched_to_sfu: bool,
-    /// Transports provisionnés lors de cette migration (à annoncer aux clients).
-    pub transports: Vec<(ParticipantId, TransportHandle)>,
+    /// Participants provisionnés (send+recv) lors de cette migration.
+    pub migrated: Vec<ParticipantId>,
+}
+
+/// Ligne d'audit réseau d'un transport (diagnostic dev : IP/ICE/perte).
+/// `stats` est un blob opaque du moteur (le métier ne le lit pas).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransportAudit {
+    pub participant: ParticipantId,
+    pub direction: Direction,
+    pub stats: SignalingBlob,
 }
 
 /// Vue d'une publication (pour l'event `voice:publications`, §17-A).
@@ -143,14 +166,53 @@ pub struct PublicationInfo {
     pub owner: ParticipantId,
 }
 
+/// Vue d'un ABONNEMENT (diagnostic) : qui consomme quoi, et dans quel état.
+/// Un consumer en pause n'envoie rien : côté débit, c'est indiscernable d'un
+/// consumer qui n'existe pas. Sans cette vue, ces deux pannes se confondent.
+#[derive(Debug, Clone)]
+pub struct SubscriptionInfo {
+    pub subscriber: ParticipantId,
+    pub producer: ProducerId,
+    pub consumer: ConsumerId,
+    /// Blob opaque du moteur : kind, paused, producerPaused…
+    pub state: SignalingBlob,
+}
+
 // ── État interne ────────────────────────────────────────────────────────────
 
-#[derive(Default)]
 struct Participant {
-    /// Transport SFU du participant (absent tant qu'on est en mesh).
-    transport: Option<TransportHandle>,
+    /// Transport d'ÉMISSION (publish) — absent tant qu'on est en mesh.
+    send_transport: Option<TransportHandle>,
+    /// Transport de RÉCEPTION (subscribe) — absent tant qu'on est en mesh.
+    recv_transport: Option<TransportHandle>,
     /// Ce que ce participant consomme : publication → consumer.
     subscriptions: HashMap<ProducerId, ConsumerId>,
+    /// Dernier heartbeat (secs). u64::MAX = frais (jamais vu) → jamais évincé
+    /// tant que l'appelant n'a pas `touch()`é au moins une fois.
+    last_seen: u64,
+}
+
+impl Default for Participant {
+    fn default() -> Self {
+        Self {
+            send_transport: None,
+            recv_transport: None,
+            subscriptions: HashMap::new(),
+            last_seen: u64::MAX,
+        }
+    }
+}
+
+impl Participant {
+    fn transport(&self, d: Direction) -> Option<&TransportHandle> {
+        match d {
+            Direction::Send => self.send_transport.as_ref(),
+            Direction::Recv => self.recv_transport.as_ref(),
+        }
+    }
+    fn in_sfu(&self) -> bool {
+        self.send_transport.is_some() && self.recv_transport.is_some()
+    }
 }
 
 struct Publication {
@@ -165,6 +227,20 @@ struct RoomState {
     screensharing: bool,
     /// Router du moteur : présent ⇔ le salon est passé en SFU (et y reste, cf §4).
     router: Option<RouterHandle>,
+}
+
+/// Un flux (`producer`) disparaît : retire de TOUS les participants leur abonnement
+/// à ce flux (il est devenu un fantôme : un consumer qui lit un producer fermé) et
+/// renvoie les [`ConsumerId`] correspondants, à fermer côté moteur. Sans ça, ces
+/// abonnements et leurs consumers s'accumulent tant que le salon vit = fuite.
+fn drop_subscribers_of(state: &mut RoomState, producer: &ProducerId) -> Vec<ConsumerId> {
+    let mut orphaned = Vec::new();
+    for p in state.participants.values_mut() {
+        if let Some(c) = p.subscriptions.remove(producer) {
+            orphaned.push(c);
+        }
+    }
+    orphaned
 }
 
 // ── Le service ──────────────────────────────────────────────────────────────
@@ -205,6 +281,33 @@ impl<E: MediaEngine> VoiceService<E> {
         self.rooms().get(room).map_or(0, |s| s.participants.len())
     }
 
+    /// Rafraîchit le heartbeat d'un participant (secs). Retourne false s'il est
+    /// absent. Le clock est INJECTÉ (le métier reste sans horloge) : c'est le
+    /// daemon qui fournit `now`, appelé au join et à chaque heartbeat client.
+    pub fn touch(&self, room: &RoomId, participant: &ParticipantId, now_secs: u64) -> bool {
+        let mut rooms = self.rooms();
+        match rooms.get_mut(room).and_then(|s| s.participants.get_mut(participant)) {
+            Some(p) => { p.last_seen = now_secs; true }
+            None => false,
+        }
+    }
+
+    /// Participants dont le dernier heartbeat est antérieur à `cutoff_secs`
+    /// (= à évincer). Les frais (jamais `touch`és, last_seen = MAX) ne sont
+    /// jamais renvoyés. Pur/sync : le daemon appelle ensuite `leave` sur chacun.
+    pub fn stale(&self, cutoff_secs: u64) -> Vec<(RoomId, ParticipantId)> {
+        let rooms = self.rooms();
+        let mut out = Vec::new();
+        for (room, state) in rooms.iter() {
+            for (pid, p) in &state.participants {
+                if p.last_seen < cutoff_secs {
+                    out.push((room.clone(), pid.clone()));
+                }
+            }
+        }
+        out
+    }
+
     /// Publications en cours dans un salon (pour `voice:publications`).
     pub fn publications(&self, room: &RoomId) -> Vec<PublicationInfo> {
         let rooms = self.rooms();
@@ -222,6 +325,37 @@ impl<E: MediaEngine> VoiceService<E> {
             .collect()
     }
 
+    /// Audit réseau du salon : pour chaque transport de chaque participant,
+    /// le blob de stats du moteur (mediasoup : IP:port réelles, état ICE,
+    /// bitrate, perte). Outil de diagnostic dev. Salon absent → vecteur vide.
+    pub async fn audit(&self, room: &RoomId) -> Vec<TransportAudit> {
+        // Snapshot des handles sous verrou (pas d'await pendant qu'on tient le lock).
+        let handles: Vec<(ParticipantId, Direction, TransportHandle)> = {
+            let rooms = self.rooms();
+            let Some(state) = rooms.get(room) else { return Vec::new() };
+            let mut v = Vec::new();
+            for (pid, p) in &state.participants {
+                if let Some(t) = p.send_transport.clone() {
+                    v.push((pid.clone(), Direction::Send, t));
+                }
+                if let Some(t) = p.recv_transport.clone() {
+                    v.push((pid.clone(), Direction::Recv, t));
+                }
+            }
+            v
+        };
+        // Appels moteur hors verrou.
+        let mut out = Vec::with_capacity(handles.len());
+        for (participant, direction, handle) in handles {
+            let stats = match self.engine.transport_stats(&handle).await {
+                Ok(b) => b,
+                Err(e) => SignalingBlob(format!("{{\"error\":\"{e}\"}}")),
+            };
+            out.push(TransportAudit { participant, direction, stats });
+        }
+        out
+    }
+
     // ── cycle de vie participant ─────────────────────────────────────────────
 
     /// Un participant rejoint. Applique les règles (siège, doublon), décide
@@ -232,13 +366,23 @@ impl<E: MediaEngine> VoiceService<E> {
         room: RoomId,
         participant: ParticipantId,
     ) -> Result<JoinOutcome, VoiceError> {
+        // Replace-on-rejoin : un rejoin (refresh, reconnexion réseau) ne doit
+        // JAMAIS être rejeté. Si le participant est déjà là, on évince l'ancienne
+        // présence (ferme ses transports/producers) avant de recréer. Sémantique
+        // mesh : un user = une session, la plus récente gagne. (Le pair verra
+        // l'ancien flux se fermer via la réconciliation.)
+        let already = self
+            .rooms()
+            .get(&room)
+            .is_some_and(|s| s.participants.contains_key(&participant));
+        if already {
+            self.remove(room.clone(), participant.clone()).await?;
+        }
+
         // ── plan (sous verrou) : valider, réserver le siège, décider ──
         let sfu = {
             let mut rooms = self.rooms();
             let state = rooms.entry(room.clone()).or_default();
-            if state.participants.contains_key(&participant) {
-                return Err(VoiceError::AlreadyJoined);
-            }
             if state.participants.len() >= self.cfg.max_seats {
                 return Err(VoiceError::RoomFull);
             }
@@ -249,31 +393,18 @@ impl<E: MediaEngine> VoiceService<E> {
         };
 
         if !sfu {
-            return Ok(JoinOutcome { mode: Mode::Mesh, transport: None, migrated: Vec::new() });
+            return Ok(JoinOutcome { mode: Mode::Mesh, migrated: Vec::new() });
         }
 
-        // ── SFU : migrer tout le salon (crée router + transports manquants) ──
+        // ── SFU : migrer tout le salon (router + paires de transports manquantes) ──
         let mig = self.ensure_sfu(room.clone()).await?;
+        let migrated = mig
+            .migrated
+            .into_iter()
+            .filter(|pid| pid != &participant)
+            .collect();
 
-        // Séparer le transport du joiner de ceux des autres (à notifier).
-        let mut my_transport = None;
-        let mut migrated = Vec::new();
-        for (pid, t) in mig.transports {
-            if pid == participant {
-                my_transport = Some(t);
-            } else {
-                migrated.push((pid, t));
-            }
-        }
-        // Joiner déjà pourvu (salon déjà SFU) : relire son transport.
-        if my_transport.is_none() {
-            let rooms = self.rooms();
-            if let Some(p) = rooms.get(&room).and_then(|s| s.participants.get(&participant)) {
-                my_transport = p.transport.clone();
-            }
-        }
-
-        Ok(JoinOutcome { mode: Mode::Sfu, transport: my_transport, migrated })
+        Ok(JoinOutcome { mode: Mode::Sfu, migrated })
     }
 
     /// Le participant quitte de lui-même.
@@ -289,26 +420,58 @@ impl<E: MediaEngine> VoiceService<E> {
     }
 
     async fn remove(&self, room: RoomId, participant: ParticipantId) -> Result<(), VoiceError> {
-        let router_to_close = {
+        let (producers, consumers, transports, router_to_close) = {
             let mut rooms = self.rooms();
             let Some(state) = rooms.get_mut(&room) else {
                 return Err(VoiceError::NotInRoom);
             };
-            if state.participants.remove(&participant).is_none() {
+            let Some(gone) = state.participants.remove(&participant) else {
                 return Err(VoiceError::NotInRoom);
-            }
-            // Ses publications disparaissent (les abonnés seront notifiés par le signaling).
+            };
+
+            // Objets moteur DU PARTANT : ses consumers (ses abonnements) et ses
+            // transports (send/recv). Sans les fermer, ils survivent dans les
+            // registres du moteur jusqu'à la fermeture du salon = fuite.
+            let mut consumers: Vec<ConsumerId> = gone.subscriptions.into_values().collect();
+            let transports: Vec<TransportHandle> =
+                [gone.send_transport, gone.recv_transport].into_iter().flatten().collect();
+
+            // Ses publications disparaissent, et chacune rend fantômes les
+            // abonnements des AUTRES : on les purge et on récupère leurs consumers.
+            let producers: Vec<ProducerId> = state
+                .publications
+                .iter()
+                .filter(|(_, pubb)| pubb.owner == participant)
+                .map(|(id, _)| id.clone())
+                .collect();
             state.publications.retain(|_, pubb| pubb.owner != participant);
+            for prod in &producers {
+                consumers.extend(drop_subscribers_of(state, prod));
+            }
+
             // Dernier parti : on ferme le salon et on libère le routeur moteur.
-            if state.participants.is_empty() {
-                let router = state.router.take();
+            let router = if state.participants.is_empty() {
+                let r = state.router.take();
                 rooms.remove(&room);
-                router
+                r
             } else {
                 None
-            }
+            };
+            (producers, consumers, transports, router)
         };
 
+        // Hors verrou : nettoyage moteur, tout idempotent. Fermer les transports
+        // casse en cascade les producers/consumers restants côté serveur ; on retire
+        // aussi explicitement du registre pour ne rien y laisser traîner.
+        for p in producers {
+            let _ = self.engine.close_producer(&p).await;
+        }
+        for c in consumers {
+            let _ = self.engine.close_consumer(&c).await;
+        }
+        for t in transports {
+            let _ = self.engine.close_transport(&t).await;
+        }
         if let Some(router) = router_to_close {
             self.engine.close_room(router).await?;
         }
@@ -318,53 +481,117 @@ impl<E: MediaEngine> VoiceService<E> {
     // ── bascule SFU ──────────────────────────────────────────────────────────
 
     /// Garantit que le salon est en SFU : crée le router si besoin, et provisionne
-    /// un transport pour CHAQUE participant qui n'en a pas encore. Idempotent.
-    /// Primitive unique de migration (utilisée par `join`, `set_screenshare`,
-    /// `publish` d'un écran).
+    /// la PAIRE de transports (send + recv, contrainte mediasoup-client) pour
+    /// CHAQUE participant incomplet. Idempotent. Primitive unique de migration
+    /// (utilisée par `join`, `set_screenshare`, `publish` d'un écran).
     pub async fn ensure_sfu(&self, room: RoomId) -> Result<SfuMigration, VoiceError> {
-        // ── plan : router manquant ? qui n'a pas de transport ? ──
-        let (need_router, existing_router, missing): (bool, Option<RouterHandle>, Vec<ParticipantId>) = {
-            let rooms = self.rooms();
-            let Some(state) = rooms.get(&room) else {
-                return Err(VoiceError::NotInRoom);
+        // Boucle de convergence (relecture 2026-07-06) : deux ensure_sfu
+        // concurrents sur un salon vierge créaient DEUX routers ; le perdant
+        // n'était jamais fermé et ses transports pouvaient être commités →
+        // participants à cheval sur deux routers, consume inter-routers en
+        // échec. Ici : si on perd la course au commit, on FERME notre router
+        // (l'adaptateur libère ses transports avec lui) et on recommence sur
+        // celui du gagnant. Converge en ≤2 tours réels ; borne dure à 4 par
+        // paranoïa. NB : sur un router PARTAGÉ, une double-provision du même
+        // participant laisse des transports orphelins côté moteur (inutilisés,
+        // libérés au close_room) : bénin, la vraie sérialisation par salon
+        // arrive avec le durcissement P1.
+        let mut switched = false;
+        let mut migrated_all: Vec<ParticipantId> = Vec::new();
+        for _tour in 0..4 {
+            // ── plan : router manquant ? qui n'a pas sa paire complète ? ──
+            let (need_router, existing_router, missing): (bool, Option<RouterHandle>, Vec<ParticipantId>) = {
+                let rooms = self.rooms();
+                let Some(state) = rooms.get(&room) else {
+                    return Err(VoiceError::NotInRoom);
+                };
+                let missing = state
+                    .participants
+                    .iter()
+                    .filter(|(_, p)| !p.in_sfu())
+                    .map(|(id, _)| id.clone())
+                    .collect();
+                (state.router.is_none(), state.router.clone(), missing)
             };
-            let missing = state
-                .participants
-                .iter()
-                .filter(|(_, p)| p.transport.is_none())
-                .map(|(id, _)| id.clone())
-                .collect();
-            (state.router.is_none(), state.router.clone(), missing)
-        };
+            if !need_router && missing.is_empty() {
+                break; // rien à faire : idempotence
+            }
 
-        // ── apply (hors verrou) : router puis transports ──
-        let router = if need_router {
-            self.engine.create_room(room.clone()).await?
-        } else {
-            existing_router.expect("router SFU présent quand need_router=false")
-        };
-        let mut provisioned = Vec::with_capacity(missing.len());
-        for pid in missing {
-            let t = self.engine.create_transport(&router, pid.clone()).await?;
-            provisioned.push((pid, t));
-        }
+            // ── apply (hors verrou) : router puis paires de transports ──
+            let router = if need_router {
+                self.engine.create_room(room.clone()).await?
+            } else {
+                existing_router.expect("router SFU présent quand need_router=false")
+            };
+            let mut provisioned: Vec<(ParticipantId, TransportHandle, TransportHandle)> =
+                Vec::with_capacity(missing.len());
+            for pid in missing {
+                let send = self.engine.create_transport(&router, pid.clone()).await?;
+                let recv = self.engine.create_transport(&router, pid.clone()).await?;
+                provisioned.push((pid, send, recv));
+            }
 
-        // ── commit : figer router + transports ──
-        {
-            let mut rooms = self.rooms();
-            if let Some(state) = rooms.get_mut(&room) {
-                if state.router.is_none() {
-                    state.router = Some(router);
-                }
-                for (pid, t) in &provisioned {
-                    if let Some(p) = state.participants.get_mut(pid) {
-                        p.transport = Some(t.clone());
+            // ── commit : figer router + paires, OU détecter la course perdue ──
+            enum Outcome { Won(Vec<ParticipantId>), LostRace, RoomGone }
+            let outcome = {
+                let mut rooms = self.rooms();
+                match rooms.get_mut(&room) {
+                    None => Outcome::RoomGone,
+                    Some(state) => {
+                        let lost = need_router
+                            && state.router.as_ref().is_some_and(|r| r != &router);
+                        if lost {
+                            Outcome::LostRace
+                        } else {
+                            if state.router.is_none() {
+                                state.router = Some(router.clone());
+                            }
+                            let mut committed = Vec::new();
+                            for (pid, send, recv) in &provisioned {
+                                if let Some(p) = state.participants.get_mut(pid) {
+                                    let mut used = false;
+                                    if p.send_transport.is_none() {
+                                        p.send_transport = Some(send.clone());
+                                        used = true;
+                                    }
+                                    if p.recv_transport.is_none() {
+                                        p.recv_transport = Some(recv.clone());
+                                        used = true;
+                                    }
+                                    if used {
+                                        committed.push(pid.clone());
+                                    }
+                                }
+                            }
+                            Outcome::Won(committed)
+                        }
                     }
+                }
+            };
+
+            match outcome {
+                Outcome::Won(committed) => {
+                    switched |= need_router;
+                    migrated_all.extend(committed);
+                    break;
+                }
+                Outcome::LostRace => {
+                    // Nos transports vivent sur NOTRE router : sa fermeture les
+                    // libère côté adaptateur. Puis on retente sur le gagnant.
+                    let _ = self.engine.close_room(router).await;
+                }
+                Outcome::RoomGone => {
+                    // Salon fermé pendant le travail moteur (dernier leave) :
+                    // on libère ce qu'on venait de créer et on le signale.
+                    if need_router {
+                        let _ = self.engine.close_room(router).await;
+                    }
+                    return Err(VoiceError::NotInRoom);
                 }
             }
         }
 
-        Ok(SfuMigration { switched_to_sfu: need_router, transports: provisioned })
+        Ok(SfuMigration { switched_to_sfu: switched, migrated: migrated_all })
     }
 
     /// Un partage d'écran démarre/s'arrête. Le démarrage force le mode SFU (quel
@@ -381,7 +608,7 @@ impl<E: MediaEngine> VoiceService<E> {
         if on {
             self.ensure_sfu(room).await
         } else {
-            Ok(SfuMigration { switched_to_sfu: false, transports: Vec::new() })
+            Ok(SfuMigration { switched_to_sfu: false, migrated: Vec::new() })
         }
     }
 
@@ -390,13 +617,17 @@ impl<E: MediaEngine> VoiceService<E> {
     /// Le participant publie un flux. Un partage d'écran (`Screen`) force d'abord
     /// la bascule SFU de tout le salon. En mesh (pas de transport), publier renvoie
     /// [`VoiceError::NotInSfu`] (rien n'est produit côté serveur en mesh).
+    /// `client` = paramètres RTP du client (blob opaque, transmis au moteur).
     pub async fn publish(
         &self,
         room: RoomId,
         participant: ParticipantId,
         kind: TrackKind,
+        client: &SignalingBlob,
     ) -> Result<ProducerId, VoiceError> {
-        if kind == TrackKind::Screen {
+        // Un partage d'écran force la bascule SFU. Son SON aussi : il n'arrive jamais
+        // seul, mais on ne veut pas dépendre de l'ordre d'arrivée des deux flux.
+        if matches!(kind, TrackKind::Screen | TrackKind::ScreenAudio) {
             self.ensure_sfu(room.clone()).await?;
         }
 
@@ -404,10 +635,10 @@ impl<E: MediaEngine> VoiceService<E> {
             let rooms = self.rooms();
             let state = rooms.get(&room).ok_or(VoiceError::NotInRoom)?;
             let p = state.participants.get(&participant).ok_or(VoiceError::NotInRoom)?;
-            p.transport.clone().ok_or(VoiceError::NotInSfu)?
+            p.transport(Direction::Send).cloned().ok_or(VoiceError::NotInSfu)?
         };
 
-        let producer = self.engine.produce(&transport, kind).await?;
+        let producer = self.engine.produce(&transport, kind, client).await?;
 
         {
             let mut rooms = self.rooms();
@@ -421,13 +652,107 @@ impl<E: MediaEngine> VoiceService<E> {
         Ok(producer)
     }
 
+    /// Le participant arrête un flux qu'il a publié (ex. stop partage d'écran).
+    /// Retire la publication ET ferme le producer côté serveur → les abonnés le
+    /// voient disparaître (réconciliation). Borné au propriétaire : fermer le flux
+    /// d'autrui est refusé ([`VoiceError::NotOwner`]). Le verrou d'état n'est
+    /// jamais tenu à travers l'`await` moteur (comme publish/subscribe).
+    pub async fn unpublish(
+        &self,
+        room: RoomId,
+        participant: ParticipantId,
+        producer: ProducerId,
+    ) -> Result<(), VoiceError> {
+        let orphaned = {
+            let mut rooms = self.rooms();
+            let state = rooms.get_mut(&room).ok_or(VoiceError::NotInRoom)?;
+            match state.publications.get(&producer) {
+                Some(pubb) if pubb.owner == participant => {
+                    state.publications.remove(&producer);
+                }
+                Some(_) => return Err(VoiceError::NotOwner),
+                None => return Err(VoiceError::NoSuchPublication),
+            }
+            // Le flux disparaît : les consumers qui le lisaient deviennent fantômes.
+            drop_subscribers_of(state, &producer)
+        };
+        // Hors verrou : fermeture réelle du flux moteur + de ses consumers orphelins
+        // (tout est idempotent : un objet déjà parti n'est pas une erreur).
+        self.engine.close_producer(&producer).await?;
+        for c in orphaned {
+            let _ = self.engine.close_consumer(&c).await;
+        }
+        Ok(())
+    }
+
+    /// Tous les abonnements du salon, avec l'ÉTAT RÉEL de chaque consumer (moteur).
+    /// Outil de DIAGNOSTIC : répond à « le spectateur a-t-il seulement souscrit au
+    /// flux vidéo, et si oui son consumer est-il resté en pause ? ». Deux pannes qui
+    /// donnent le même symptôme (aucune vidéo servie) et deux correctifs opposés.
+    pub async fn subscriptions(&self, room: &RoomId) -> Vec<SubscriptionInfo> {
+        // On relève d'abord la liste (verrou court), puis on interroge le moteur
+        // hors verrou, comme partout ailleurs.
+        let flat: Vec<(ParticipantId, ProducerId, ConsumerId)> = {
+            let rooms = self.rooms();
+            let Some(state) = rooms.get(room) else {
+                return Vec::new();
+            };
+            state
+                .participants
+                .iter()
+                .flat_map(|(pid, p)| {
+                    p.subscriptions
+                        .iter()
+                        .map(|(prod, cons)| (pid.clone(), prod.clone(), cons.clone()))
+                })
+                .collect()
+        };
+
+        let mut out = Vec::with_capacity(flat.len());
+        for (subscriber, producer, consumer) in flat {
+            let state = self
+                .engine
+                .consumer_state(&consumer)
+                .await
+                .unwrap_or_else(|e| SignalingBlob(format!("{{\"error\":\"{e}\"}}")));
+            out.push(SubscriptionInfo { subscriber, producer, consumer, state });
+        }
+        out
+    }
+
+    /// L'abonné a créé son consumer côté client : on reprend le flux serveur.
+    /// La VIDÉO est servie en pause (sinon la keyframe part avant que le décodeur
+    /// du client n'existe → écran noir clignotant) ; c'est ici qu'elle repart, et
+    /// mediasoup redemande une keyframe à un décodeur cette fois prêt.
+    /// Borné à SES propres abonnements : on ne reprend pas le flux d'autrui.
+    pub async fn resume_consumer(
+        &self,
+        room: RoomId,
+        subscriber: ParticipantId,
+        consumer: ConsumerId,
+    ) -> Result<(), VoiceError> {
+        {
+            let rooms = self.rooms();
+            let state = rooms.get(&room).ok_or(VoiceError::NotInRoom)?;
+            let p = state.participants.get(&subscriber).ok_or(VoiceError::NotInRoom)?;
+            if !p.subscriptions.values().any(|c| c == &consumer) {
+                return Err(VoiceError::NotSubscribed);
+            }
+        }
+        self.engine.resume_consumer(&consumer).await?;
+        Ok(())
+    }
+
     /// Le participant souscrit à une publication. Requiert le mode SFU (transport).
+    /// `client_caps` = capabilities du client (blob opaque) ; retourne aussi les
+    /// paramètres que le client doit appliquer (blob du moteur).
     pub async fn subscribe(
         &self,
         room: RoomId,
         subscriber: ParticipantId,
         producer: ProducerId,
-    ) -> Result<ConsumerId, VoiceError> {
+        client_caps: &SignalingBlob,
+    ) -> Result<(ConsumerId, SignalingBlob), VoiceError> {
         let transport = {
             let rooms = self.rooms();
             let state = rooms.get(&room).ok_or(VoiceError::NotInRoom)?;
@@ -435,10 +760,10 @@ impl<E: MediaEngine> VoiceService<E> {
                 return Err(VoiceError::NoSuchPublication);
             }
             let p = state.participants.get(&subscriber).ok_or(VoiceError::NotInRoom)?;
-            p.transport.clone().ok_or(VoiceError::NotInSfu)?
+            p.transport(Direction::Recv).cloned().ok_or(VoiceError::NotInSfu)?
         };
 
-        let consumer = self.engine.consume(&transport, &producer).await?;
+        let (consumer, params) = self.engine.consume(&transport, &producer, client_caps).await?;
 
         {
             let mut rooms = self.rooms();
@@ -449,7 +774,55 @@ impl<E: MediaEngine> VoiceService<E> {
                 p.subscriptions.insert(producer, consumer.clone());
             }
         }
-        Ok(consumer)
+        Ok((consumer, params))
+    }
+
+    // ── Signaling pass-through (blobs opaques, jamais lus par le métier) ─────
+
+    /// Capabilities du salon, à remettre au client au join SFU (§17-A).
+    pub async fn room_capabilities(&self, room: &RoomId) -> Result<SignalingBlob, VoiceError> {
+        let router = {
+            let rooms = self.rooms();
+            let state = rooms.get(room).ok_or(VoiceError::NotInRoom)?;
+            state.router.clone().ok_or(VoiceError::NotInSfu)?
+        };
+        Ok(self.engine.room_capabilities(&router).await?)
+    }
+
+    /// Paramètres de connexion d'un transport du participant (ICE/DTLS…), par
+    /// direction (mediasoup-client : un transport client = une direction).
+    pub async fn transport_params(
+        &self,
+        room: &RoomId,
+        participant: &ParticipantId,
+        direction: Direction,
+    ) -> Result<SignalingBlob, VoiceError> {
+        let transport = self.transport_of(room, participant, direction)?;
+        Ok(self.engine.transport_params(&transport).await?)
+    }
+
+    /// Finalise la connexion d'un transport avec la réponse du client (§17-A).
+    pub async fn connect_transport(
+        &self,
+        room: &RoomId,
+        participant: &ParticipantId,
+        direction: Direction,
+        client: &SignalingBlob,
+    ) -> Result<(), VoiceError> {
+        let transport = self.transport_of(room, participant, direction)?;
+        Ok(self.engine.connect_transport(&transport, client).await?)
+    }
+
+    fn transport_of(
+        &self,
+        room: &RoomId,
+        participant: &ParticipantId,
+        direction: Direction,
+    ) -> Result<TransportHandle, VoiceError> {
+        let rooms = self.rooms();
+        let state = rooms.get(room).ok_or(VoiceError::NotInRoom)?;
+        let p = state.participants.get(participant).ok_or(VoiceError::NotInRoom)?;
+        p.transport(direction).cloned().ok_or(VoiceError::NotInSfu)
     }
 
     /// Force la couche servie à un abonné (adaptation bande passante, §17-C).
@@ -504,6 +877,10 @@ mod tests {
         ParticipantId(format!("user-{n}"))
     }
 
+    fn blob() -> SignalingBlob {
+        SignalingBlob("{}".into())
+    }
+
     // ── règle pure ──────────────────────────────────────────────────────────
 
     #[test]
@@ -522,7 +899,6 @@ mod tests {
         let s = svc();
         let out = block_on(s.join(room(), p(1))).unwrap();
         assert_eq!(out.mode, Mode::Mesh);
-        assert!(out.transport.is_none());
         assert!(out.migrated.is_empty());
         assert_eq!(s.mode(&room()), Some(Mode::Mesh));
         assert_eq!(s.participant_count(&room()), 1);
@@ -538,8 +914,10 @@ mod tests {
         // le 5e franchit le seuil → bascule tout le monde
         let out = block_on(s.join(room(), p(5))).unwrap();
         assert_eq!(out.mode, Mode::Sfu);
-        assert!(out.transport.is_some(), "le joiner a son transport");
         assert_eq!(out.migrated.len(), 4, "les 4 déjà présents sont migrés");
+        // le joiner a sa PAIRE de transports (send + recv, contrainte mediasoup-client)
+        assert!(block_on(s.transport_params(&room(), &p(5), Direction::Send)).is_ok());
+        assert!(block_on(s.transport_params(&room(), &p(5), Direction::Recv)).is_ok());
         assert_eq!(s.mode(&room()), Some(Mode::Sfu));
     }
 
@@ -551,8 +929,8 @@ mod tests {
         }
         let out = block_on(s.join(room(), p(6))).unwrap();
         assert_eq!(out.mode, Mode::Sfu);
-        assert!(out.transport.is_some());
-        assert!(out.migrated.is_empty(), "les autres avaient déjà leur transport");
+        assert!(out.migrated.is_empty(), "les autres avaient déjà leur paire");
+        assert!(block_on(s.transport_params(&room(), &p(6), Direction::Send)).is_ok());
     }
 
     #[test]
@@ -564,10 +942,21 @@ mod tests {
     }
 
     #[test]
-    fn double_join_is_rejected() {
+    fn rejoin_replaces_instead_of_rejecting() {
         let s = svc();
         block_on(s.join(room(), p(1))).unwrap();
-        assert_eq!(block_on(s.join(room(), p(1))), Err(VoiceError::AlreadyJoined));
+        // rejoin du MÊME participant : ACCEPTÉ (remplace), jamais AlreadyJoined.
+        let out = block_on(s.join(room(), p(1))).unwrap();
+        assert_eq!(out.mode, Mode::Mesh);
+        assert_eq!(s.participant_count(&room()), 1, "pas de doublon");
+        // rejoin en mode SFU : remplace aussi, la paire de transports est refaite
+        for i in 2..=5 { block_on(s.join(room(), p(i))).unwrap(); } // → SFU
+        assert_eq!(s.mode(&room()), Some(Mode::Sfu));
+        let before = s.participant_count(&room());
+        let out2 = block_on(s.join(room(), p(1))).unwrap();
+        assert_eq!(out2.mode, Mode::Sfu);
+        assert_eq!(s.participant_count(&room()), before, "rejoin SFU ne dédouble pas");
+        assert!(block_on(s.transport_params(&room(), &p(1), Direction::Send)).is_ok());
     }
 
     #[test]
@@ -607,7 +996,11 @@ mod tests {
 
         let mig = block_on(s.set_screenshare(room(), true)).unwrap();
         assert!(mig.switched_to_sfu);
-        assert_eq!(mig.transports.len(), 2, "les 2 présents obtiennent un transport");
+        assert_eq!(mig.migrated.len(), 2, "les 2 présents obtiennent leur paire");
+        // et chacun a bien send ET recv distincts
+        let send = block_on(s.transport_params(&room(), &p(1), Direction::Send)).unwrap();
+        let recv = block_on(s.transport_params(&room(), &p(1), Direction::Recv)).unwrap();
+        assert_ne!(send, recv, "send et recv sont deux transports distincts");
         assert_eq!(s.mode(&room()), Some(Mode::Sfu));
     }
 
@@ -630,7 +1023,7 @@ mod tests {
         block_on(s.join(room(), p(1))).unwrap();
         block_on(s.join(room(), p(2))).unwrap();
         // p1 partage son écran depuis un salon mesh → bascule + producer
-        let prod = block_on(s.publish(room(), p(1), TrackKind::Screen)).unwrap();
+        let prod = block_on(s.publish(room(), p(1), TrackKind::Screen, &blob())).unwrap();
         assert_eq!(s.mode(&room()), Some(Mode::Sfu));
         let pubs = s.publications(&room());
         assert_eq!(pubs.len(), 1);
@@ -640,15 +1033,111 @@ mod tests {
     }
 
     #[test]
+    fn screen_audio_is_a_distinct_source_and_forces_sfu() {
+        let s = svc();
+        block_on(s.join(room(), p(1))).unwrap();
+        block_on(s.join(room(), p(2))).unwrap();
+        assert_eq!(s.mode(&room()), Some(Mode::Mesh));
+
+        // Le son de l'écran force la bascule comme l'écran lui-même : on ne dépend
+        // pas de l'ordre d'arrivée des deux flux.
+        let sound = block_on(s.publish(room(), p(1), TrackKind::ScreenAudio, &blob())).unwrap();
+        assert_eq!(s.mode(&room()), Some(Mode::Sfu));
+
+        let video = block_on(s.publish(room(), p(1), TrackKind::Screen, &blob())).unwrap();
+        let mic = block_on(s.publish(room(), p(1), TrackKind::Audio, &blob())).unwrap();
+
+        // Trois publications DISTINCTES : le son de l'écran n'est pas le micro.
+        let pubs = s.publications(&room());
+        assert_eq!(pubs.len(), 3);
+        let kind_of = |id: &ProducerId| pubs.iter().find(|p| &p.producer == id).unwrap().kind;
+        assert_eq!(kind_of(&sound), TrackKind::ScreenAudio);
+        assert_eq!(kind_of(&video), TrackKind::Screen);
+        assert_eq!(kind_of(&mic), TrackKind::Audio);
+        assert_ne!(TrackKind::ScreenAudio, TrackKind::Audio);
+    }
+
+    #[test]
     fn publishing_audio_in_mesh_is_rejected() {
         let s = svc();
         block_on(s.join(room(), p(1))).unwrap();
         block_on(s.join(room(), p(2))).unwrap();
         // audio ne bascule pas en SFU ; en mesh il n'y a pas de producer serveur
         assert_eq!(
-            block_on(s.publish(room(), p(1), TrackKind::Audio)),
+            block_on(s.publish(room(), p(1), TrackKind::Audio, &blob())),
             Err(VoiceError::NotInSfu)
         );
+    }
+
+    #[test]
+    fn unpublish_removes_own_screen_and_rejects_others() {
+        let s = svc();
+        block_on(s.join(room(), p(1))).unwrap();
+        block_on(s.join(room(), p(2))).unwrap();
+        let prod = block_on(s.publish(room(), p(1), TrackKind::Screen, &blob())).unwrap();
+        assert_eq!(s.publications(&room()).len(), 1);
+
+        // Un AUTRE participant ne peut pas fermer le flux de p1.
+        assert_eq!(
+            block_on(s.unpublish(room(), p(2), prod.clone())),
+            Err(VoiceError::NotOwner)
+        );
+        assert_eq!(s.publications(&room()).len(), 1, "refus = publication intacte");
+
+        // Le PROPRIÉTAIRE arrête son partage → la publication disparaît.
+        block_on(s.unpublish(room(), p(1), prod.clone())).unwrap();
+        assert!(s.publications(&room()).is_empty());
+
+        // Re-fermer un flux déjà disparu → NoSuchPublication (rien à fermer).
+        assert_eq!(
+            block_on(s.unpublish(room(), p(1), prod)),
+            Err(VoiceError::NoSuchPublication)
+        );
+    }
+
+    #[test]
+    fn unpublish_purges_subscribers_no_ghost() {
+        let s = svc();
+        for i in 1..=3 {
+            block_on(s.join(room(), p(i))).unwrap();
+        }
+        let prod = block_on(s.publish(room(), p(1), TrackKind::Screen, &blob())).unwrap();
+        block_on(s.subscribe(room(), p(2), prod.clone(), &blob())).unwrap();
+        block_on(s.subscribe(room(), p(3), prod.clone(), &blob())).unwrap();
+        assert_eq!(block_on(s.subscriptions(&room())).len(), 2);
+
+        // p1 arrête son partage → les DEUX abonnements doivent disparaître : sans le
+        // nettoyage, ils restaient en fantômes (un consumer qui lit un flux fermé).
+        block_on(s.unpublish(room(), p(1), prod)).unwrap();
+        assert!(
+            block_on(s.subscriptions(&room())).is_empty(),
+            "les abonnements au flux fermé doivent être purgés"
+        );
+        assert!(s.publications(&room()).is_empty());
+    }
+
+    #[test]
+    fn leaving_purges_own_and_others_subscriptions() {
+        let s = svc();
+        for i in 1..=3 {
+            block_on(s.join(room(), p(i))).unwrap();
+        }
+        let prod1 = block_on(s.publish(room(), p(1), TrackKind::Screen, &blob())).unwrap();
+        let prod2 = block_on(s.publish(room(), p(2), TrackKind::Screen, &blob())).unwrap();
+        // p3 consomme les deux écrans ; p1 consomme l'écran de p2.
+        block_on(s.subscribe(room(), p(3), prod1.clone(), &blob())).unwrap();
+        block_on(s.subscribe(room(), p(3), prod2.clone(), &blob())).unwrap();
+        block_on(s.subscribe(room(), p(1), prod2.clone(), &blob())).unwrap();
+        assert_eq!(block_on(s.subscriptions(&room())).len(), 3);
+
+        // p1 part. Son flux (prod1) disparaît → l'abonnement de p3 à prod1 est purgé.
+        // Et son PROPRE abonnement (p1 → prod2) part avec lui. Reste : p3 → prod2.
+        block_on(s.leave(room(), p(1))).unwrap();
+        let subs = block_on(s.subscriptions(&room()));
+        assert_eq!(subs.len(), 1, "reste seulement l'abonnement de p3 au flux de p2");
+        assert_eq!(subs[0].subscriber, p(3));
+        assert_eq!(subs[0].producer, prod2);
+        assert_eq!(s.publications(&room()).len(), 1); // seul le flux de p2 subsiste
     }
 
     #[test]
@@ -656,12 +1145,41 @@ mod tests {
         let s = svc();
         block_on(s.join(room(), p(1))).unwrap();
         block_on(s.join(room(), p(2))).unwrap();
-        let prod = block_on(s.publish(room(), p(1), TrackKind::Screen)).unwrap();
+        let prod = block_on(s.publish(room(), p(1), TrackKind::Screen, &blob())).unwrap();
         // p2 (migré par la bascule) s'abonne au flux de p1
-        let consumer = block_on(s.subscribe(room(), p(2), prod.clone())).unwrap();
+        let caps = SignalingBlob("{\"caps\":\"p2\"}".into());
+        let (consumer, params) = block_on(s.subscribe(room(), p(2), prod.clone(), &caps)).unwrap();
+        // NullEngine échoie les caps : le blob transite intact par le métier
+        assert_eq!(params, caps);
         // régler la couche servie à p2 → OK
         block_on(s.set_preferred_layer(room(), p(2), prod, Layer::LOWEST)).unwrap();
         assert_eq!(consumer, consumer.clone());
+    }
+
+    #[test]
+    fn resume_consumer_only_for_own_subscription() {
+        let s = svc();
+        block_on(s.join(room(), p(1))).unwrap();
+        block_on(s.join(room(), p(2))).unwrap();
+        block_on(s.join(room(), p(3))).unwrap();
+        let prod = block_on(s.publish(room(), p(1), TrackKind::Screen, &blob())).unwrap();
+        let (consumer, _) = block_on(s.subscribe(room(), p(2), prod, &blob())).unwrap();
+
+        // L'abonné reprend SON flux (la vidéo est servie en pause : c'est ici
+        // qu'elle repart, avec une keyframe pour un décodeur enfin prêt).
+        block_on(s.resume_consumer(room(), p(2), consumer.clone())).unwrap();
+
+        // Un TIERS ne peut pas reprendre le consumer de p2.
+        assert_eq!(
+            block_on(s.resume_consumer(room(), p(3), consumer)),
+            Err(VoiceError::NotSubscribed)
+        );
+
+        // Un consumer inconnu non plus.
+        assert_eq!(
+            block_on(s.resume_consumer(room(), p(2), ConsumerId("nope".into()))),
+            Err(VoiceError::NotSubscribed)
+        );
     }
 
     #[test]
@@ -672,7 +1190,7 @@ mod tests {
         }
         let ghost = ProducerId("does-not-exist".into());
         assert_eq!(
-            block_on(s.subscribe(room(), p(2), ghost)),
+            block_on(s.subscribe(room(), p(2), ghost, &blob())),
             Err(VoiceError::NoSuchPublication)
         );
     }
@@ -682,7 +1200,7 @@ mod tests {
         let s = svc();
         block_on(s.join(room(), p(1))).unwrap();
         block_on(s.join(room(), p(2))).unwrap();
-        let prod = block_on(s.publish(room(), p(1), TrackKind::Screen)).unwrap();
+        let prod = block_on(s.publish(room(), p(1), TrackKind::Screen, &blob())).unwrap();
         // p2 n'a pas souscrit → NotSubscribed
         assert_eq!(
             block_on(s.set_preferred_layer(room(), p(2), prod, Layer::LOWEST)),
@@ -691,11 +1209,90 @@ mod tests {
     }
 
     #[test]
+    fn signaling_passthrough_in_sfu_mode() {
+        let s = svc();
+        block_on(s.join(room(), p(1))).unwrap();
+        block_on(s.join(room(), p(2))).unwrap();
+        block_on(s.set_screenshare(room(), true)).unwrap(); // force SFU
+        // capabilities du salon dispo
+        let caps = block_on(s.room_capabilities(&room())).unwrap();
+        assert!(caps.0.contains("router"), "blob moteur transmis tel quel");
+        // paramètres de transport du participant + connect
+        let params = block_on(s.transport_params(&room(), &p(1), Direction::Send)).unwrap();
+        assert!(params.0.contains("transport"));
+        block_on(s.connect_transport(&room(), &p(1), Direction::Send, &blob())).unwrap();
+    }
+
+    #[test]
+    fn signaling_in_mesh_is_rejected() {
+        let s = svc();
+        block_on(s.join(room(), p(1))).unwrap();
+        // en mesh : pas de router, pas de transport
+        assert_eq!(
+            block_on(s.room_capabilities(&room())),
+            Err(VoiceError::NotInSfu)
+        );
+        assert_eq!(
+            block_on(s.transport_params(&room(), &p(1), Direction::Send)),
+            Err(VoiceError::NotInSfu)
+        );
+        assert_eq!(
+            block_on(s.room_capabilities(&RoomId("nope".into()))),
+            Err(VoiceError::NotInRoom)
+        );
+    }
+
+    #[test]
+    fn audit_lists_both_transports_per_participant() {
+        let s = svc();
+        for i in 1..=5 { block_on(s.join(room(), p(i))).unwrap(); } // franchit le seuil → SFU
+        let audit = block_on(s.audit(&room()));
+        // 5 participants × 2 transports (send + recv) = 10 lignes
+        assert_eq!(audit.len(), 10);
+        let sends = audit.iter().filter(|a| a.direction == Direction::Send).count();
+        let recvs = audit.iter().filter(|a| a.direction == Direction::Recv).count();
+        assert_eq!(sends, 5);
+        assert_eq!(recvs, 5);
+        // le blob du moteur transite tel quel (NullEngine renvoie un stub identifiable)
+        assert!(audit[0].stats.0.contains("transport"));
+    }
+
+    #[test]
+    fn heartbeat_and_stale_eviction() {
+        let s = svc();
+        block_on(s.join(room(), p(1))).unwrap();
+        block_on(s.join(room(), p(2))).unwrap();
+        // frais (jamais touché) → jamais stale, même avec un grand cutoff
+        assert!(s.stale(1_000_000).is_empty());
+        // touch : p1 à t=100, p2 à t=500
+        assert!(s.touch(&room(), &p(1), 100));
+        assert!(s.touch(&room(), &p(2), 500));
+        // cutoff 300 : p1 (100<300) évincible, p2 (500) non
+        let stale = s.stale(300);
+        assert_eq!(stale.len(), 1);
+        assert_eq!(stale[0].0, room());
+        assert_eq!(stale[0].1, p(1));
+        // touch d'un inconnu → false
+        assert!(!s.touch(&room(), &p(9), 100));
+        // évincer p1 via leave : il disparaît du stale
+        block_on(s.leave(room(), p(1))).unwrap();
+        assert!(s.stale(300).is_empty());
+    }
+
+    #[test]
+    fn audit_empty_room_is_empty() {
+        let s = svc();
+        assert!(block_on(s.audit(&RoomId("nope".into()))).is_empty());
+        block_on(s.join(room(), p(1))).unwrap(); // mesh : pas de transport
+        assert!(block_on(s.audit(&room())).is_empty());
+    }
+
+    #[test]
     fn leaving_owner_drops_its_publications() {
         let s = svc();
         block_on(s.join(room(), p(1))).unwrap();
         block_on(s.join(room(), p(2))).unwrap();
-        block_on(s.publish(room(), p(1), TrackKind::Screen)).unwrap();
+        block_on(s.publish(room(), p(1), TrackKind::Screen, &blob())).unwrap();
         assert_eq!(s.publications(&room()).len(), 1);
         block_on(s.leave(room(), p(1))).unwrap();
         assert!(s.publications(&room()).is_empty(), "publications du partant retirées");
