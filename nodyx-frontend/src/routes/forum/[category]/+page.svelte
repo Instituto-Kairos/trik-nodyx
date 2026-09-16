@@ -2,8 +2,9 @@
 	import type { PageData } from './$types';
 	import { fly, fade } from 'svelte/transition';
 	import type { FlyParams, FadeParams } from 'svelte/transition';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { t } from '$lib/i18n';
+	import { replyCount, isUnanswered } from '$lib/forumCounts';
 
 	const tFn = $derived($t)
 
@@ -95,10 +96,10 @@
 				filtered = filtered.filter(t => t.is_pinned);
 				break;
 			case 'unanswered':
-				filtered = filtered.filter(t => (t.post_count || 0) === 0);
+				filtered = filtered.filter(t => isUnanswered(t.post_count));
 				break;
 			case 'popular':
-				filtered = filtered.filter(t => (t.post_count || 0) >= 10);
+				filtered = filtered.filter(t => replyCount(t.post_count) >= 10);
 				break;
 			case 'today':
 				const today = new Date();
@@ -124,6 +125,9 @@
 					new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
 				);
 			case 'popular':
+				// Volontairement sur post_count et non sur replyCount : retrancher le
+				// message d'ouverture des DEUX côtés ne change pas l'ordre. Passer par
+				// le helper ici n'apporterait rien qu'un appel de plus par comparaison.
 				return filtered.sort((a, b) => (b.post_count || 0) - (a.post_count || 0));
 			case 'views':
 				return filtered.sort((a, b) => (b.views || 0) - (a.views || 0));
@@ -225,8 +229,8 @@
 	const categoryStats = $derived({
 		total: threads.length,
 		pinned: threads.filter(t => t.is_pinned).length,
-		unanswered: threads.filter(t => (t.post_count || 0) === 0).length,
-		popular: threads.filter(t => (t.post_count || 0) >= 10).length,
+		unanswered: threads.filter(t => isUnanswered(t.post_count)).length,
+		popular: threads.filter(t => replyCount(t.post_count) >= 10).length,
 		today: threads.filter(t => {
 			const today = new Date();
 			today.setHours(0, 0, 0, 0);
@@ -249,19 +253,22 @@
 </script>
 
 <svelte:head>
-	<title>{categoryName} · {$page.data.communityName ?? 'Nodyx'}</title>
-	<meta name="description" content="Discussions dans {categoryName}, forum {$page.data.communityName ?? 'Nodyx'}" />
-	<link rel="canonical" href={$page.url.href} />
-	<meta property="og:title"       content="{categoryName} · {$page.data.communityName ?? 'Nodyx'}" />
-	<meta property="og:description" content="Discussions dans {categoryName}, forum {$page.data.communityName ?? 'Nodyx'}" />
+	<title>{categoryName} · {page.data.communityName ?? 'Nodyx'}</title>
+	<meta name="description" content="Discussions dans {categoryName}, forum {page.data.communityName ?? 'Nodyx'}" />
+	<link rel="canonical" href={page.url.href} />
+	<meta property="og:title"       content="{categoryName} · {page.data.communityName ?? 'Nodyx'}" />
+	<meta property="og:description" content="Discussions dans {categoryName}, forum {page.data.communityName ?? 'Nodyx'}" />
 	<meta property="og:type"        content="website" />
-	<meta property="og:url"         content={$page.url.href} />
-	<meta property="og:image"       content={$page.data.communityBannerUrl ?? $page.data.communityLogoUrl ?? `${$page.url.origin}/default-og-image.png`} />
-	<meta property="og:site_name"   content={$page.data.communityName ?? 'Nodyx'} />
+	<meta property="og:url"         content={page.url.href} />
+	<meta property="og:image"       content={page.data.communityBannerUrl ?? page.data.communityLogoUrl ?? `${page.url.origin}/default-og-image.png`} />
+	<meta property="og:site_name"   content={page.data.communityName ?? 'Nodyx'} />
 </svelte:head>
 
 <!-- EN-TÊTE DE CATÉGORIE -->
-<div class="relative mb-8 overflow-hidden border border-white/[.06] bg-gradient-to-br from-gray-900 via-gray-900 to-indigo-950/30 p-8">
+<!-- `p-5` sur mobile : `p-8` seul mangeait 64px de rembourrage horizontal
+     sur un ecran de 390px, et le contenu de l'en-tete (fil d'Ariane, titre,
+     pastilles de statistiques) se faisait couper de 80px. -->
+<div class="relative mb-8 overflow-hidden border border-white/[.06] bg-gradient-to-br from-gray-900 via-gray-900 to-indigo-950/30 p-5 sm:p-8">
 	<!-- Effets de lumière -->
 	<div class="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-indigo-500/50 to-transparent"></div>
 	<div class="absolute -top-20 -right-20 w-80 h-80 bg-indigo-600/10 blur-3xl"></div>
@@ -651,7 +658,12 @@
 					</div>
 
 					<!-- Titre -->
-					<p class="text-base font-semibold text-white group-hover:text-indigo-400 transition-colors line-clamp-1">
+					<!-- Deux lignes sur mobile, une seule des `sm`. Le bloc de droite est
+					     en `shrink-0` et prélève environ 150px avant que le titre n'ait sa
+					     part : sur un téléphone, `line-clamp-1` réduisait des titres comme
+					     « Nodyx Soundboard v2.7.0 : tes sons, ta queue... » à un moignon
+					     illisible. -->
+					<p class="text-base font-semibold text-white group-hover:text-indigo-400 transition-colors line-clamp-2 sm:line-clamp-1">
 						{thread.title}
 					</p>
 
@@ -688,13 +700,13 @@
 				<div class="flex items-center gap-4 shrink-0">
 					<!-- Compteur de réponses -->
 					<div class="flex flex-col items-center px-3 py-1.5 border border-white/[.06] group-hover:border-indigo-700/50 transition-colors min-w-[60px] text-center">
-						<span class="text-lg font-bold text-indigo-400 leading-none">{thread.post_count}</span>
-						<span class="text-[10px] text-gray-500 uppercase tracking-wider">{tFn('forum.replies_label')}</span>
+						<span class="text-lg font-bold text-indigo-400 leading-none">{replyCount(thread.post_count)}</span>
+						<span class="text-[11px] text-gray-500 uppercase tracking-wider">{tFn('forum.replies_label')}</span>
 					</div>
 
 					<!-- Dernier posteur -->
 					{#if lastPoster}
-						<div class="flex items-center gap-2 pl-2 border-l border-gray-800">
+						<div class="hidden sm:flex items-center gap-2 pl-2 border-l border-gray-800">
 							<div class="text-right hidden sm:block">
 								<p class="text-[10px] text-gray-600">{tFn('forum.last_reply')}</p>
 								<p class="text-xs font-medium text-gray-300">{lastPoster.author_username}</p>
@@ -712,7 +724,7 @@
 				</div>
 
 				<!-- Flèche -->
-				<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-700 group-hover:text-indigo-500 transition-colors shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+				<svg xmlns="http://www.w3.org/2000/svg" class="hidden sm:block w-5 h-5 text-gray-700 group-hover:text-indigo-500 transition-colors shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
 					<path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
 				</svg>
 			</a>

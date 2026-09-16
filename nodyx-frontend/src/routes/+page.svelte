@@ -2,8 +2,10 @@
 	import type { PageData } from './$types';
 	import { onMount, onDestroy } from 'svelte';
 	import { t } from '$lib/i18n';
+	import { replyCount } from '$lib/forumCounts';
 	import WidgetZone from '$lib/components/homepage/WidgetZone.svelte';
 	import GridRenderer from '$lib/components/homepage/GridRenderer.svelte';
+	import type { PublicExtension } from '$lib/components/homepage/extensionCatalog';
 	import type { HomepagePosition, GridLayout, GridTheme } from '$lib/types/homepage';
 	import { GRID_GOOGLE_FONTS_URL } from '$lib/types/homepage';
 	const tFn = $derived($t)
@@ -18,6 +20,7 @@
 	const hpPositions      = $derived((data as any).homepagePositions as HomepagePosition[] ?? []);
 	const user             = $derived((data as any).user ?? null);
 	const installedWidgets = $derived((data as any).installedWidgets as Record<string, { entry: string }> ?? {});
+	const extensions = $derived(((data as { extensions?: PublicExtension[] }).extensions ?? []) satisfies PublicExtension[])
 	const gridLayout       = $derived((data as any).gridLayout as GridLayout | null ?? null);
 	const gridTheme        = $derived((data as any).gridTheme as Partial<GridTheme> ?? {});
 	const hasGrid          = $derived(gridLayout !== null && (gridLayout as GridLayout)?.rows?.length > 0);
@@ -213,6 +216,7 @@
 		{instance}
 		{user}
 		{installedWidgets}
+		{extensions}
 	/>
 {:else}
 
@@ -222,14 +226,14 @@
 
 <!-- BANNER -->
 {#if hasPos('banner')}
-	<WidgetZone widgets={posWidgets('banner')} {instance} {user} layout="full" {installedWidgets} />
+	<WidgetZone widgets={posWidgets('banner')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 {/if}
 
 <!-- ═══════════════════════════════════════════════════════════════════
      HERO — position 'hero' (WidgetZone) ou fallback hardcodé
 ════════════════════════════════════════════════════════════════════════ -->
 {#if hasPos('hero')}
-	<WidgetZone widgets={posWidgets('hero')} {instance} {user} layout="full" {installedWidgets} />
+	<WidgetZone widgets={posWidgets('hero')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 {:else}
 <!-- Fallback hero hardcodé (tant qu'aucun widget n'est configuré) -->
 <section class="relative overflow-hidden noise" style="background: #0a0a0f; border-bottom: 1px solid rgba(255,255,255,.05); min-height: 220px">
@@ -326,7 +330,7 @@
 ════════════════════════════════════════════════════════════════════════ -->
 {#if hasPos('stats-bar')}
 	<div class="flex flex-wrap px-8 py-3 gap-0.5" style="background:#0d0d12; border-bottom:1px solid rgba(255,255,255,.05)">
-		<WidgetZone widgets={posWidgets('stats-bar')} {instance} {user} layout="full" {installedWidgets} />
+		<WidgetZone widgets={posWidgets('stats-bar')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 	</div>
 {/if}
 
@@ -334,7 +338,7 @@
      MAIN — position 'main' (WidgetZone) — above main content
 ════════════════════════════════════════════════════════════════════════ -->
 {#if hasPos('main')}
-	<WidgetZone widgets={posWidgets('main')} {instance} {user} layout="full" {installedWidgets} />
+	<WidgetZone widgets={posWidgets('main')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 {/if}
 
 <!-- ═══════════════════════════════════════════════════════════════════
@@ -553,8 +557,8 @@
 						<span class="text-[10px] ml-auto" style="color: #374151">{timeAgo(thread.created_at)}</span>
 					</div>
 				</div>
-				{#if (thread.post_count ?? 0) > 1}
-					<span class="sg shrink-0 text-[10px] font-bold tabular-nums mt-0.5" style="color: #374151">{thread.post_count}</span>
+				{#if replyCount(thread.post_count) > 0}
+					<span class="sg shrink-0 text-[10px] font-bold tabular-nums mt-0.5" style="color: #374151">{replyCount(thread.post_count)}</span>
 				{/if}
 			</a>
 			{:else}
@@ -581,7 +585,7 @@
 {#if hasPos('sidebar')}
 	<div class="px-6 py-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
 	     style="border-bottom:1px solid rgba(255,255,255,.05); background:#08080d">
-		<WidgetZone widgets={posWidgets('sidebar')} {instance} {user} layout="grid-3" {installedWidgets} />
+		<WidgetZone widgets={posWidgets('sidebar')} {instance} {user} layout="grid-3" {installedWidgets} {extensions} />
 	</div>
 {/if}
 
@@ -619,7 +623,7 @@
 					<svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 						<path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
 					</svg>
-					<span class="sg text-[10px] font-bold">{thread.post_count ?? 0}</span>
+					<span class="sg text-[10px] font-bold">{replyCount(thread.post_count)}</span>
 				</div>
 			</div>
 
@@ -825,19 +829,19 @@
 ════════════════════════════════════════════════════════════════════════ -->
 {#if hasPos('wide-1')}
 	<section style="border-bottom:1px solid rgba(255,255,255,.05)">
-		<WidgetZone widgets={posWidgets('wide-1')} {instance} {user} layout="full" {installedWidgets} />
+		<WidgetZone widgets={posWidgets('wide-1')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 	</section>
 {/if}
 {#if hasPos('half-1') || hasPos('half-2')}
 	<div class="grid grid-cols-1 md:grid-cols-2 gap-0" style="border-bottom:1px solid rgba(255,255,255,.05)">
 		{#if hasPos('half-1')}
 			<div style="border-right:1px solid rgba(255,255,255,.05)">
-				<WidgetZone widgets={posWidgets('half-1')} {instance} {user} layout="full" {installedWidgets} />
+				<WidgetZone widgets={posWidgets('half-1')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 			</div>
 		{/if}
 		{#if hasPos('half-2')}
 			<div>
-				<WidgetZone widgets={posWidgets('half-2')} {instance} {user} layout="full" {installedWidgets} />
+				<WidgetZone widgets={posWidgets('half-2')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 			</div>
 		{/if}
 	</div>
@@ -845,7 +849,7 @@
 
 {#if hasPos('wide-2')}
 	<section style="border-bottom:1px solid rgba(255,255,255,.05)">
-		<WidgetZone widgets={posWidgets('wide-2')} {instance} {user} layout="full" {installedWidgets} />
+		<WidgetZone widgets={posWidgets('wide-2')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 	</section>
 {/if}
 
@@ -853,17 +857,17 @@
 	<div class="grid grid-cols-1 md:grid-cols-3 gap-0" style="border-bottom:1px solid rgba(255,255,255,.05)">
 		{#if hasPos('trio-1')}
 			<div style="border-right:1px solid rgba(255,255,255,.05)">
-				<WidgetZone widgets={posWidgets('trio-1')} {instance} {user} layout="full" {installedWidgets} />
+				<WidgetZone widgets={posWidgets('trio-1')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 			</div>
 		{/if}
 		{#if hasPos('trio-2')}
 			<div style="border-right:1px solid rgba(255,255,255,.05)">
-				<WidgetZone widgets={posWidgets('trio-2')} {instance} {user} layout="full" {installedWidgets} />
+				<WidgetZone widgets={posWidgets('trio-2')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 			</div>
 		{/if}
 		{#if hasPos('trio-3')}
 			<div>
-				<WidgetZone widgets={posWidgets('trio-3')} {instance} {user} layout="full" {installedWidgets} />
+				<WidgetZone widgets={posWidgets('trio-3')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 			</div>
 		{/if}
 	</div>
@@ -876,24 +880,24 @@
 	<div class="grid grid-cols-1 md:grid-cols-3 gap-0" style="border-top:1px solid rgba(255,255,255,.05)">
 		{#if hasPos('footer-1')}
 			<div style="border-right:1px solid rgba(255,255,255,.05)">
-				<WidgetZone widgets={posWidgets('footer-1')} {instance} {user} layout="full" {installedWidgets} />
+				<WidgetZone widgets={posWidgets('footer-1')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 			</div>
 		{/if}
 		{#if hasPos('footer-2')}
 			<div style="border-right:1px solid rgba(255,255,255,.05)">
-				<WidgetZone widgets={posWidgets('footer-2')} {instance} {user} layout="full" {installedWidgets} />
+				<WidgetZone widgets={posWidgets('footer-2')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 			</div>
 		{/if}
 		{#if hasPos('footer-3')}
 			<div>
-				<WidgetZone widgets={posWidgets('footer-3')} {instance} {user} layout="full" {installedWidgets} />
+				<WidgetZone widgets={posWidgets('footer-3')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 			</div>
 		{/if}
 	</div>
 {/if}
 {#if hasPos('footer-bar')}
 	<div style="border-top:1px solid rgba(255,255,255,.05)">
-		<WidgetZone widgets={posWidgets('footer-bar')} {instance} {user} layout="full" {installedWidgets} />
+		<WidgetZone widgets={posWidgets('footer-bar')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 	</div>
 {/if}
 

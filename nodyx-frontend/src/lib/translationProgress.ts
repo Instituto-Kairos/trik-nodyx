@@ -17,9 +17,10 @@ import es   from './locales/es.json'
 import de   from './locales/de.json'
 import ru   from './locales/ru.json'
 import ptPT from './locales/pt-PT.json'
+import ptBR from './locales/pt-BR.json'
 import vi   from './locales/vi.json'
 
-const messages: Record<Locale, Record<string, string>> = { fr, en, es, de, ru, 'pt-PT': ptPT, vi }
+const messages: Record<Locale, Record<string, string>> = { fr, en, es, de, ru, 'pt-PT': ptPT, 'pt-BR': ptBR, vi }
 
 const SOURCE: Locale = 'fr'
 
@@ -35,7 +36,7 @@ const isCoreKey = (key: string) => key.startsWith('common.') || key.startsWith('
  */
 const bundle = twemoji as { width?: number; height?: number; icons: Record<string, { body: string; width?: number; height?: number }> }
 
-function flagSvg(flagIcon: string): string {
+export function flagSvg(flagIcon: string): string {
 	const icon = bundle.icons[flagIcon.replace(/^twemoji:/, '')]
 	if (!icon) return ''
 	const w = icon.width ?? bundle.width ?? 36
