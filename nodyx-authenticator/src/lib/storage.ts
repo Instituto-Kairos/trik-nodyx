@@ -8,12 +8,12 @@
 import type { EncryptedPrivateKey, ExportedPublicKey } from './crypto'
 
 const DB_NAME = 'nodyx-auth'
-const DB_VERSION = 1
+const DB_VERSION = 2
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface DeviceRecord {
-	/** ID unique de cet appareil (UUID v4 généré localement) */
+	/** ID unique de cet appareil pour cette instance (UUID v4) */
 	id: string
 	/** Label affiché : "Téléphone principal", "Backup iPad", etc. */
 	label: string
@@ -27,6 +27,27 @@ export interface DeviceRecord {
 	hubUrl: string
 	/** Token d'enregistrement Hub (optionnel — pour renouveler) */
 	deviceToken?: string
+	/**
+	 * true si id/publicKey/encryptedPrivateKey ont été DÉRIVÉS depuis la graine
+	 * maître (deriveIdentity) plutôt que générés au hasard. Les enregistrements
+	 * historiques (avant le cloisonnement par instance) n'ont pas ce champ et
+	 * doivent rester utilisables tels quels, sans jamais être régénérés.
+	 */
+	derived?: boolean
+}
+
+const SEED_RECORD_ID = 'master-seed' as const
+
+/**
+ * Graine maître chiffrée, unique par installation de l'app. Source de vérité
+ * pour dériver une identité par instance (cf crypto.ts:deriveIdentity et
+ * SPECS/NODYX_SIGNET_CLOISONNEMENT_IDENTITE_CDC.md). Un seul enregistrement,
+ * clé fixe `SEED_RECORD_ID`.
+ */
+export interface SeedRecord {
+	id: typeof SEED_RECORD_ID
+	encryptedSeed: EncryptedPrivateKey
+	createdAt: number
 }
 
 export interface PendingChallenge {
@@ -66,6 +87,11 @@ function openDB(): Promise<IDBDatabase> {
 			if (!db.objectStoreNames.contains('challenges')) {
 				const store = db.createObjectStore('challenges', { keyPath: 'id' })
 				store.createIndex('issuedAt', 'issuedAt')
+			}
+
+			// v2 : graine maître (cloisonnement de l'identité par instance)
+			if (!db.objectStoreNames.contains('identity')) {
+				db.createObjectStore('identity', { keyPath: 'id' })
 			}
 		}
 
@@ -122,6 +148,49 @@ export async function deleteDevice(id: string): Promise<void> {
 		req.onsuccess = () => resolve()
 		req.onerror = () => reject(req.error)
 	})
+}
+
+/**
+ * Trouve les appareils enregistrés pour CETTE origine d'instance précisément
+ * (généralement un seul, parfois plusieurs si l'utilisateur en a enregistré
+ * plusieurs volontairement). Remplace le `devices[0]` de l'ancien flow de
+ * connexion (cf CDC, option A) : ne jamais proposer par défaut l'identité
+ * créée pour une autre instance.
+ */
+export async function getDevicesByOrigin(origin: string): Promise<DeviceRecord[]> {
+	const devices = await getAllDevices()
+	return devices.filter((d) => {
+		try {
+			return new URL(d.hubUrl).origin === origin
+		} catch {
+			return false
+		}
+	})
+}
+
+// ─── Graine maître ──────────────────────────────────────────────────────────────
+
+export async function saveMasterSeed(encryptedSeed: EncryptedPrivateKey): Promise<void> {
+	const db = await openDB()
+	const record: SeedRecord = { id: SEED_RECORD_ID, encryptedSeed, createdAt: Date.now() }
+	return new Promise((resolve, reject) => {
+		const req = tx(db, 'identity', 'readwrite').put(record)
+		req.onsuccess = () => resolve()
+		req.onerror = () => reject(req.error)
+	})
+}
+
+export async function getMasterSeed(): Promise<SeedRecord | null> {
+	const db = await openDB()
+	return new Promise((resolve, reject) => {
+		const req = tx(db, 'identity', 'readonly').get(SEED_RECORD_ID)
+		req.onsuccess = () => resolve(req.result ?? null)
+		req.onerror = () => reject(req.error)
+	})
+}
+
+export async function hasMasterSeed(): Promise<boolean> {
+	return (await getMasterSeed()) !== null
 }
 
 // ─── Challenges ───────────────────────────────────────────────────────────────
