@@ -1,17 +1,27 @@
 <script lang="ts">
-    import { startScreenShare, type DisplaySurface, type ShareQuality, type ShareFps } from '$lib/voice'
+    import { startScreenShare, screenShareSupported, type DisplaySurface, type ShareQuality, type ShareFps } from '$lib/voice'
+    import { portal } from '$lib/actions/portal'
+    import { t } from '$lib/i18n'
+
+    const tFn = $derived($t)
 
     let { onclose }: { onclose: () => void } = $props()
+
+    // Les navigateurs mobiles ne savent PAS capturer un écran. Plutôt qu'un bouton
+    // qui échoue en silence, on l'explique franchement (et on rappelle que REGARDER
+    // un partage, lui, fonctionne très bien sur mobile).
+    const supported = screenShareSupported()
 
     let selectedSurface = $state<DisplaySurface>('monitor')
     let selectedQuality = $state<ShareQuality>('1080p')
     let selectedFps     = $state<ShareFps>(30)
     let starting        = $state(false)
 
-    const SOURCES: { surface: DisplaySurface; icon: string; label: string; desc: string }[] = [
-        { surface: 'monitor', icon: '🖥️', label: 'Écran entier',  desc: 'Tout votre bureau'     },
-        { surface: 'window',  icon: '🪟',  label: 'Application',   desc: 'Une fenêtre ouverte'   },
-        { surface: 'browser', icon: '🌐',  label: 'Onglet',         desc: 'Un onglet navigateur' },
+    // label/desc résolus via tFn dans le template (labelKey/descKey = clés i18n).
+    const SOURCES: { surface: DisplaySurface; icon: string; labelKey: string; descKey: string }[] = [
+        { surface: 'monitor', icon: '🖥️', labelKey: 'screenshare.src.monitor.label', descKey: 'screenshare.src.monitor.desc' },
+        { surface: 'window',  icon: '🪟',  labelKey: 'screenshare.src.window.label',  descKey: 'screenshare.src.window.desc'  },
+        { surface: 'browser', icon: '🌐',  labelKey: 'screenshare.src.browser.label', descKey: 'screenshare.src.browser.desc' },
     ]
 
     const QUALITIES: { id: ShareQuality; label: string; sub: string; color: string }[] = [
@@ -38,13 +48,19 @@
 </script>
 
 <!-- Overlay -->
+<!-- Portalée dans <body> : ce composant est ouvert depuis VoicePanel, qui vit
+     dans la sidebar gauche. Celle-ci porte `transform: translateX(0)` pour son
+     animation de repli, ce qui en fait le bloc conteneur des descendants
+     `fixed` : sans portal, `inset-0` désignait la sidebar (220px) et non le
+     viewport, la carte tombait à ~188px et `max-w-md` ne s'appliquait jamais. -->
 <div
+    use:portal
     class="fixed inset-0 z-[300] flex items-center justify-center p-4"
     style="background: rgba(0,0,0,0.75); backdrop-filter: blur(6px);"
     role="dialog"
     aria-modal="true"
     tabindex="-1"
-    aria-label="Partager votre écran"
+    aria-label={tFn('screenshare.aria')}
     onkeydown={onOverlayKeydown}
 >
     <!-- Dismiss click outside -->
@@ -62,14 +78,16 @@
         <div class="flex items-center justify-between px-6 pt-6 pb-4"
              style="border-bottom: 1px solid rgba(255,255,255,0.05)">
             <div>
-                <h2 class="text-sm font-bold text-white">Partager votre écran</h2>
-                <p class="text-xs text-gray-500 mt-0.5">Choisissez ce que vous souhaitez montrer</p>
+                <h2 class="text-sm font-bold text-white">{tFn('screenshare.aria')}</h2>
+                <p class="text-xs text-gray-500 mt-0.5">
+                    {supported ? tFn('screenshare.choose') : tFn('screenshare.unavailable')}
+                </p>
             </div>
             <button
                 onclick={onclose}
                 class="w-8 h-8 flex items-center justify-center rounded-lg text-gray-500 hover:text-white transition-colors"
                 style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06);"
-                aria-label="Fermer"
+                aria-label={tFn('screenshare.close')}
             >
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
@@ -78,6 +96,38 @@
         </div>
 
         <div class="px-6 py-5 space-y-5">
+
+        {#if !supported}
+            <!-- Impossible sur mobile, et ce n'est PAS un manque de Nodyx : les
+                 navigateurs Android et iOS n'implémentent pas la capture d'écran.
+                 On l'explique au lieu de laisser un bouton qui échoue en silence. -->
+            <div class="space-y-3 py-2">
+                <div class="flex items-start gap-3 rounded-lg px-4 py-3"
+                     style="background: rgba(251,191,36,0.06); border: 1px solid rgba(251,191,36,0.2)">
+                    <svg class="mt-0.5 h-4 w-4 shrink-0" style="color: rgb(251,191,36)" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
+                    </svg>
+                    <div class="space-y-1.5">
+                        <p class="text-sm font-semibold text-white">
+                            {tFn('screenshare.mobile_title')}
+                        </p>
+                        <p class="text-xs leading-relaxed" style="color: rgb(156,163,175)">
+                            {@html tFn('screenshare.mobile_desc')}
+                        </p>
+                        <p class="text-xs leading-relaxed" style="color: rgb(156,163,175)">
+                            {@html tFn('screenshare.mobile_desc2')}
+                        </p>
+                    </div>
+                </div>
+                <button
+                    onclick={onclose}
+                    class="w-full rounded-lg py-2.5 text-sm font-semibold text-white transition-colors"
+                    style="background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08)"
+                >
+                    {tFn('screenshare.understood')}
+                </button>
+            </div>
+        {:else}
 
             <!-- Source picker -->
             <div class="grid grid-cols-3 gap-2">
@@ -92,8 +142,8 @@
                     >
                         <span class="text-2xl leading-none">{src.icon}</span>
                         <div class="text-center">
-                            <p class="text-xs font-semibold text-gray-200 leading-tight">{src.label}</p>
-                            <p class="text-[10px] text-gray-500 mt-0.5 leading-tight">{src.desc}</p>
+                            <p class="text-xs font-semibold text-gray-200 leading-tight">{tFn(src.labelKey)}</p>
+                            <p class="text-[10px] text-gray-500 mt-0.5 leading-tight">{tFn(src.descKey)}</p>
                         </div>
                         <div class="w-1.5 h-1.5 rounded-full transition-colors"
                              style="background: {selectedSurface === src.surface ? 'rgb(99,102,241)' : 'transparent'}"></div>
@@ -101,12 +151,31 @@
                 {/each}
             </div>
 
+            <!-- Rappel audio, contextuel selon la source. Le son d'un partage n'est
+                 diffusé que si l'émetteur le capture : Chrome ne propose la case son
+                 que pour un ONGLET (une fenêtre n'en a pas ; l'écran entier seulement
+                 sous Windows). Sans ce rappel, on partage en silence sans le savoir. -->
+            <div class="flex items-start gap-2 rounded-lg px-3 py-2"
+                 style="background: rgb(var(--nx-accent-rgb) / 0.06); border: 1px solid rgb(var(--nx-accent-rgb) / 0.15)">
+                <svg class="mt-0.5 h-4 w-4 shrink-0" style="color: rgb(var(--nx-accent-soft))" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M11 5 6 9H2v6h4l5 4V5z"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14"/>
+                </svg>
+                <p class="text-[11px] leading-relaxed" style="color: rgb(156,163,175)">
+                    {#if selectedSurface === 'browser'}
+                        {@html tFn('screenshare.audio_browser')}
+                    {:else}
+                        {@html tFn('screenshare.audio_other')}
+                    {/if}
+                </p>
+            </div>
+
             <!-- Separator -->
             <div style="height: 1px; background: rgba(255,255,255,0.05)"></div>
 
             <!-- Quality -->
             <div class="space-y-2.5">
-                <p class="text-[10px] font-bold uppercase tracking-widest text-gray-500">Résolution</p>
+                <p class="text-[10px] font-bold uppercase tracking-widest text-gray-500">{tFn('screenshare.resolution')}</p>
                 <div class="grid grid-cols-3 gap-2">
                     {#each QUALITIES as q}
                         <button
@@ -148,10 +217,12 @@
                     </p>
                 {/if}
             </div>
+        {/if}
 
         </div>
 
         <!-- Footer -->
+        {#if supported}
         <div class="px-6 pb-6">
             <button
                 onclick={share}
@@ -164,8 +235,9 @@
                     cursor: {starting ? 'not-allowed' : 'pointer'};
                 "
             >
-                {starting ? 'Lancement...' : 'Partager maintenant →'}
+                {starting ? tFn('screenshare.starting') : tFn('screenshare.share_now')}
             </button>
         </div>
+        {/if}
     </div>
 </div>

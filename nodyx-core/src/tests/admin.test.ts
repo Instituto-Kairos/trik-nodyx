@@ -9,10 +9,13 @@ vi.mock('../config/database', () => ({
     query: vi.fn().mockResolvedValue({ rows: [], rowCount: 0 }),
   },
   redis: {
-    exists: vi.fn().mockImplementation((key: string) => Promise.resolve(key.startsWith('banned:') ? 0 : 1)),
-    setex:  vi.fn().mockResolvedValue('OK'),
-    incr:   vi.fn().mockResolvedValue(1),
-    expire: vi.fn().mockResolvedValue(1),
+    exists:   vi.fn().mockImplementation((key: string) => Promise.resolve(key.startsWith('banned:') ? 0 : 1)),
+    setex:    vi.fn().mockResolvedValue('OK'),
+    set:      vi.fn().mockResolvedValue('OK'),
+    del:      vi.fn().mockResolvedValue(1),
+    smembers: vi.fn().mockResolvedValue([]),
+    incr:     vi.fn().mockResolvedValue(1),
+    expire:   vi.fn().mockResolvedValue(1),
   },
 }))
 
@@ -42,7 +45,7 @@ vi.mock('../middleware/adminOnly', () => ({
 
 // ── Imports ───────────────────────────────────────────────────
 
-import { db } from '../config/database'
+import { db, redis } from '../config/database'
 import adminRoutes from '../routes/admin'
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -172,6 +175,58 @@ describe('GET /api/v1/admin/members', () => {
   })
 })
 
+// ── Tests — GET /admin/bans ────────────────────────────────────
+//
+// Trouvé en audit de stabilité (2026-09-11) : cette route servait l'email des
+// membres bannis en clair, angle mort du fix #540 (qui n'avait couvert que le
+// tableau de bord et GET /members). Même règle ici : masqué par défaut.
+
+describe('GET /api/v1/admin/bans', () => {
+  let app: Awaited<ReturnType<typeof buildApp>>
+
+  beforeEach(async () => {
+    vi.resetAllMocks()
+    app = await buildApp(a => a.register(adminRoutes, { prefix: '/api/v1/admin' }))
+  })
+
+  it('returns 401 without auth', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/v1/admin/bans' })
+    expect(res.statusCode).toBe(401)
+  })
+
+  it('renvoie l’email masqué, jamais en clair', async () => {
+    const fakeBan = {
+      user_id:             USER_UUID,
+      username:            'nerti',
+      email:               'jonathan.dupont@gmail.com',
+      avatar:              null,
+      reason:              'spam',
+      banned_at:           new Date(),
+      banned_by_username:  'Pokled',
+    }
+    vi.mocked(db.query).mockImplementation(async (sql: string) => {
+      if (typeof sql === 'string' && sql.includes('SELECT id FROM communities')) {
+        return { rows: [{ id: COMMUNITY_UUID }], rowCount: 1 } as any
+      }
+      return { rows: [fakeBan], rowCount: 1 } as any
+    })
+
+    const res = await app.inject({
+      method:  'GET',
+      url:     '/api/v1/admin/bans',
+      headers: { Authorization: `Bearer ${makeAdminToken()}` },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(Array.isArray(body)).toBe(true)
+    expect(body[0].username).toBe('nerti')
+    expect(body[0].email).not.toBe('jonathan.dupont@gmail.com')
+    expect(body[0].email).not.toContain('dupont')
+    expect(body[0].email).toMatch(/^j•+@g•+\.com$/)
+  })
+})
+
 // ── Tests — PATCH /admin/members/:userId ─────────────────────
 
 describe('PATCH /api/v1/admin/members/:userId', () => {
@@ -218,5 +273,68 @@ describe('PATCH /api/v1/admin/members/:userId', () => {
     expect(res.statusCode).toBe(200)
     const body = JSON.parse(res.body)
     expect(body.ok).toBe(true)
+  })
+})
+
+// ── Tests — POST /admin/members/:userId/ban (honnêteté du ban IP) ─────────────
+//
+// L'UI affichait « IP bannie » même quand aucune IP publique n'était connue
+// (registration_ip = 127.0.0.1 pour tous depuis la bascule tunnel). La réponse
+// porte désormais ip_ban_applied : null quand rien n'a pu être banni.
+
+describe('POST /api/v1/admin/members/:userId/ban', () => {
+  let app: Awaited<ReturnType<typeof buildApp>>
+
+  beforeEach(async () => {
+    vi.resetAllMocks()
+    vi.mocked(redis.set).mockResolvedValue('OK' as any)
+    vi.mocked(redis.del).mockResolvedValue(1 as any)
+    vi.mocked(redis.smembers).mockResolvedValue([] as any)
+    app = await buildApp(a => a.register(adminRoutes, { prefix: '/api/v1/admin' }))
+  })
+
+  function router(userRow: Record<string, unknown>) {
+    vi.mocked(db.query).mockImplementation(async (sql: any) => {
+      const q = String(sql)
+      if (q.includes('FROM communities')) return { rows: [{ id: COMMUNITY_UUID }], rowCount: 1 } as any
+      if (q.includes('FROM users u')) return { rows: [userRow], rowCount: 1 } as any
+      return { rows: [], rowCount: 1 } as any
+    })
+  }
+
+  it('ip_ban_applied = null quand aucune IP publique connue (registration_ip loopback)', async () => {
+    router({ username: 'nerti', email: 'x@example.com', registration_ip: '127.0.0.1', last_seen_ip: null, role: 'member' })
+
+    const res = await app.inject({
+      method:  'POST',
+      url:     `/api/v1/admin/members/${USER_UUID}/ban`,
+      headers: { Authorization: `Bearer ${makeAdminToken()}` },
+      payload: { reason: 'spam', ban_ip: true, ban_email: true },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.ip_ban_requested).toBe(true)
+    expect(body.ip_ban_applied).toBeNull()
+    // aucune écriture ip_bans
+    const ipBanInsert = vi.mocked(db.query).mock.calls.find(c => String(c[0]).includes('INTO ip_bans'))
+    expect(ipBanInsert).toBeUndefined()
+  })
+
+  it('ip_ban_applied = last_seen_ip quand une IP publique est connue', async () => {
+    router({ username: 'nerti', email: 'x@example.com', registration_ip: '127.0.0.1', last_seen_ip: '31.215.70.26', role: 'member' })
+
+    const res = await app.inject({
+      method:  'POST',
+      url:     `/api/v1/admin/members/${USER_UUID}/ban`,
+      headers: { Authorization: `Bearer ${makeAdminToken()}` },
+      payload: { reason: 'spam', ban_ip: true },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.ip_ban_applied).toBe('31.215.70.26')
+    const ipBanInsert = vi.mocked(db.query).mock.calls.find(c => String(c[0]).includes('INTO ip_bans'))
+    expect(ipBanInsert?.[1]).toEqual(expect.arrayContaining(['31.215.70.26']))
   })
 })

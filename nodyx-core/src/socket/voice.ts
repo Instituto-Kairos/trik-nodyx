@@ -2,11 +2,14 @@ import { Server, Socket } from 'socket.io'
 import * as crypto from 'crypto'
 import { checkRateLimit } from './rateLimiter'
 import { db } from '../config/database'
+// Bascule mesh↔SFU (§17-B) : additif & dormant. Flag OFF ⇒ channelMode()==='mesh'
+// partout ⇒ les lignes ci-dessous se comportent EXACTEMENT comme avant.
+import * as bascule from './voiceBascule'
 
 type CommunityRole = 'owner' | 'admin' | 'moderator' | 'member'
 const MOD_ROLES: ReadonlyArray<CommunityRole> = ['owner', 'admin', 'moderator']
 
-async function getCommunityRoleForChannel(
+export async function getCommunityRoleForChannel(
   channelId: string, userId: string,
 ): Promise<CommunityRole | null> {
   const { rows } = await db.query<{ role: CommunityRole }>(
@@ -20,7 +23,7 @@ async function getCommunityRoleForChannel(
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-function isUuid(v: unknown): v is string { return typeof v === 'string' && UUID_RE.test(v) }
+export function isUuid(v: unknown): v is string { return typeof v === 'string' && UUID_RE.test(v) }
 
 // Max size for jukebox state payload (10 KB)
 const JUKEBOX_STATE_MAX = 10_240
@@ -99,7 +102,7 @@ function getChannelSeats(channelId: string): Map<string, number> {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function voiceRoom(channelId: string): string {
+export function voiceRoom(channelId: string): string {
   return `voice:${channelId}`
 }
 
@@ -115,6 +118,11 @@ async function broadcastVoiceChannelUpdate(
       username:  s.data.username,
       avatar:    s.data.avatar ?? null,
       seatIndex: seatsMap.get(s.id) ?? 0,
+      // État volatile publié par le client (voice:state). Permet à l'écran d'un
+      // canal NON rejoint de montrer qui est muet / sourd / en train de partager.
+      muted:     s.data.voiceState?.muted    === true,
+      deafened:  s.data.voiceState?.deafened === true,
+      sharing:   s.data.voiceState?.sharing  === true,
     }))
   // Emit to presence (sidebar overview) AND voice room (handles presence-join timing edge cases)
   server.to('presence').to(voiceRoom(channelId)).emit('voice:channel_update', { channelId, members })
@@ -169,16 +177,27 @@ export function registerVoiceHandlers(socket: Socket, server: Server): void {
         seatIndex: seatsMap.get(s.id) ?? 0,
       }))
 
+    // État vocal volatile : on repart propre à chaque arrivée (un rejoin ne doit
+    // pas traîner le « muet » d'une session précédente). Le client republie son
+    // état réel juste après, via voice:state.
+    socket.data.voiceState = null
+
     // Join the room
     socket.join(room)
 
     // Broadcast updated member list to presence room
     await broadcastVoiceChannelUpdate(server, channelId)
 
-    // Send current peer list to the joiner (with their seat index + dynamic TURN creds)
-    socket.emit('voice:init', { channelId, peers, mySeatIndex: mySeat, iceServers: buildIceServers(userId) })
+    // Send current peer list to the joiner (with their seat index + dynamic TURN creds).
+    // `mode` : 'mesh' par défaut (flag off) ; 'switching'/'sfu' si la bascule est active
+    // (un arrivant sur un canal déjà SFU rejoint directement l'SFU, cf §5 du CDC bascule).
+    const chMode = bascule.channelMode(channelId)
+    socket.emit('voice:init', { channelId, peers, mySeatIndex: mySeat, iceServers: buildIceServers(userId), mode: chMode })
 
-    // Notify existing peers about the newcomer
+    // Roster : on prévient TOUJOURS les pairs. voice:peer_joined peuple la liste des
+    // participants (voiceStore.peers), indépendamment du média. C'est le CLIENT qui
+    // décide de créer un PC mesh ou non selon le mode (en SFU : roster seul, le média
+    // passe par l'SFU via voice:sfu_new_producer). Cf SPECS/NODYX_SFU_BASCULE.md.
     socket.to(room).emit('voice:peer_joined', {
       channelId,
       peer: {
@@ -189,6 +208,9 @@ export function registerVoiceHandlers(socket: Socket, server: Server): void {
         seatIndex: mySeat,
       },
     })
+
+    // Le seuil est-il franchi ? (no-op si le flag est off)
+    bascule.onSeatCount(server, channelId, getChannelSeats(channelId).size)
   })
 
   // ── voice:leave ───────────────────────────────────────────────────────────
@@ -199,6 +221,28 @@ export function registerVoiceHandlers(socket: Socket, server: Server): void {
     freeSeat(channelId, socket.id)
     server.to(room).emit('voice:peer_left', { channelId, socketId: socket.id })
     await broadcastVoiceChannelUpdate(server, channelId)
+    bascule.onLeave(server, channelId, socket.id, getChannelSeats(channelId).size)
+  })
+
+  // ── voice:sfu_ready — bascule (§17-B) ─────────────────────────────────────
+  // Un client confirme que son SFU produit + consomme (audio prêt, pas encore joué).
+  // no-op si le canal n'est pas en 'switching'. Le client émettra cet event à
+  // l'étape 2 (frontend) ; inoffensif d'ici là (flag off).
+  socket.on('voice:sfu_ready', ({ channelId }: { channelId: string }) => {
+    if (!isUuid(channelId)) return
+    bascule.onSfuReady(server, channelId, socket.id)
+  })
+
+  // ── voice:screenshare_intent — le partage d'écran DÉCLENCHE la bascule ─────
+  // Le partage est précisément le moment où le mesh s'écroule (le partageur y
+  // uploade sa vidéo une fois PAR spectateur). On ne l'attend donc pas : dès qu'un
+  // partage commence, on bascule, sans quorum. Le client, lui, a déjà capturé son
+  // écran et le publie en mesh ; il migrera vers le SFU au commit, sans redemander
+  // l'écran à l'utilisateur. No-op si le canal est déjà en bascule ou en SFU, ou si
+  // le flag est off (mesh strictement inchangé).
+  socket.on('voice:screenshare_intent', ({ channelId }: { channelId: string }) => {
+    if (!isUuid(channelId)) return
+    bascule.onScreenShare(server, channelId)
   })
 
   // ── voice:kick — moderator action ─────────────────────────────────────────
@@ -235,6 +279,7 @@ export function registerVoiceHandlers(socket: Socket, server: Server): void {
     target.leave(room)
     server.to(room).emit('voice:peer_left', { channelId, socketId: target.id })
     await broadcastVoiceChannelUpdate(server, channelId)
+    bascule.onLeave(server, channelId, target.id, getChannelSeats(channelId).size)
 
     try {
       await db.query(
@@ -280,6 +325,28 @@ export function registerVoiceHandlers(socket: Socket, server: Server): void {
     // Must be in the voice room to broadcast speaking state to its members.
     if (!socket.rooms.has(voiceRoom(channelId))) return
     socket.to(voiceRoom(channelId)).emit('voice:speaking', { socketId: socket.id, userId, speaking })
+  })
+
+  // ── voice:state — muet / sourd / partage, pour le roster du canal ─────────
+  // Le roster (voice:channel_update) ne portait que l'identité : l'écran d'un
+  // canal qu'on n'a PAS rejoint ne pouvait donc pas montrer qui est muet, sourd
+  // ou en train de partager. Le client publie ici son état ; on le garde sur le
+  // socket (volatile, rien en base) et on rediffuse le roster.
+  socket.on('voice:state', (
+    { channelId, muted, deafened, sharing }:
+    { channelId: string; muted?: unknown; deafened?: unknown; sharing?: unknown },
+  ) => {
+    if (checkRateLimit(userId, 'voice:state')) return
+    if (!isUuid(channelId)) return
+    // Doit être DANS le vocal : on ne publie pas l'état d'un canal qu'on ne
+    // fréquente pas.
+    if (!socket.rooms.has(voiceRoom(channelId))) return
+    socket.data.voiceState = {
+      muted:    muted    === true,
+      deafened: deafened === true,
+      sharing:  sharing  === true,
+    }
+    void broadcastVoiceChannelUpdate(server, channelId)
   })
 
   // ── voice:ping — keep presence alive + refresh sidebar for caller ──────────
@@ -377,6 +444,7 @@ export function registerVoiceHandlers(socket: Socket, server: Server): void {
         server.to(room).emit('voice:peer_left', { channelId, socketId: socket.id })
         // Exclude this socket manually — socket.rooms not yet cleared at disconnect
         await broadcastVoiceChannelUpdate(server, channelId, socket.id)
+        bascule.onLeave(server, channelId, socket.id, getChannelSeats(channelId).size)
       }
     }
     // Clean up P2P registry

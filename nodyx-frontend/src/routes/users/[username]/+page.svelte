@@ -4,7 +4,7 @@
 	import ReputationRings from '$lib/components/ReputationRings.svelte'
 	import GenerativeBanner from '$lib/components/GenerativeBanner.svelte'
 	import ActivityHeatmap from '$lib/components/ActivityHeatmap.svelte'
-	import { page } from '$app/stores'
+	import { page } from '$app/state'
 	import { goto } from '$app/navigation'
 	import { resolveTheme, themeToStyle } from '$lib/profileThemes'
 	import { socket } from '$lib/socket'
@@ -18,7 +18,7 @@
 	const profile = $derived(data.profile)
 
 	// Logged-in user — from parent layout
-	const me = $derived(($page.data as any).user)
+	const me = $derived((page.data as any).user)
 	const isOwnProfile = $derived(me?.username === profile.username)
 
 	// Initials fallback
@@ -103,7 +103,7 @@
 		},
 	].filter(Boolean) as { label: string; url: string; handle: string }[])
 
-	const title = $derived(`${profile.display_name || profile.username} — Nodyx`)
+	const title = $derived(`${profile.display_name || profile.username} · Nodyx`)
 	const description = $derived(
 		profile.bio ? profile.bio.slice(0, 160) : `${profile.display_name || profile.username}`
 	)
@@ -182,7 +182,7 @@
 	)
 
 	// ── Follow system ──────────────────────────────────────────────
-	const token = $derived(($page.data as any).token as string | null)
+	const token = $derived((page.data as any).token as string | null)
 
 	let following      = $state(untrack(() => data.isFollowing ?? false))
 	let followersCount = $state(untrack(() => Number(profile.followers_count ?? 0)))
@@ -329,7 +329,18 @@
 
 	<!-- Identity passport — anchored at banner bottom -->
 	<div class="absolute bottom-0 inset-x-0 z-10">
-		<div class="max-w-6xl mx-auto px-6 flex items-end gap-6 pb-6">
+		<!-- `lg:px-12` : la banniere est PLEIN-CADRE, elle deborde de 24px sous les
+		     barres laterales. Un `px-6` (24px) annulait donc exactement ce
+		     debordement et laissait ZERO gouttiere. Mesure a 1920 : couloir libre
+		     276..1700, avatar a 276 et dernier bouton a 1700, les deux collaient
+		     la barre. Les cartes en dessous s'en sortent grace a leur `p-5`
+		     interne ; cette rangee n'en a pas.
+
+		     `flex-wrap` : a 502px, avatar (128) + boutons (209) + 2 gouttieres ne
+		     laissaient que 101px au bloc du nom. Resultat, « Pokled » tronque en
+		     « Pok… » et la rangee des abonnes passant SOUS les boutons. Les
+		     boutons descendent donc sur leur propre ligne sous `md`. -->
+		<div class="max-w-[1600px] mx-auto px-6 lg:px-12 flex flex-wrap items-end gap-6 pb-6">
 
 			<!-- Avatar with frame -->
 			<div class="relative shrink-0 translate-y-10" style="width:128px;height:128px;overflow:visible">
@@ -361,7 +372,7 @@
 					<div class="w-full h-full rounded-full overflow-hidden"
 					     style="background: var(--p-accent)">
 						{#if profile.avatar_url}
-							<img src={profile.avatar_url} alt="Avatar de {profile.display_name || profile.username}" class="w-full h-full object-cover" />
+							<img src={profile.avatar_url} alt={tFn('user_profile.avatar_alt', { name: profile.display_name || profile.username })} class="w-full h-full object-cover" />
 						{:else}
 							<div class="w-full h-full flex items-center justify-center text-white text-5xl font-black select-none"
 							     aria-hidden="true">{initials}</div>
@@ -433,7 +444,7 @@
 			</div>
 
 			<!-- Action button — inside max-w-6xl, aligned bottom-right -->
-			<div class="ml-auto pb-2 shrink-0">
+			<div class="ml-auto pb-2 shrink-0 flex justify-end max-md:w-full max-md:mt-3">
 				{#if isOwnProfile}
 					<div class="flex items-center gap-2">
 						<a href="/users/{profile.username}/card" target="_blank" class="profile-action-btn"
@@ -442,7 +453,7 @@
 							<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
 								<path stroke-linecap="round" stroke-linejoin="round" d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
 							</svg>
-							Carte
+							{tFn('user.card_btn')}
 						</a>
 						<a href="/users/me/edit" class="profile-action-btn">
 							<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
@@ -468,12 +479,12 @@
 								<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
 									<path d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z"/>
 								</svg>
-								Suivi
+								{tFn('user.following')}
 							{:else}
 								<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
 									<path stroke-linecap="round" stroke-linejoin="round" d="M19 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zM4 19.235v-.11a6.375 6.375 0 0112.75 0v.109A12.318 12.318 0 0110.374 21c-2.331 0-4.512-.645-6.374-1.766z"/>
 								</svg>
-								Suivre
+								{tFn('user.follow')}
 							{/if}
 						</button>
 						<button
@@ -501,7 +512,7 @@
 <!-- ═══════════════════════════════════════════════════════════════
      XP STRIP — full width, cinematic
      ═══════════════════════════════════════════════════════════════ -->
-<div class="max-w-6xl mx-auto px-6 mb-6">
+<div class="max-w-[1600px] mx-auto px-6 mb-6">
 	<div class="profile-xp-strip p-5" style="--accent: {accent}">
 		<div class="flex items-center justify-between mb-3 gap-4 flex-wrap">
 			<div class="flex items-center gap-3">
@@ -541,8 +552,16 @@
 <!-- ═══════════════════════════════════════════════════════════════
      MAIN — 2-column layout
      ═══════════════════════════════════════════════════════════════ -->
-<div class="max-w-6xl mx-auto px-6 pb-16">
-	<div class="flex flex-col sm:flex-row gap-5 items-start">
+<div class="max-w-[1600px] mx-auto px-6 pb-16">
+	<!-- `items-stretch` sur mobile, `items-start` seulement à partir de `sm`.
+	     Piège corrigé le 2026-08-15 : en `flex-col`, l'axe TRANSVERSAL est
+	     horizontal, et `items-start` demande aux enfants de ne PAS s'étirer. Le
+	     `<main>` prenait donc la largeur de son contenu, 1358px dans un
+	     conteneur de 374px, et tout le profil était rogné. Son `min-w-0` n'y
+	     changeait rien, et `flex-1` ne gouverne que l'axe principal, ici la
+	     hauteur. En `sm:flex-row`, `items-start` retrouve son sens : aligner les
+	     deux colonnes en haut. -->
+	<div class="flex flex-col sm:flex-row gap-5 items-stretch sm:items-start">
 
 		<!-- ─── LEFT SIDEBAR ─────────────────────────────────────────── -->
 		<aside class="w-full sm:w-64 sm:shrink-0 space-y-3">
@@ -653,12 +672,12 @@
 					</div>
 					<div class="w-10 h-10 flex items-center justify-center text-lg"
 					     style="background: color-mix(in srgb, var(--p-accent) 8%, transparent); border: 1px dashed color-mix(in srgb, var(--p-accent) 20%, transparent)"
-					     title="Bientôt disponible">
+					     title={tFn('user_profile.soon')}>
 						🔒
 					</div>
 					<div class="w-10 h-10 flex items-center justify-center text-lg"
 					     style="background: color-mix(in srgb, var(--p-accent) 8%, transparent); border: 1px dashed color-mix(in srgb, var(--p-accent) 20%, transparent)"
-					     title="Bientôt disponible">
+					     title={tFn('user_profile.soon')}>
 						🔒
 					</div>
 				</div>

@@ -11,7 +11,9 @@ import { requireAuth } from '../middleware/auth'
 import * as UserModel from '../models/user'
 import { toSelfUser } from '../utils/publicUser'
 import { isSmtpConfigured, sendPasswordResetEmail, sendVerificationEmail } from '../services/emailService'
+import { resolveServerLocale } from '../i18n/serverStrings'
 import { getUserTotp, TOTP_PENDING_TTL } from './totp'
+import { getClientIp, estPubliquementRoutable } from '../utils/clientIp'
 
 // ── Discord security alerts ───────────────────────────────────────────────────
 
@@ -48,7 +50,7 @@ const BCRYPT_ROUNDS = 12
 
 // Rate limit strict pour forgot-password : 3 req / 15 min / IP
 async function forgotPasswordRateLimit(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const key   = `reset_rate:${request.ip}`
+  const key   = `reset_rate:${getClientIp(request)}`
   const count = await redis.incr(key)
   if (count === 1) await redis.expire(key, 15 * 60)
   if (count > 3) {
@@ -62,7 +64,7 @@ async function forgotPasswordRateLimit(request: FastifyRequest, reply: FastifyRe
 
 // Rate limit strict pour login : 5 tentatives / 15 min / IP
 async function loginRateLimit(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const key   = `login_rate:${request.ip}`
+  const key   = `login_rate:${getClientIp(request)}`
   const count = await redis.incr(key)
   if (count === 1) await redis.expire(key, 15 * 60)
   if (count > 5) {
@@ -77,7 +79,7 @@ async function loginRateLimit(request: FastifyRequest, reply: FastifyReply): Pro
 
 // Rate limit pour register : 5 comptes / heure / IP
 async function registerRateLimit(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const key   = `register_rate:${request.ip}`
+  const key   = `register_rate:${getClientIp(request)}`
   const count = await redis.incr(key)
   if (count === 1) await redis.expire(key, 60 * 60)
   if (count > 5) {
@@ -109,7 +111,9 @@ export async function invalidateUserSessions(userId: string): Promise<void> {
 }
 
 const RegisterBody = z.object({
-  username: z.string().min(3).max(50),
+  // trim() AVANT min/max : une espace de tête ou de fin donnait un pseudo
+  // « nerti » (avec espace) dont la page profil renvoie 404. Incident 2026-09.
+  username: z.string().trim().min(3).max(50),
   email:    z.string().email(),
   password: z.string().min(8).max(100),
   // Anti-bot couche 1 : honeypot field. Doit être vide (humain ne le voit
@@ -121,13 +125,6 @@ const RegisterBody = z.object({
   // remplir 3 champs).
   form_t:   z.coerce.number().int().positive().optional(),
 })
-
-// Username manifestement bot : 10 caractères strictement [a-z] sans aucun
-// tiret/underscore/chiffre. Aucun humain ne nomme son compte 'dfjqexemtj'.
-// On match strict pour éviter de bloquer 'alicebob42' (chiffres) ou
-// 'jean_doe' (underscore). Si un humain veut vraiment ce pattern, qu'il
-// ajoute juste une lettre majuscule ou un chiffre.
-const BOT_USERNAME_RE = /^[a-z]{10}$/
 
 const ANTI_BOT_REJECT = {
   code: 'AUTOMATED_SIGNUP_DETECTED',
@@ -156,7 +153,7 @@ export default async function authRoutes(app: FastifyInstance) {
   }, async (request, reply) => {
     const body = request.body as z.infer<typeof RegisterBody>
     const { username, email, password, website, form_t } = body
-    const clientIpEarly = request.ip
+    const clientIpEarly = getClientIp(request)
     const userAgent = String(request.headers['user-agent'] ?? '').slice(0, 500)
 
     // Helper : log dans stdout + INSERT en DB pour monitoring Olympus
@@ -185,11 +182,10 @@ export default async function authRoutes(app: FastifyInstance) {
         return reply.code(403).send(ANTI_BOT_REJECT)
       }
     }
-    // Couche 5 : pattern username random — 10 chars strict [a-z]
-    if (BOT_USERNAME_RE.test(username)) {
-      recordBotAttempt('bot_username_pattern', {})
-      return reply.code(403).send(ANTI_BOT_REJECT)
-    }
+    // Note : pas de rejet sur la FORME du username. Une heuristique de type
+    // /^[a-z]{10}$/ recalait des pseudos parfaitement humains (alexandria,
+    // strawberry, lapersonne...) pour ~0 bot que le honeypot ne prend pas déjà.
+    // Le honeypot (couche 1) + le timing (couche 2) portent la défense.
 
     const clientIp = clientIpEarly
 
@@ -237,6 +233,14 @@ export default async function authRoutes(app: FastifyInstance) {
     // Store registration IP
     await db.query(`UPDATE users SET registration_ip = $1::inet WHERE id = $2`, [clientIp, user.id]).catch(() => {})
 
+    // Locale déduite d'Accept-Language à l'inscription (pas encore de préférence
+    // explicite) : sert aux emails/push, retraduisibles nulle part une fois envoyés.
+    const signupLocale = resolveServerLocale(
+      request.headers['accept-language'],
+      process.env.NODYX_COMMUNITY_LANGUAGE
+    )
+    await db.query(`UPDATE users SET locale = $1 WHERE id = $2`, [signupLocale, user.id]).catch(() => {})
+
     // Alerte Discord nouvelle inscription
     sendSecurityAlert({
       title:  '👤 Nouvelle inscription',
@@ -282,7 +286,7 @@ export default async function authRoutes(app: FastifyInstance) {
       )
       const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:5173'
       const verifyUrl = `${frontendUrl}/auth/verify-email/${verificationToken}`
-      sendVerificationEmail({ to: email, username, verifyUrl }).catch(() => {})
+      sendVerificationEmail({ to: email, username, verifyUrl, locale: signupLocale }).catch(() => {})
       return reply.code(201).send({ pending_verification: true })
     }
 
@@ -300,7 +304,7 @@ export default async function authRoutes(app: FastifyInstance) {
 
     const [user, ipBanRes] = await Promise.all([
       UserModel.findByEmail(email),
-      db.query(`SELECT 1 FROM ip_bans WHERE ip = $1::inet LIMIT 1`, [request.ip]),
+      db.query(`SELECT 1 FROM ip_bans WHERE ip = $1::inet LIMIT 1`, [getClientIp(request)]),
     ])
 
     if (ipBanRes.rows.length > 0) {
@@ -325,7 +329,7 @@ export default async function authRoutes(app: FastifyInstance) {
     }
 
     if (!user || !valid) {
-      const realIp = (request.headers['cf-connecting-ip'] as string) || request.ip
+      const realIp = getClientIp(request)  // fiable via trustProxy (loopback+privé+Cloudflare)
       const logLine = `${new Date().toISOString()} INVALID_CREDENTIALS ip=${realIp}\n`
       fs.appendFile('/var/log/nodyx-auth.log', logLine, () => {})
 
@@ -375,6 +379,18 @@ export default async function authRoutes(app: FastifyInstance) {
       }
     }
 
+    // Cible utile pour le bannissement d'IP : registration_ip vaut 127.0.0.1
+    // pour tout le monde (inscription via proxy SSR). On ne persiste qu'une
+    // adresse réellement publique. Posé ICI, avant les branches 2FA qui
+    // renvoient tôt (signet/TOTP) : un compte protégé par 2FA ne repasse
+    // jamais par la fin de cette fonction, donc last_seen_ip ne serait sinon
+    // jamais peuplé pour lui — exactement les comptes admin les plus probables
+    // à activer 2FA, et donc les plus probables à devoir bannir une IP depuis.
+    const loginIp = getClientIp(request)  // fiable via trustProxy
+    if (estPubliquementRoutable(loginIp)) {
+      db.query(`UPDATE users SET last_seen_ip = $1 WHERE id = $2`, [loginIp, user.id]).catch(() => {})
+    }
+
     // ── 2FA Signet — prioritaire sur TOTP ────────────────────────────────────
     // Si l'user a au moins un appareil Signet enregistré, on délègue le 2ème
     // facteur à Signet (plus fort qu'un TOTP code) — même flow que le login
@@ -405,10 +421,10 @@ export default async function authRoutes(app: FastifyInstance) {
     await trackSession(user.id, token)
 
     // Détection connexion depuis une nouvelle IP
-    const loginIp    = (request.headers['cf-connecting-ip'] as string) || request.ip
     const knownIpKey = `known_ip:${user.id}`
     const knownIp    = await redis.get(knownIpKey)
     await redis.set(knownIpKey, loginIp, 'EX', 60 * 60 * 24 * 30) // 30 jours
+
     if (knownIp && knownIp !== loginIp) {
       sendSecurityAlert({
         title:  '🌍 Connexion depuis une nouvelle IP',
@@ -445,7 +461,7 @@ export default async function authRoutes(app: FastifyInstance) {
     const publicUser = toSelfUser(user)
 
     // Alerte connexion admin/owner
-    const realIpLogin = (request.headers['cf-connecting-ip'] as string) || request.ip
+    const realIpLogin = getClientIp(request)  // fiable via trustProxy
     db.query(
       `SELECT role FROM community_members
        WHERE user_id = $1 AND role IN ('admin', 'owner') LIMIT 1`,
@@ -507,14 +523,15 @@ export default async function authRoutes(app: FastifyInstance) {
       await db.query(
         `INSERT INTO password_resets (user_id, token_hash, expires_at, ip_address, user_agent)
          VALUES ($1, $2, $3, $4, $5)`,
-        [user.id, tokenHash, expiresAt, request.ip, request.headers['user-agent'] ?? null]
+        [user.id, tokenHash, expiresAt, getClientIp(request), request.headers['user-agent'] ?? null]
       )
 
       const resetUrl = `${process.env.FRONTEND_URL}/reset-password/${rawToken}`
 
       if (isSmtpConfigured()) {
         try {
-          await sendPasswordResetEmail({ to: user.email, username: user.username, resetUrl })
+          const locale = resolveServerLocale(user.locale, process.env.NODYX_COMMUNITY_LANGUAGE)
+          await sendPasswordResetEmail({ to: user.email, username: user.username, resetUrl, locale })
         } catch (err) {
           request.log.error({ err }, 'Failed to send password reset email')
           // Ne pas exposer l'erreur SMTP à l'utilisateur
@@ -625,7 +642,7 @@ export default async function authRoutes(app: FastifyInstance) {
 
     // Rate limit : 1 renvoi / 5 min / email ET 3 / 5 min / IP
     const rateLimitKey = `resend_verify:${email.toLowerCase()}`
-    const rateLimitIp  = `resend_verify_ip:${request.ip}`
+    const rateLimitIp  = `resend_verify_ip:${getClientIp(request)}`
     const [countEmail, countIp] = await Promise.all([
       redis.incr(rateLimitKey),
       redis.incr(rateLimitIp),
@@ -651,7 +668,8 @@ export default async function authRoutes(app: FastifyInstance) {
 
     const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:5173'
     const verifyUrl = `${frontendUrl}/auth/verify-email/${verificationToken}`
-    sendVerificationEmail({ to: user.email, username: user.username, verifyUrl }).catch(() => {})
+    const locale = resolveServerLocale(user.locale, process.env.NODYX_COMMUNITY_LANGUAGE)
+    sendVerificationEmail({ to: user.email, username: user.username, verifyUrl, locale }).catch(() => {})
 
     return reply.send({ message: 'Si ce compte existe et n\'est pas vérifié, un email a été envoyé.' })
   })

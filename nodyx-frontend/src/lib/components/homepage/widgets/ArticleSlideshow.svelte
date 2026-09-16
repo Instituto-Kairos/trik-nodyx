@@ -279,7 +279,7 @@
 								class="as-dot-btn"
 								class:as-dot-btn--active={i === slideIndex}
 								onclick={() => { slideTo(i); startTimers() }}
-								aria-label="Slide {i+1}"
+								aria-label={tFn('home.slide_aria', { n: i+1 })}
 							>
 								{#if i === slideIndex}
 									<span class="as-progress" style="width:{progressPct}%"></span>
@@ -308,10 +308,13 @@
 <style>
 	/* ── Root ──────────────────────────────────────────────────────────────── */
 	.as-root {
+		/* Couche de base (rarement visible, .as-bg-fallback la recouvre) :
+		   suit le fond de site --nb, pas --nc (réservé aux surfaces "carte"). */
 		position: relative;
 		width: 100%;
 		overflow: hidden;
-		background: #06060d;
+		border-radius: var(--nr, 0px);
+		background: var(--nb, #06060d);
 	}
 
 	/* ── Background ─────────────────────────────────────────────────────────── */
@@ -324,9 +327,11 @@
 		opacity: .48;
 	}
 	.as-bg-fallback {
+		/* Dégradé de secours (pas d'image) : suit primary/accent du thème plutôt
+		   qu'un violet fixe, pour rester cohérent avec un préthème différent. */
 		position: absolute;
 		inset: 0;
-		background: linear-gradient(135deg, #12012c 0%, #020c1b 100%);
+		background: linear-gradient(135deg, rgb(var(--np-rgb) / .35) 0%, var(--nb, #020c1b) 100%);
 	}
 
 	/* ── Overlays ───────────────────────────────────────────────────────────── */
@@ -346,7 +351,7 @@
 		position: absolute;
 		bottom: 0; left: 0;
 		width: 320px; height: 200px;
-		background: radial-gradient(ellipse at bottom left, rgb(var(--nx-accent-2-rgb) / .18), transparent 70%);
+		background: radial-gradient(ellipse at bottom left, rgb(var(--np-rgb) / .18), transparent 70%);
 		pointer-events: none;
 	}
 
@@ -358,13 +363,13 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		color: #374151;
+		color: var(--ntm, #374151);
 		font-size: 13px;
 	}
 	.as-spinner {
 		width: 24px; height: 24px;
-		border: 2px solid rgba(167,139,250,.2);
-		border-top-color: var(--nx-accent-2-soft);
+		border: 2px solid rgb(var(--np-rgb) / .2);
+		border-top-color: var(--np);
 		border-radius: 50%;
 		animation: spin .7s linear infinite;
 	}
@@ -382,16 +387,16 @@
 	.as-play svg {
 		width: 64px; height: 64px;
 		color: rgba(255,255,255,.85);
-		background: rgb(var(--nx-accent-2-rgb) / .35);
+		background: rgb(var(--np-rgb) / .35);
 		border-radius: 50%;
 		padding: 14px;
-		border: 2px solid rgb(var(--nx-accent-2-rgb) / .5);
+		border: 2px solid rgb(var(--np-rgb) / .5);
 		transition: transform .15s, background .15s;
-		filter: drop-shadow(0 4px 24px rgb(var(--nx-accent-2-rgb) / .4));
+		filter: drop-shadow(0 4px 24px rgb(var(--np-rgb) / .4));
 	}
 	.as-play:hover svg {
 		transform: scale(1.08);
-		background: rgb(var(--nx-accent-2-rgb) / .55);
+		background: rgb(var(--np-rgb) / .55);
 	}
 
 	/* ── Content ────────────────────────────────────────────────────────────── */
@@ -415,7 +420,7 @@
 	.as-cat-line {
 		height: 1px;
 		width: 2.5rem;
-		background: linear-gradient(to right, var(--nx-accent-2-strong), var(--nx-cyan));
+		background: linear-gradient(to right, var(--np), var(--na));
 		flex-shrink: 0;
 	}
 	.as-cat-text {
@@ -423,14 +428,14 @@
 		font-weight: 800;
 		text-transform: uppercase;
 		letter-spacing: .22em;
-		color: var(--nx-accent-2-soft);
+		color: var(--np);
 	}
 	.as-cat-badge {
 		font-size: 10px;
 		font-weight: 700;
-		color: var(--nx-cyan);
-		background: rgb(var(--nx-cyan-rgb) / .12);
-		border: 1px solid rgb(var(--nx-cyan-rgb) / .25);
+		color: var(--na);
+		background: rgb(var(--na-rgb) / .12);
+		border: 1px solid rgb(var(--na-rgb) / .25);
 		padding: 1px 7px;
 		border-radius: 3px;
 	}
@@ -438,8 +443,8 @@
 	/* ── Title ──────────────────────────────────────────────────────────────── */
 	.as-title {
 		font-size: clamp(1.25rem, 2.2vw, 1.85rem);
-		font-weight: 800;
-		color: #fff;
+		font-weight: var(--nfwh, 800);
+		color: var(--nt, #fff);
 		line-height: 1.25;
 		-webkit-line-clamp: 3;
 		line-clamp: 3;
@@ -455,12 +460,12 @@
 		text-decoration: none;
 		transition: color .15s;
 	}
-	.as-title a:hover { color: var(--nx-accent-2-soft2); }
+	.as-title a:hover { color: var(--nl, var(--np)); }
 
 	/* ── Excerpt ────────────────────────────────────────────────────────────── */
 	.as-excerpt {
 		font-size: 13px;
-		color: #6b7280;
+		color: var(--ntm, #6b7280);
 		line-height: 1.6;
 		-webkit-line-clamp: 2;
 		line-clamp: 2;
@@ -485,8 +490,8 @@
 	.as-avatar {
 		width: 28px; height: 28px;
 		overflow: hidden;
-		background: rgb(var(--nx-accent-2-rgb) / .3);
-		outline: 1.5px solid rgb(var(--nx-accent-2-rgb) / .4);
+		background: rgb(var(--np-rgb) / .3);
+		outline: 1.5px solid rgb(var(--np-rgb) / .4);
 		outline-offset: 1px;
 		border-radius: 2px;
 		display: flex;
@@ -496,10 +501,12 @@
 	}
 	.as-avatar img { width: 100%; height: 100%; object-fit: cover; }
 	.as-avatar span { font-size: 11px; font-weight: 700; color: #fff; }
-	.as-author-name { font-size: 13px; color: #9ca3af; }
-	.as-dot { color: #374151; }
-	.as-date { font-size: 13px; color: #6b7280; }
+	.as-author-name { font-size: 13px; color: var(--ntm, #9ca3af); }
+	.as-dot { color: var(--ntm, #374151); }
+	.as-date { font-size: 13px; color: var(--ntm, #6b7280); }
 
+	/* CTA sur fond dégradé primary/accent : texte blanc fixe pour le contraste,
+	   pas --nl (qui pourrait se fondre dans le dégradé selon le préthème). */
 	.as-cta {
 		margin-left: auto;
 		display: flex;
@@ -512,14 +519,14 @@
 		letter-spacing: .1em;
 		color: #fff;
 		text-decoration: none;
-		background: linear-gradient(135deg, rgb(var(--nx-accent-2-rgb) / .55), rgb(var(--nx-cyan-rgb) / .25));
-		border: 1px solid rgb(var(--nx-accent-2-rgb) / .45);
+		background: linear-gradient(135deg, rgb(var(--np-rgb) / .55), rgb(var(--na-rgb) / .25));
+		border: 1px solid rgb(var(--np-rgb) / .45);
 		transition: background .15s, border-color .15s;
 		white-space: nowrap;
 	}
 	.as-cta:hover {
-		background: linear-gradient(135deg, rgb(var(--nx-accent-2-rgb) / .75), rgb(var(--nx-cyan-rgb) / .4));
-		border-color: rgb(var(--nx-accent-2-rgb) / .7);
+		background: linear-gradient(135deg, rgb(var(--np-rgb) / .75), rgb(var(--na-rgb) / .4));
+		border-color: rgb(var(--np-rgb) / .7);
 	}
 	.as-cta svg { width: 14px; height: 14px; transition: transform .15s; }
 	.as-cta:hover svg { transform: translateX(3px); }
@@ -539,7 +546,7 @@
 	.as-dot-btn {
 		position: relative;
 		height: 2px;
-		background: rgba(255,255,255,.15);
+		background: var(--nborder, rgba(255,255,255,.15));
 		border: none;
 		padding: 0;
 		cursor: pointer;
@@ -556,7 +563,7 @@
 		top: -1px;
 		left: 0;
 		height: 4px;
-		background: linear-gradient(to right, var(--nx-accent-2-strong), var(--nx-cyan));
+		background: linear-gradient(to right, var(--np), var(--na));
 		transition: none;
 	}
 	.as-arrows {
@@ -569,16 +576,16 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		border: 1px solid rgba(255,255,255,.08);
+		border: var(--nbw, 1px) solid var(--nborder, rgba(255,255,255,.08));
 		background: transparent;
-		color: #6b7280;
+		color: var(--ntm, #6b7280);
 		cursor: pointer;
 		transition: border-color .15s, color .15s;
 		border-radius: 2px;
 	}
 	.as-arrow:hover {
-		border-color: rgb(var(--nx-accent-2-rgb) / .5);
-		color: var(--nx-accent-2-soft);
+		border-color: rgb(var(--np-rgb) / .5);
+		color: var(--np);
 	}
 	.as-arrow svg { width: 14px; height: 14px; }
 

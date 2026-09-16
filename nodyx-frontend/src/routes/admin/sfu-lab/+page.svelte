@@ -1,0 +1,279 @@
+<script lang="ts">
+  import { browser } from '$app/environment'
+  import { onDestroy } from 'svelte'
+  import {
+    sfuJoin, sfuLeave, sfuSetMuted, sfuAudit,
+    sfuStartScreenShare, sfuStopScreenShare,
+    sfuPhaseStore, sfuErrorStore, sfuLogStore, sfuConsumersStore, sfuMutedStore,
+    sfuAuditStore, sfuScreensStore, sfuLocalScreenStore,
+  } from '$lib/voiceSfu'
+  import { t } from '$lib/i18n'
+
+  const tFn = $derived($t)
+
+  // Audit réseau : rafraîchi manuellement ou en auto (2 s) pendant une session.
+  let autoAudit = $state(false)
+  let auditTimer: ReturnType<typeof setInterval> | null = null
+  function refreshAudit() { if (channelId.trim()) void sfuAudit(channelId.trim()) }
+  $effect(() => {
+    if (auditTimer) { clearInterval(auditTimer); auditTimer = null }
+    if (autoAudit && phase === 'active') {
+      refreshAudit()
+      auditTimer = setInterval(refreshAudit, 2000)
+    }
+  })
+  onDestroy(() => { if (auditTimer) clearInterval(auditTimer) })
+
+  function lossClass(l: number): string {
+    if (l > 0.05) return 'text-red-400'
+    if (l > 0.01) return 'text-amber-400'
+    return 'text-zinc-400'
+  }
+  function iceClass(s: string): string {
+    if (s === 'connected' || s === 'completed') return 'text-emerald-400'
+    if (s === 'disconnected' || s === 'failed' || s === 'closed') return 'text-red-400'
+    return 'text-amber-400'
+  }
+
+  // Laboratoire SFU (P1) : prouve le chemin complet device → transports →
+  // produce(micro) → consume, en isolation TOTALE du vocal mesh existant.
+  // Prérequis côté serveur : nodyx-sfud lancé + VOICE_SFU_URL/VOICE_SFU_TOKEN
+  // dans le .env du core (sinon toute action répond sfu_disabled).
+
+  let channelId = $state(browser ? (localStorage.getItem('nodyx:sfu-lab:channel') ?? '') : '')
+  let logEl: HTMLElement | null = $state(null)
+
+  const phase = $derived($sfuPhaseStore)
+  const busy  = $derived(phase === 'joining' || phase === 'connecting' || phase === 'recovering')
+
+  // Partage d'écran SFU (P2) : mon aperçu local + les écrans distants reçus.
+  const localScreen   = $derived($sfuLocalScreenStore)
+  const remoteScreens = $derived($sfuScreensStore)
+
+  // Action Svelte : branche un MediaStream sur le srcObject d'un <video>.
+  // ⚠ Réassigner srcObject réinitialise l'élément (noir jusqu'à la keyframe) même
+  // pour le même objet : on ne le fait que si le flux change réellement.
+  function bindStream(node: HTMLVideoElement, stream: MediaStream) {
+    node.srcObject = stream
+    return {
+      update(s: MediaStream) {
+        if (node.srcObject === s) return
+        node.srcObject = s
+      },
+      destroy() { node.srcObject = null },
+    }
+  }
+
+  function join() {
+    if (browser) localStorage.setItem('nodyx:sfu-lab:channel', channelId.trim())
+    void sfuJoin(channelId.trim())
+  }
+
+  // Console : suit le bas automatiquement.
+  $effect(() => {
+    $sfuLogStore
+    if (logEl) logEl.scrollTop = logEl.scrollHeight
+  })
+
+  const PHASE_LABEL: Record<string, string> = {
+    idle: 'asfu.phase_idle', joining: 'asfu.phase_joining', mesh: 'asfu.phase_mesh',
+    connecting: 'asfu.phase_connecting', active: 'asfu.phase_active',
+    recovering: 'asfu.phase_recovering', error: 'asfu.phase_error',
+  }
+  const PHASE_CLASS: Record<string, string> = {
+    idle: 'bg-zinc-800 text-zinc-400',
+    joining: 'bg-amber-500/15 text-amber-400',
+    mesh: 'bg-sky-500/15 text-sky-400',
+    connecting: 'bg-amber-500/15 text-amber-400',
+    active: 'bg-emerald-500/15 text-emerald-400',
+    recovering: 'bg-amber-500/15 text-amber-400 animate-pulse',
+    error: 'bg-red-500/15 text-red-400',
+  }
+</script>
+
+<svelte:head><title>{tFn('asfu.page_title')}</title></svelte:head>
+
+<div class="space-y-6 max-w-3xl">
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-2xl font-bold text-white">{tFn('asfu.title')}</h1>
+      <p class="text-sm text-zinc-500 mt-1">
+        {tFn('asfu.subtitle')}
+      </p>
+    </div>
+    <span class="rounded-full px-3 py-1 text-xs font-semibold tracking-wide {PHASE_CLASS[phase]}">
+      {tFn(PHASE_LABEL[phase])}
+    </span>
+  </div>
+
+  {#if $sfuErrorStore}
+    <div class="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+      {$sfuErrorStore}
+    </div>
+  {/if}
+
+  <div class="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5 space-y-4">
+    <label class="block">
+      <span class="text-xs font-semibold uppercase tracking-widest text-zinc-500">{tFn('asfu.channel_label')}</span>
+      <input
+        type="text"
+        bind:value={channelId}
+        placeholder="00000000-0000-0000-0000-000000000000"
+        disabled={phase === 'active' || busy}
+        class="mt-2 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 font-mono text-sm text-zinc-200 focus:border-indigo-500 focus:outline-none disabled:opacity-50"
+      />
+    </label>
+
+    <div class="flex gap-3">
+      {#if phase === 'active'}
+        <button
+          onclick={() => sfuSetMuted(!$sfuMutedStore)}
+          class="rounded-lg px-4 py-2 text-sm font-semibold {$sfuMutedStore ? 'bg-amber-600 hover:bg-amber-500' : 'bg-zinc-700 hover:bg-zinc-600'} text-white"
+        >
+          {$sfuMutedStore ? tFn('asfu.mic_muted') : tFn('asfu.mute_mic')}
+        </button>
+        <button
+          onclick={() => (localScreen ? void sfuStopScreenShare() : void sfuStartScreenShare())}
+          class="rounded-lg px-4 py-2 text-sm font-semibold {localScreen ? 'bg-fuchsia-600 hover:bg-fuchsia-500' : 'bg-zinc-700 hover:bg-zinc-600'} text-white"
+        >
+          {localScreen ? tFn('asfu.stop_share') : tFn('asfu.share_screen')}
+        </button>
+        <button
+          onclick={() => void sfuLeave()}
+          class="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500"
+        >
+          {tFn('asfu.leave')}
+        </button>
+      {:else}
+        <button
+          onclick={join}
+          disabled={busy || channelId.trim().length < 36}
+          class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:bg-zinc-800 disabled:text-zinc-500"
+        >
+          {busy ? tFn('asfu.connecting') : tFn('asfu.join_sfu')}
+        </button>
+        {#if phase === 'error' || phase === 'mesh'}
+          <button
+            onclick={() => void sfuLeave()}
+            class="rounded-lg bg-zinc-700 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-600"
+          >
+            {tFn('asfu.reset')}
+          </button>
+        {/if}
+      {/if}
+    </div>
+  </div>
+
+  <div class="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
+    <h2 class="text-xs font-bold uppercase tracking-widest text-zinc-500 mb-3">
+      {tFn('asfu.streams_received', { n: $sfuConsumersStore.length })}
+    </h2>
+    {#if $sfuConsumersStore.length === 0}
+      <p class="text-sm text-zinc-600">{tFn('asfu.no_streams')}</p>
+    {:else}
+      <ul class="space-y-2">
+        {#each $sfuConsumersStore as c (c.consumerId)}
+          <li class="flex items-center gap-3 rounded-lg bg-zinc-950 px-3 py-2 text-sm">
+            <span class="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span class="text-zinc-200 font-medium">{c.userId}</span>
+            <span class="text-zinc-600 font-mono text-xs">{c.kind} · {c.producerId.slice(0, 8)}…</span>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </div>
+
+  {#if localScreen || remoteScreens.length > 0}
+    <div class="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
+      <h2 class="text-xs font-bold uppercase tracking-widest text-zinc-500 mb-3">
+        {tFn('asfu.shared_screens', { n: remoteScreens.length + (localScreen ? 1 : 0) })}
+      </h2>
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {#if localScreen}
+          <div class="relative aspect-video overflow-hidden rounded-lg border border-fuchsia-500/40 bg-black">
+            <!-- svelte-ignore a11y_media_has_caption -->
+            <video use:bindStream={localScreen} autoplay playsinline muted class="h-full w-full object-contain"></video>
+            <span class="absolute left-2 top-2 rounded-full bg-fuchsia-600/80 px-2 py-0.5 text-[10px] font-bold text-white">{tFn('asfu.my_screen')}</span>
+          </div>
+        {/if}
+        {#each remoteScreens as sc (sc.producerId)}
+          <div class="relative aspect-video overflow-hidden rounded-lg border border-zinc-700 bg-black">
+            <!-- svelte-ignore a11y_media_has_caption -->
+            <!-- Pas muet : le son de l'écran partagé vit dans ce flux, c'est ici qu'on
+                 l'entend (l'aperçu local, lui, reste muet pour éviter l'écho). -->
+            <video use:bindStream={sc.stream} autoplay playsinline class="h-full w-full object-contain"></video>
+            <span class="absolute bottom-2 left-2 rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-semibold text-white">{sc.userId}</span>
+          </div>
+        {/each}
+      </div>
+    </div>
+  {/if}
+
+  <div class="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-xs font-bold uppercase tracking-widest text-zinc-500">{tFn('asfu.network_audit')}</h2>
+      <div class="flex items-center gap-3">
+        <label class="flex items-center gap-1.5 text-xs text-zinc-400">
+          <input type="checkbox" bind:checked={autoAudit} class="accent-indigo-500" /> auto 2s
+        </label>
+        <button
+          onclick={refreshAudit}
+          disabled={channelId.trim().length < 36}
+          class="rounded-lg bg-zinc-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-zinc-600 disabled:opacity-40"
+        >
+          {tFn('asfu.refresh')}
+        </button>
+      </div>
+    </div>
+    {#if $sfuAuditStore.length === 0}
+      <p class="text-sm text-zinc-600">{tFn('asfu.no_transport')}</p>
+    {:else}
+      <div class="overflow-x-auto">
+        <table class="tableau-cartes w-full text-xs font-mono md:min-w-[720px]">
+          <thead class="text-zinc-500">
+            <tr class="text-left">
+              <th class="py-1 pr-3 font-semibold">{tFn('asfu.col_participant')}</th>
+              <th class="py-1 pr-3 font-semibold">Dir</th>
+              <th class="py-1 pr-3 font-semibold">ICE</th>
+              <th class="py-1 pr-3 font-semibold">Local</th>
+              <th class="py-1 pr-3 font-semibold">{tFn('asfu.col_remote')}</th>
+              <th class="py-1 pr-3 font-semibold">Proto</th>
+              <th class="py-1 pr-3 font-semibold text-right">↓ kbps</th>
+              <th class="py-1 pr-3 font-semibold text-right">↑ kbps</th>
+              <th class="py-1 pr-3 font-semibold text-right">{tFn('asfu.col_loss')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each $sfuAuditStore as r (r.participant + r.direction)}
+              <tr class="border-t border-zinc-800/60">
+                <td class="py-1 pr-3 text-zinc-300" data-label={tFn('asfu.col_participant')}>{r.participant.slice(0, 8)}</td>
+                <td class="py-1 pr-3 text-zinc-500" data-label="Dir">{r.direction}</td>
+                <td class="py-1 pr-3 {iceClass(r.iceState)}" data-label="ICE">{r.iceState}</td>
+                <td class="py-1 pr-3 text-zinc-400" data-label="Local">{r.local}</td>
+                <td class="py-1 pr-3 text-indigo-300" data-label={tFn('asfu.col_remote')}>{r.remote}</td>
+                <td class="py-1 pr-3 text-zinc-500" data-label="Proto">{r.proto}</td>
+                <td class="py-1 pr-3 text-right text-zinc-300" data-label="↓ kbps">{r.recvKbps}</td>
+                <td class="py-1 pr-3 text-right text-zinc-300" data-label="↑ kbps">{r.sendKbps}</td>
+                <td class="py-1 pr-3 text-right {lossClass(Math.max(r.lossRecv, r.lossSent))}" data-label={tFn('asfu.col_loss')}>{(Math.max(r.lossRecv, r.lossSent) * 100).toFixed(1)}%</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
+  </div>
+
+  <div class="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+    <h2 class="text-xs font-bold uppercase tracking-widest text-zinc-500 mb-2">{tFn('asfu.log')}</h2>
+    <div bind:this={logEl} class="h-64 overflow-y-auto font-mono text-xs leading-relaxed text-zinc-400">
+      {#if $sfuLogStore.length === 0}
+        <p class="text-zinc-700">{tFn('asfu.awaiting_session')}</p>
+      {/if}
+      {#each $sfuLogStore as line}
+        <div class:text-red-400={line.includes('✘')} class:text-emerald-400={line.includes('✓')}>{line}</div>
+      {/each}
+    </div>
+  </div>
+
+  <p class="text-xs text-zinc-600">{@html tFn('asfu.prereq')}</p>
+</div>

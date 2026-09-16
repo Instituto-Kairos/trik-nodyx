@@ -4,11 +4,16 @@ node_modules/
 build/
 dist/
 .env
+# Toute variante de .env (backups, timestampés, locaux) : secrets, jamais commit.
+# .env.example reste suivi (voir l'exception ci-dessous).
+.env.*
+!.env.example
 .DS_Store
 *.log
 
 # Claude Code
 .claude/
+/CLAUDE.md
 nodyx-core/.claude/
 
 # Fichiers IA/context privés
@@ -36,6 +41,13 @@ nodyx-core/uploads/**
 !nodyx-core/uploads/*/
 !nodyx-core/uploads/*/.gitkeep
 
+# Cles privees et certificats : jamais dans le depot, meme generes par erreur
+# pendant un test d'installeur ou un essai local.
+*.pem
+*.key
+*.p12
+*.pfx
+
 # Backups locaux (archives tar.gz du Backup System)
 nodyx-core/backups/
 
@@ -57,3 +69,22 @@ docs/img/icon-set/
 docs/img/Logo_icon_Nodyx_a.PNG
 # Stratégie SEO — locale (dossiers de soumission awesome-selfhosted / AlternativeTo)
 docs/seo/
+# Briefs de communautés hébergées (cahiers des charges + visuels fournis par
+# leurs auteurs) : contenu privé de l'instance concernée, pas de la plateforme.
+docs/Multigaming/
+
+# Playwright, tests de rendu et responsive (artefacts locaux)
+nodyx-frontend/test-results/
+nodyx-frontend/playwright-report/
+nodyx-frontend/blob-report/
+.cache/ms-playwright/
+
+# Etat de session Playwright et identifiants du compte de test : JAMAIS commites
+nodyx-frontend/playwright/.auth/
+nodyx-frontend/.env.test
+
+# CDC decrivant des faiblesses NON CORRIGEES : jamais dans un depot public.
+# Copies privees dans ~/.claude/projects/-var-www-nexus/specs-privees/
+SPECS/OLYMPUS_OBSERVABILITE_CDC.md
+SPECS/RELAIS_TLS_443_CDC.md
+SPECS/TODO_*.md

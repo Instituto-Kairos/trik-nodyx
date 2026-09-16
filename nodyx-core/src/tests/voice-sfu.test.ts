@@ -1,0 +1,388 @@
+/**
+ * Tests du relais SFU (socket/voiceSfu.ts) — doctrine "laisse rien passer".
+ *
+ * Vérifie les invariants de la doctrine chirurgicale :
+ * 1. DORMANT sans VOICE_SFU_URL (aucun fetch, réponse sfu_disabled)
+ * 2. Gardes : uuid, rôle communauté, rate limit, payloads bornés/hostiles
+ * 3. Identité = socket.data (jamais le payload client)
+ * 4. Daemon mort => erreur propre, jamais d'exception
+ * 5. Nettoyage garanti au disconnect
+ */
+
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+
+const { dbQueryMock } = vi.hoisted(() => ({
+  dbQueryMock: vi.fn(),
+}))
+
+vi.mock('../config/database', () => ({
+  db:    { query: dbQueryMock },
+  redis: {},
+}))
+
+import { registerVoiceSfuHandlers } from '../socket/voiceSfu'
+
+// ── Harnais socket factice ────────────────────────────────────────────────────
+
+const CHANNEL = '01234567-89ab-4cde-8f01-23456789abcd'
+const DAEMON  = 'http://127.0.0.1:3901'
+
+type Handler = (...args: unknown[]) => void | Promise<void>
+
+// userId unique par défaut : le rate limiter est RÉEL et ses buckets persistent
+// entre les tests (limite 5 joins/10s par user). C'est voulu : on le teste aussi.
+let _seq = 0
+function makeHarness(userId = `user-${Date.now()}-${_seq++}`) {
+  const handlers = new Map<string, Handler>()
+  const roomEmit = vi.fn()
+  const socketToEmit = vi.fn()
+  const socket = {
+    id:    'socket-1',
+    data:  { userId, username: 'jo' },
+    on:    (ev: string, fn: Handler) => { handlers.set(ev, fn) },
+    to:    vi.fn(() => ({ emit: socketToEmit })),
+    emit:  vi.fn(),
+    join:  vi.fn(async () => {}),
+    leave: vi.fn(async () => {}),
+  }
+  const server = {
+    to: vi.fn(() => ({ emit: roomEmit })),
+  }
+  registerVoiceSfuHandlers(socket as never, server as never)
+  const fire = async (ev: string, ...args: unknown[]) => {
+    await handlers.get(ev)!(...args)
+  }
+  return { handlers, fire, socket, server, roomEmit, socketToEmit }
+}
+
+/** Ack qui capture sa réponse. */
+function ack() {
+  const calls: Record<string, unknown>[] = []
+  const cb = (r: Record<string, unknown>) => { calls.push(r) }
+  return { cb, get last() { return calls[calls.length - 1] }, calls }
+}
+
+/** Réponse daemon standard. */
+function daemonJson(body: Record<string, unknown>, status = 200) {
+  return { status, json: async () => body } as Response
+}
+
+const fetchMock = vi.fn()
+
+beforeEach(() => {
+  vi.resetAllMocks()
+  vi.stubGlobal('fetch', fetchMock)
+  process.env.VOICE_SFU_URL   = DAEMON
+  process.env.VOICE_SFU_TOKEN = 'test-token-0123456789abcdef'
+  // Rôle communauté par défaut : membre légitime.
+  dbQueryMock.mockResolvedValue({ rows: [{ role: 'member' }] })
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  delete process.env.VOICE_SFU_URL
+  delete process.env.VOICE_SFU_TOKEN
+})
+
+// ── 1. Dormance ───────────────────────────────────────────────────────────────
+
+describe('dormance (flag OFF)', () => {
+  it('répond sfu_disabled et ne contacte RIEN quand VOICE_SFU_URL est absent', async () => {
+    delete process.env.VOICE_SFU_URL
+    const h = makeHarness()
+    const a = ack()
+    await h.fire('voice:sfu_join', CHANNEL, a.cb)
+    expect(a.last).toEqual({ ok: false, error: 'sfu_disabled' })
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(dbQueryMock).not.toHaveBeenCalled() // même pas de requête DB
+  })
+
+  it('tous les handlers sont dormants sans le flag', async () => {
+    delete process.env.VOICE_SFU_URL
+    const h = makeHarness()
+    for (const ev of ['voice:sfu_connect', 'voice:sfu_produce', 'voice:sfu_consume', 'voice:sfu_publications']) {
+      const a = ack()
+      await h.fire(ev, { channelId: CHANNEL }, a.cb)
+      expect(a.last.error, ev).toBe('sfu_disabled')
+    }
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+// ── 2. Gardes ─────────────────────────────────────────────────────────────────
+
+describe('gardes', () => {
+  it('rejette un channelId non-uuid sans toucher au daemon', async () => {
+    const h = makeHarness()
+    const a = ack()
+    await h.fire('voice:sfu_join', 'pas-un-uuid', a.cb)
+    expect(a.last).toEqual({ ok: false, error: 'bad_channel' })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('rejette un non-membre de la communauté (forbidden)', async () => {
+    dbQueryMock.mockResolvedValue({ rows: [] })
+    const h = makeHarness()
+    const a = ack()
+    await h.fire('voice:sfu_join', CHANNEL, a.cb)
+    expect(a.last).toEqual({ ok: false, error: 'forbidden' })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('un cb manquant ou non-fonction est ignoré sans crash', async () => {
+    const h = makeHarness()
+    await expect(h.fire('voice:sfu_join', CHANNEL, 'pas-une-fonction')).resolves.toBeUndefined()
+    await expect(h.fire('voice:sfu_join', CHANNEL)).resolves.toBeUndefined()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('rate limit : la 6e jointure en 10 s est rejetée', async () => {
+    const h = makeHarness('user-rate-limited-test')
+    fetchMock.mockResolvedValue(daemonJson({ ok: true, mode: 'mesh', migrated: [] }))
+    const results: (string | undefined)[] = []
+    for (let i = 0; i < 6; i++) {
+      const a = ack()
+      await h.fire('voice:sfu_join', CHANNEL, a.cb)
+      results.push(a.last.error as string | undefined)
+    }
+    expect(results.slice(0, 5).every(e => e === undefined)).toBe(true)
+    expect(results[5]).toBe('rate_limited')
+  })
+
+  it('un payload client trop gros est rejeté (payload_too_large)', async () => {
+    const h = makeHarness()
+    const a = ack()
+    await h.fire('voice:sfu_produce', {
+      channelId: CHANNEL, kind: 'audio', rtpParameters: { junk: 'x'.repeat(70_000) },
+    }, a.cb)
+    expect(a.last).toEqual({ ok: false, error: 'payload_too_large' })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('kind inconnu rejeté, producerId hostile rejeté', async () => {
+    const h = makeHarness()
+    const a1 = ack()
+    await h.fire('voice:sfu_produce', { channelId: CHANNEL, kind: 'exploit', rtpParameters: {} }, a1.cb)
+    expect(a1.last.error).toBe('bad_kind')
+    const a2 = ack()
+    await h.fire('voice:sfu_consume', { channelId: CHANNEL, producerId: 'x'.repeat(500), rtpCapabilities: {} }, a2.cb)
+    expect(a2.last.error).toBe('bad_producer')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+// ── 3. Identité serveur ───────────────────────────────────────────────────────
+
+describe('identité', () => {
+  it("le participant envoyé au daemon vient de socket.data, jamais du payload", async () => {
+    const h = makeHarness('vrai-user')
+    fetchMock.mockResolvedValue(daemonJson({ ok: true, mode: 'mesh', migrated: [] }))
+    const a = ack()
+    // Le client tente d'usurper : le champ participant du payload doit être ignoré.
+    await h.fire('voice:sfu_join', CHANNEL, a.cb)
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string)
+    expect(body.participant).toBe('vrai-user')
+    // Et le Bearer du daemon est bien posé.
+    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe('Bearer test-token-0123456789abcdef')
+  })
+})
+
+// ── 4. Chemins heureux ────────────────────────────────────────────────────────
+
+describe('flow SFU', () => {
+  it('join en mode mesh : ok simple, pas de caps demandées', async () => {
+    const h = makeHarness()
+    fetchMock.mockResolvedValueOnce(daemonJson({ ok: true, mode: 'mesh', migrated: [] }))
+    const a = ack()
+    await h.fire('voice:sfu_join', CHANNEL, a.cb)
+    expect(a.last).toEqual({ ok: true, mode: 'mesh' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('join en mode SFU : caps + les DEUX transports (send/recv), bascule annoncée', async () => {
+    const h = makeHarness()
+    fetchMock.mockImplementation(async (url: string, init: { body: string }) => {
+      const path = new URL(url).pathname
+      if (path === '/v1/join') return daemonJson({ ok: true, mode: 'sfu', migrated: ['u2'] })
+      if (path === '/v1/caps') return daemonJson({ ok: true, caps: '{"codecs":[{"mimeType":"audio/opus"}]}' })
+      if (path === '/v1/transport_params') {
+        const dir = JSON.parse(init.body).direction
+        return daemonJson({ ok: true, params: `{"id":"t-${dir}"}` })
+      }
+      return daemonJson({ ok: false, error: 'unexpected' }, 404)
+    })
+    const a = ack()
+    await h.fire('voice:sfu_join', CHANNEL, a.cb)
+    expect(a.last.ok).toBe(true)
+    expect(a.last.mode).toBe('sfu')
+    expect((a.last.caps as { codecs: unknown[] }).codecs).toHaveLength(1)
+    // Deux transports DISTINCTS, un par direction (contrainte mediasoup-client).
+    expect((a.last.sendTransportParams as { id: string }).id).toBe('t-send')
+    expect((a.last.recvTransportParams as { id: string }).id).toBe('t-recv')
+    // La bascule (migrated non vide) est annoncée au salon vocal.
+    expect(h.server.to).toHaveBeenCalledWith(`voice:${CHANNEL}`)
+    expect(h.roomEmit).toHaveBeenCalledWith('voice:sfu_mode', { channelId: CHANNEL, mode: 'sfu' })
+  })
+
+  it('rollback : si caps/params échouent après le join, le daemon reçoit un leave', async () => {
+    const h = makeHarness()
+    const calls: string[] = []
+    fetchMock.mockImplementation(async (url: string, init: { body: string }) => {
+      const path = new URL(url).pathname
+      calls.push(path)
+      if (path === '/v1/join') return daemonJson({ ok: true, mode: 'sfu', migrated: [] })
+      if (path === '/v1/caps') return daemonJson({ ok: false, error: 'caps_kaput' }, 500)
+      if (path === '/v1/transport_params') return daemonJson({ ok: true, params: '{"id":"t"}' })
+      if (path === '/v1/leave') return daemonJson({ ok: true })
+      return daemonJson({ ok: false, error: 'unexpected' }, 404)
+    })
+    const a = ack()
+    await h.fire('voice:sfu_join', CHANNEL, a.cb)
+    expect(a.last).toEqual({ ok: false, error: 'caps_kaput' })
+    // Le rollback a bien envoyé le leave (sinon : "déjà présent" à tout retry).
+    expect(calls).toContain('/v1/leave')
+    expect(h.socket.leave).toHaveBeenCalledWith(`voicesfu:${CHANNEL}`)
+  })
+
+  it('heartbeat : relaie /v1/heartbeat sans requête DB de rôle', async () => {
+    const h = makeHarness()
+    dbQueryMock.mockClear()
+    fetchMock.mockResolvedValueOnce(daemonJson({ ok: true }))
+    const a = ack()
+    await h.fire('voice:sfu_heartbeat', CHANNEL, a.cb)
+    expect(a.last).toEqual({ ok: true })
+    expect(fetchMock.mock.calls[0][0]).toContain('/v1/heartbeat')
+    // léger : pas de check rôle en base à chaque battement
+    expect(dbQueryMock).not.toHaveBeenCalled()
+  })
+
+  it('audit : owner/admin OK, membre refusé', async () => {
+    // membre → forbidden, aucun appel daemon
+    const member = makeHarness()
+    fetchMock.mockClear()
+    await member.fire('voice:sfu_audit', CHANNEL, (() => { const a = ack(); return a.cb })())
+    // (le rôle par défaut du mock est 'member')
+    const a = ack()
+    await member.fire('voice:sfu_audit', CHANNEL, a.cb)
+    expect(a.last).toEqual({ ok: false, error: 'forbidden' })
+    // admin → relaie /v1/audit
+    dbQueryMock.mockResolvedValue({ rows: [{ role: 'admin' }] })
+    const admin = makeHarness('user-admin-audit')
+    fetchMock.mockResolvedValueOnce(daemonJson({ ok: true, transports: [{ participant: 'x', direction: 'send' }] }))
+    const b = ack()
+    await admin.fire('voice:sfu_audit', CHANNEL, b.cb)
+    expect(b.last.ok).toBe(true)
+    expect((b.last.transports as unknown[]).length).toBe(1)
+    expect(fetchMock.mock.calls.some(c => new URL(c[0]).pathname === '/v1/audit')).toBe(true)
+  })
+
+  it('connect : direction obligatoire et transmise au daemon', async () => {
+    const h = makeHarness()
+    const bad = ack()
+    await h.fire('voice:sfu_connect', { channelId: CHANNEL, dtlsParameters: {} }, bad.cb)
+    expect(bad.last.error).toBe('bad_direction')
+    fetchMock.mockResolvedValueOnce(daemonJson({ ok: true }))
+    const good = ack()
+    await h.fire('voice:sfu_connect', { channelId: CHANNEL, direction: 'recv', dtlsParameters: { role: 'client' } }, good.cb)
+    expect(good.last).toEqual({ ok: true })
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string)
+    expect(body.direction).toBe('recv')
+  })
+
+  it('produce : annonce voice:sfu_new_producer dans la room SFU DÉDIÉE (pas celle du mesh)', async () => {
+    const h = makeHarness('user-jonathan')
+    fetchMock.mockResolvedValueOnce(daemonJson({ ok: true, producer: 'prod-1' }))
+    const a = ack()
+    await h.fire('voice:sfu_produce', { channelId: CHANNEL, kind: 'audio', rtpParameters: { codecs: [] } }, a.cb)
+    expect(a.last).toEqual({ ok: true, producerId: 'prod-1' })
+    // Room dédiée voicesfu: — JAMAIS la room mesh (fantômes dans la sidebar).
+    expect(h.socket.to).toHaveBeenCalledWith(`voicesfu:${CHANNEL}`)
+    expect(h.socket.to).not.toHaveBeenCalledWith(`voice:${CHANNEL}`)
+    expect(h.socketToEmit).toHaveBeenCalledWith('voice:sfu_new_producer', {
+      channelId: CHANNEL, producerId: 'prod-1', kind: 'audio', userId: 'user-jonathan',
+    })
+  })
+
+  it('join : rejoint la room d\'annonces SFU (le 1er arrivé doit entendre les suivants)', async () => {
+    const h = makeHarness()
+    fetchMock.mockResolvedValueOnce(daemonJson({ ok: true, mode: 'mesh', migrated: [] }))
+    await h.fire('voice:sfu_join', CHANNEL, ack().cb)
+    expect(h.socket.join).toHaveBeenCalledWith(`voicesfu:${CHANNEL}`)
+  })
+
+  it('leave : quitte la room d\'annonces SFU', async () => {
+    const h = makeHarness()
+    fetchMock.mockResolvedValue(daemonJson({ ok: true, mode: 'mesh', migrated: [] }))
+    await h.fire('voice:sfu_join', CHANNEL, ack().cb)
+    await h.fire('voice:sfu_leave', CHANNEL, ack().cb)
+    expect(h.socket.leave).toHaveBeenCalledWith(`voicesfu:${CHANNEL}`)
+  })
+
+  it('consume : renvoie consumerId + params parsés', async () => {
+    const h = makeHarness()
+    fetchMock.mockResolvedValueOnce(daemonJson({
+      ok: true, consumer: 'cons-1', params: '{"id":"cons-1","rtpParameters":{"codecs":[]}}',
+    }))
+    const a = ack()
+    await h.fire('voice:sfu_consume', { channelId: CHANNEL, producerId: 'prod-1', rtpCapabilities: {} }, a.cb)
+    expect(a.last.ok).toBe(true)
+    expect(a.last.consumerId).toBe('cons-1')
+    expect((a.last.params as { id: string }).id).toBe('cons-1')
+  })
+})
+
+// ── 5. Panne du daemon ────────────────────────────────────────────────────────
+
+describe('dégradation gracieuse', () => {
+  it('daemon injoignable : erreur propre, aucune exception', async () => {
+    const h = makeHarness()
+    fetchMock.mockRejectedValue(new Error('ECONNREFUSED'))
+    const a = ack()
+    await expect(h.fire('voice:sfu_join', CHANNEL, a.cb)).resolves.toBeUndefined()
+    expect(a.last).toEqual({ ok: false, error: 'sfu_unreachable' })
+  })
+
+  it('erreur métier du daemon relayée telle quelle', async () => {
+    const h = makeHarness()
+    fetchMock.mockResolvedValueOnce(daemonJson({ ok: false, error: 'salon plein' }, 409))
+    const a = ack()
+    await h.fire('voice:sfu_join', CHANNEL, a.cb)
+    expect(a.last).toEqual({ ok: false, error: 'salon plein' })
+  })
+
+  it('réponse daemon non-JSON : erreur propre', async () => {
+    const h = makeHarness()
+    fetchMock.mockResolvedValueOnce({ status: 502, json: async () => { throw new Error('html') } } as never)
+    const a = ack()
+    await h.fire('voice:sfu_join', CHANNEL, a.cb)
+    expect(a.last).toEqual({ ok: false, error: 'sfu_bad_response_502' })
+  })
+})
+
+// ── 6. Nettoyage au disconnect ────────────────────────────────────────────────
+
+describe('nettoyage', () => {
+  it('un disconnect après join envoie leave au daemon pour chaque salon', async () => {
+    const h = makeHarness('user-disconnect-test')
+    fetchMock.mockResolvedValue(daemonJson({ ok: true, mode: 'mesh', migrated: [] }))
+    await h.fire('voice:sfu_join', CHANNEL, ack().cb)
+    fetchMock.mockClear()
+
+    await h.fire('disconnect')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0][0]).toBe(`${DAEMON}/v1/leave`)
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string)
+    expect(body).toEqual({ room: CHANNEL, participant: 'user-disconnect-test' })
+  })
+
+  it('leave explicite retire le salon du nettoyage', async () => {
+    const h = makeHarness()
+    fetchMock.mockResolvedValue(daemonJson({ ok: true, mode: 'mesh', migrated: [] }))
+    await h.fire('voice:sfu_join', CHANNEL, ack().cb)
+    await h.fire('voice:sfu_leave', CHANNEL, ack().cb)
+    fetchMock.mockClear()
+
+    await h.fire('disconnect')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})

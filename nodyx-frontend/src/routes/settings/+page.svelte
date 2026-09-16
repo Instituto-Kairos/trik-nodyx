@@ -1,30 +1,30 @@
 <script lang="ts">
     import NetworkDoctor from '$lib/components/NetworkDoctor.svelte';
     import E2EKeyBackup from '$lib/components/E2EKeyBackup.svelte';
-    import { page } from '$app/stores';
+    import { page } from '$app/state';
 
     import { PUBLIC_API_URL, PUBLIC_SIGNET_URL } from '$env/static/public';
     import { tick } from 'svelte';
-    import { t, locale, LOCALES, type Locale } from '$lib/i18n';
+    import { t, locale } from '$lib/i18n';
     import { get } from 'svelte/store';
     import { soundSettings } from '$lib/soundSettings';
     import { streamerNotifSettings, testStreamerNotif, type StreamerEventKey } from '$lib/sounds/streamerNotifSettings';
     import { PRESET_LIBRARY } from '$lib/sounds/presetSounds';
 
-    // Tableau d'event types Streamer pour le rendu UI. Labels en clair pour le streamer.
-    const STREAMER_EVENT_ROWS: Array<{ key: StreamerEventKey; label: string; sub: string }> = [
-        { key: 'channel.follow',            label: 'Follow',           sub: "Quelqu'un suit ta chaîne Twitch." },
-        { key: 'channel.subscribe',         label: 'Sub',              sub: "Nouveau / renouvellement d'abonnement." },
-        { key: 'channel.subscription.gift', label: 'Sub offert',       sub: "Un viewer offre un ou plusieurs subs." },
-        { key: 'channel.cheer',             label: 'Bits (cheer)',     sub: "Don de bits dans le chat Twitch." },
-        { key: 'channel.raid',              label: 'Raid reçu',        sub: "Un autre streamer te raid avec ses viewers." },
+    // Tableau d'event types Streamer pour le rendu UI. `id` = clé i18n courte (label/sub résolus via tFn).
+    const STREAMER_EVENT_ROWS: Array<{ key: StreamerEventKey; id: string }> = [
+        { key: 'channel.follow',            id: 'follow' },
+        { key: 'channel.subscribe',         id: 'subscribe' },
+        { key: 'channel.subscription.gift', id: 'gift' },
+        { key: 'channel.cheer',             id: 'cheer' },
+        { key: 'channel.raid',              id: 'raid' },
     ]
     // On expose la library de presets pour le <select>.
     const STREAMER_PRESETS = PRESET_LIBRARY
 
     // Visibilité de la section Notifs Streamer : owners/admins seulement.
     const isStreamerNotifVisible = $derived(() => {
-        const u = $page.data.user as { role?: string } | null | undefined
+        const u = page.data.user as { role?: string } | null | undefined
         return u?.role === 'owner' || u?.role === 'admin'
     })
 
@@ -45,11 +45,9 @@
     // $t and $locale are legacy store subscriptions; wrapping in $derived ensures
     // Svelte 5's rune dependency tracker re-renders the component on locale change.
     const tFn          = $derived($t)
-    const currentLocale = $derived($locale)
 
     // ── Navigation ────────────────────────────────────────────────────────────
     let activeSection = $state('network')
-    let langSaved     = $state(false)
 
     // ── Twitch link (viewer flow) ─────────────────────────────────────────────
     type TwitchLink = { twitchId: string; twitchLogin: string } | null
@@ -62,7 +60,7 @@
     let twitchError             = $state<string | null>(null)
 
     async function loadTwitchLink() {
-        const token = ($page.data as any).token as string | null
+        const token = (page.data as any).token as string | null
         if (!token) { twitchLoaded = true; return }
         try {
             const res = await fetch('/api/v1/streamer/twitch/viewer/me', {
@@ -81,19 +79,19 @@
         twitchConnecting = true
         twitchError = null
         try {
-            const token = ($page.data as any).token as string | null
+            const token = (page.data as any).token as string | null
             const res = await fetch('/api/v1/streamer/twitch/viewer/auth-init', {
                 headers: { Authorization: `Bearer ${token}` },
             })
             if (!res.ok) {
-                twitchError = 'Impossible de démarrer la connexion Twitch (HTTP ' + res.status + ')'
+                twitchError = get(t)('settings.err.twitch_start', { status: res.status })
                 twitchConnecting = false
                 return
             }
             const { authorizeUrl } = await res.json()
             window.location.href = authorizeUrl
         } catch {
-            twitchError = 'Erreur réseau'
+            twitchError = get(t)('settings.err.network')
             twitchConnecting = false
         }
     }
@@ -104,7 +102,7 @@
         twitchUnlinking = true
         twitchError = null
         try {
-            const token = ($page.data as any).token as string | null
+            const token = (page.data as any).token as string | null
             const res = await fetch('/api/v1/streamer/twitch/viewer/unlink', {
                 method:  'DELETE',
                 headers: { Authorization: `Bearer ${token}` },
@@ -117,7 +115,7 @@
                 twitchError = tFn('settings.connected.unlink_failed')
             }
         } catch {
-            twitchError = 'Erreur réseau'
+            twitchError = get(t)('settings.err.network')
         } finally {
             twitchUnlinking = false
         }
@@ -125,10 +123,10 @@
 
     // Lis ?just_linked_twitch=login au mount → toast + ouvre la section
     $effect(() => {
-        const justLinked = $page.url.searchParams.get('just_linked_twitch')
+        const justLinked = page.url.searchParams.get('just_linked_twitch')
         if (justLinked) {
             activeSection = 'connected-accounts'
-            twitchToast   = `Compte Twitch lié : @${justLinked}`
+            twitchToast   = get(t)('settings.twitch.linked_toast', { login: justLinked })
             setTimeout(() => twitchToast = null, 4500)
             // Nettoyer l'URL pour ne pas rejouer le toast au refresh
             const url = new URL(window.location.href)
@@ -139,7 +137,7 @@
 
     // Deep-link ?section=xxx (ex: bouton « Paramètres » depuis les DM)
     $effect(() => {
-        const s = $page.url.searchParams.get('section')
+        const s = page.url.searchParams.get('section')
         if (s) {
             activeSection = s
             const url = new URL(window.location.href)
@@ -155,12 +153,6 @@
         }
     })
 
-    function setLocale(code: Locale) {
-        locale.setLocale(code)
-        langSaved = true
-        setTimeout(() => langSaved = false, 2000)
-    }
-
     // ── Nodyx Signet ──────────────────────────────────────────────────────────
     type SignetDevice = { id: string; label: string; created_at: string; last_used_at: string | null }
 
@@ -175,7 +167,7 @@
     let signetQrLink      = $state<string | null>(null)
 
     async function loadSignetDevices() {
-        const token = ($page.data as any).token as string | null
+        const token = (page.data as any).token as string | null
         if (!token) return
         try {
             const res = await fetch(`${PUBLIC_API_URL}/api/auth/devices`, {
@@ -190,7 +182,7 @@
     }
 
     async function generateSignetToken() {
-        const token = ($page.data as any).token as string | null
+        const token = (page.data as any).token as string | null
         if (!token) return
         signetGenerating = true
         signetToken = null
@@ -219,7 +211,7 @@
     }
 
     async function revokeSignetDevice(deviceId: string) {
-        const token = ($page.data as any).token as string | null
+        const token = (page.data as any).token as string | null
         if (!token) return
         signetRevoking = deviceId
         try {
@@ -240,7 +232,7 @@
     }
 
     $effect(() => {
-        if ($page.data.user) loadSignetDevices()
+        if (page.data.user) loadSignetDevices()
     })
 
     // ── 2FA TOTP ──────────────────────────────────────────────────────────────
@@ -258,7 +250,7 @@
     let totpSuccess   = $state('')
 
     $effect(() => {
-        const token = ($page.data as any).token as string | null
+        const token = (page.data as any).token as string | null
         if (!token || totpLoaded) return
         fetch('/api/v1/auth/totp/status', { headers: { Authorization: `Bearer ${token}` } })
             .then(r => r.ok ? r.json() : null)
@@ -268,7 +260,7 @@
     })
 
     async function totpStartSetup() {
-        const token = ($page.data as any).token as string | null
+        const token = (page.data as any).token as string | null
         if (!token) return
         totpLoading = true; totpError = ''
         try {
@@ -276,15 +268,15 @@
                 method: 'POST', headers: { Authorization: `Bearer ${token}` }
             })
             const j = await res.json()
-            if (!res.ok) { totpError = j.error ?? 'Erreur'; return }
+            if (!res.ok) { totpError = j.error ?? get(t)('settings.err.generic'); return }
             totpQr = j.qr; totpSecret = j.secret
             totpStep = 'setup'
-        } catch { totpError = 'Impossible de contacter le serveur.' }
+        } catch { totpError = get(t)('settings.err.server') }
         totpLoading = false
     }
 
     async function totpConfirm() {
-        const token = ($page.data as any).token as string | null
+        const token = (page.data as any).token as string | null
         if (!token || !totpCode) return
         totpLoading = true; totpError = ''
         try {
@@ -294,17 +286,17 @@
                 body: JSON.stringify({ code: totpCode })
             })
             const j = await res.json()
-            if (!res.ok) { totpError = j.error ?? 'Code incorrect'; totpLoading = false; return }
+            if (!res.ok) { totpError = j.error ?? get(t)('settings.err.code_invalid'); totpLoading = false; return }
             totpEnabled = true; totpStep = 'idle'
             totpCode = ''; totpQr = null; totpSecret = null
             totpSuccess = get(t)('settings.security.2fa.success_enabled')
             setTimeout(() => totpSuccess = '', 4000)
-        } catch { totpError = 'Erreur réseau.' }
+        } catch { totpError = get(t)('settings.err.network_dot') }
         totpLoading = false
     }
 
     async function totpDisable() {
-        const token = ($page.data as any).token as string | null
+        const token = (page.data as any).token as string | null
         if (!token || !totpCode) return
         totpLoading = true; totpError = ''
         try {
@@ -314,12 +306,12 @@
                 body: JSON.stringify({ code: totpCode })
             })
             const j = await res.json()
-            if (!res.ok) { totpError = j.error ?? 'Code incorrect'; totpLoading = false; return }
+            if (!res.ok) { totpError = j.error ?? get(t)('settings.err.code_invalid'); totpLoading = false; return }
             totpEnabled = false; totpStep = 'idle'
             totpCode = ''
             totpSuccess = get(t)('settings.security.2fa.success_disabled')
             setTimeout(() => totpSuccess = '', 4000)
-        } catch { totpError = 'Erreur réseau.' }
+        } catch { totpError = get(t)('settings.err.network_dot') }
         totpLoading = false
     }
 
@@ -329,11 +321,11 @@
 
     // ── Instances liées (Galaxy Bar) ──────────────────────────────────────────
 
-    const user = $derived($page.data.user as { linked_instances?: string[] } | null);
+    const user = $derived(page.data.user as { linked_instances?: string[] } | null);
     let linkedSlugs = $state<string[]>([]);
     $effect(() => { linkedSlugs = user?.linked_instances ?? [] });
 
-    const directoryInstances = $derived($page.data.directoryInstances as Array<{
+    const directoryInstances = $derived(page.data.directoryInstances as Array<{
         slug: string; name: string; url: string; logo_url: string | null;
     }> ?? []);
 
@@ -345,21 +337,21 @@
         slugError = '';
         const slug = newSlug.trim().toLowerCase();
         if (!slug) return;
-        if (!/^[a-z0-9-]{1,50}$/.test(slug)) { slugError = 'Slug invalide (lettres, chiffres, tirets)'; return; }
-        if (linkedSlugs.includes(slug)) { slugError = 'Déjà ajouté'; return; }
+        if (!/^[a-z0-9-]{1,50}$/.test(slug)) { slugError = get(t)('settings.err.slug_invalid'); return; }
+        if (linkedSlugs.includes(slug)) { slugError = get(t)('settings.err.slug_dupe'); return; }
         if (!directoryInstances.find(i => i.slug === slug)) {
-            slugError = 'Instance introuvable dans l\'annuaire';
+            slugError = get(t)('settings.err.slug_notfound');
             return;
         }
         slugLoading = true;
         try {
             const res = await fetch(`${PUBLIC_API_URL}/api/v1/users/me/linked-instances`, {
                 method: 'PATCH',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${$page.data.token}` },
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${page.data.token}` },
                 body: JSON.stringify({ action: 'add', slug }),
             });
             const json = await res.json();
-            if (!res.ok) { slugError = json.error ?? 'Erreur'; return; }
+            if (!res.ok) { slugError = json.error ?? get(t)('settings.err.generic'); return; }
             linkedSlugs = json.linked_instances ?? [];
             newSlug = '';
         } finally {
@@ -370,7 +362,7 @@
     async function removeInstance(slug: string) {
         const res = await fetch(`${PUBLIC_API_URL}/api/v1/users/me/linked-instances`, {
             method: 'PATCH',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${$page.data.token}` },
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${page.data.token}` },
             body: JSON.stringify({ action: 'remove', slug }),
         });
         const json = await res.json();
@@ -411,7 +403,7 @@
     }
 
     async function togglePush() {
-        const token = ($page.data as any).token as string | null
+        const token = (page.data as any).token as string | null
         if (!token || !pushSupported) return
         pushLoading = true
         pushError   = ''
@@ -429,9 +421,9 @@
                 })
                 pushEnabled = false
             } else {
-                if (!vapidPublicKey) { pushError = 'Push non configuré sur ce serveur'; return }
+                if (!vapidPublicKey) { pushError = get(t)('settings.err.push_notconfigured'); return }
                 const perm = await Notification.requestPermission()
-                if (perm !== 'granted') { pushError = 'Permission refusée par le navigateur'; return }
+                if (perm !== 'granted') { pushError = get(t)('settings.err.push_permission'); return }
 
                 const sub = await reg.pushManager.subscribe({
                     userVisibleOnly: true,
@@ -450,7 +442,7 @@
                 pushEnabled = true
             }
         } catch (err: any) {
-            pushError = err?.message ?? 'Erreur inconnue'
+            pushError = err?.message ?? get(t)('settings.err.unknown')
         } finally {
             pushLoading = false
         }
@@ -586,16 +578,6 @@
                     <span class="sb-badge-dot" style="background:#6b7280"></span>
                 {/if}
             </button>
-
-            <button class="sb-item {activeSection === 'language' ? 'active' : ''}"
-                    onclick={() => activeSection = 'language'}>
-                <span class="sb-icon" style="background: rgba(16,185,129,0.12); color: #34d399">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M5 8l6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6"/>
-                    </svg>
-                </span>
-                <span class="sb-label">{tFn('settings.language.label')}</span>
-            </button>
         </nav>
 
         <!-- Footer -->
@@ -645,7 +627,7 @@
                 </div>
             </div>
 
-            {#if pushSupported && $page.data.user}
+            {#if pushSupported && page.data.user}
             <div class="s-card">
                 <div class="s-row">
                     <div class="s-row-info">
@@ -660,7 +642,7 @@
                         onclick={togglePush}
                         disabled={pushLoading || !vapidPublicKey}
                         class="s-toggle {pushEnabled ? 'on' : 'off'}"
-                        aria-label="Toggle notifications"
+                        aria-label={tFn('settings.push.toggle_aria')}
                     >
                         <span class="s-toggle-thumb">
                             {#if pushLoading}
@@ -767,7 +749,7 @@
                         </datalist>
                     </div>
                     <button onclick={addInstance} disabled={slugLoading} class="s-primary-btn">
-                        {slugLoading ? '…' : 'Ajouter'}
+                        {slugLoading ? '…' : tFn('settings.instances.add')}
                     </button>
                 </div>
                 {#if slugError}
@@ -783,7 +765,7 @@
         {/if}
 
         <!-- ═══ SÉCURITÉ 2FA ════════════════════════════════════════════════ -->
-        {#if activeSection === 'security' && $page.data.user}
+        {#if activeSection === 'security' && page.data.user}
         <div class="s-pane" style="--accent: #f87171; --accent-bg: rgba(239,68,68,0.07); --accent-border: rgba(239,68,68,0.18)">
             <div class="s-pane-header">
                 <div class="s-pane-icon" style="background: var(--accent-bg); border-color: var(--accent-border); color: var(--accent)">
@@ -847,7 +829,7 @@
                         <p class="s-row-sub" style="margin-bottom:16px">{tFn('settings.security.2fa.step1_hint')}</p>
                         {#if totpQr}
                         <div class="totp-qr-wrap">
-                            <img src={totpQr} alt="QR code 2FA" />
+                            <img src={totpQr} alt={tFn('settings.totp.qr_alt')} />
                         </div>
                         {/if}
                         {#if totpSecret}
@@ -927,7 +909,7 @@
         {/if}
 
         <!-- ═══ MESSAGES CHIFFRÉS (sauvegarde de clé E2E) ════════════════════ -->
-        {#if activeSection === 'encryption' && $page.data.user}
+        {#if activeSection === 'encryption' && page.data.user}
         <div class="s-pane" style="--accent: var(--nx-accent-soft); --accent-bg: rgb(var(--nx-accent-rgb) / 0.08); --accent-border: rgb(var(--nx-accent-rgb) / 0.2)">
             <div class="s-pane-header">
                 <div class="s-pane-icon" style="background: var(--accent-bg); border-color: var(--accent-border); color: var(--accent)">
@@ -941,9 +923,9 @@
                 </div>
             </div>
 
-            {#if ($page.data as any).token}
+            {#if (page.data as any).token}
             <div class="s-card">
-                <E2EKeyBackup token={($page.data as any).token} mode="manage" />
+                <E2EKeyBackup token={(page.data as any).token} mode="manage" />
             </div>
             {/if}
         </div>
@@ -1153,7 +1135,7 @@
                     <button
                         onclick={() => soundSettings.update(s => ({ ...s, enabled: !s.enabled }))}
                         class="s-toggle {sounds.enabled ? 'on' : 'off'}"
-                        aria-label="Activer les sons"
+                        aria-label={tFn('settings.sounds.enable_aria')}
                     >
                         <span class="s-toggle-thumb"></span>
                     </button>
@@ -1163,7 +1145,7 @@
                 {#if sounds.enabled}
                 <div class="s-row" style="margin-top: 8px; align-items: center; gap: 12px">
                     <div class="s-row-info">
-                        <div class="s-row-title">Volume</div>
+                        <div class="s-row-title">{tFn('settings.sounds.volume')}</div>
                     </div>
                     <div class="sound-volume-wrap">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:#6b7280;flex-shrink:0">
@@ -1190,11 +1172,11 @@
                 <!-- Message -->
                 <div class="s-row">
                     <div class="s-row-info">
-                        <div class="s-row-title">Nouveau message</div>
-                        <div class="s-row-sub">Son discret lors d'un message dans le channel actif.</div>
+                        <div class="s-row-title">{tFn('settings.sounds.msg_title')}</div>
+                        <div class="s-row-sub">{tFn('settings.sounds.msg_desc')}</div>
                     </div>
                     <div style="display:flex;gap:8px;align-items:center">
-                        <button onclick={() => testSound('message')} class="sound-test-btn" title="Tester">
+                        <button onclick={() => testSound('message')} class="sound-test-btn" title={tFn('settings.sounds.test')}>
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polygon points="5 3 19 12 5 21 5 3"/>
                             </svg>
@@ -1202,7 +1184,7 @@
                         <button
                             onclick={() => soundSettings.update(s => ({ ...s, message: !s.message }))}
                             class="s-toggle {sounds.message ? 'on' : 'off'}"
-                            aria-label="Son message"
+                            aria-label={tFn('settings.sounds.msg_aria')}
                         >
                             <span class="s-toggle-thumb"></span>
                         </button>
@@ -1214,11 +1196,11 @@
                 <!-- Mention -->
                 <div class="s-row">
                     <div class="s-row-info">
-                        <div class="s-row-title">@Mention</div>
-                        <div class="s-row-sub">Double ton montant quand quelqu'un vous mentionne.</div>
+                        <div class="s-row-title">{tFn('settings.sounds.mention_title')}</div>
+                        <div class="s-row-sub">{tFn('settings.sounds.mention_desc')}</div>
                     </div>
                     <div style="display:flex;gap:8px;align-items:center">
-                        <button onclick={() => testSound('mention')} class="sound-test-btn" title="Tester">
+                        <button onclick={() => testSound('mention')} class="sound-test-btn" title={tFn('settings.sounds.test')}>
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polygon points="5 3 19 12 5 21 5 3"/>
                             </svg>
@@ -1226,7 +1208,7 @@
                         <button
                             onclick={() => soundSettings.update(s => ({ ...s, mention: !s.mention }))}
                             class="s-toggle {sounds.mention ? 'on' : 'off'}"
-                            aria-label="Son mention"
+                            aria-label={tFn('settings.sounds.mention_aria')}
                         >
                             <span class="s-toggle-thumb"></span>
                         </button>
@@ -1238,11 +1220,11 @@
                 <!-- DM -->
                 <div class="s-row">
                     <div class="s-row-info">
-                        <div class="s-row-title">Message direct (DM)</div>
-                        <div class="s-row-sub">Sweep chaud + harmonique pour les nouveaux DM.</div>
+                        <div class="s-row-title">{tFn('settings.sounds.dm_title')}</div>
+                        <div class="s-row-sub">{tFn('settings.sounds.dm_desc')}</div>
                     </div>
                     <div style="display:flex;gap:8px;align-items:center">
-                        <button onclick={() => testSound('dm')} class="sound-test-btn" title="Tester">
+                        <button onclick={() => testSound('dm')} class="sound-test-btn" title={tFn('settings.sounds.test')}>
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polygon points="5 3 19 12 5 21 5 3"/>
                             </svg>
@@ -1250,7 +1232,7 @@
                         <button
                             onclick={() => soundSettings.update(s => ({ ...s, dm: !s.dm }))}
                             class="s-toggle {sounds.dm ? 'on' : 'off'}"
-                            aria-label="Son DM"
+                            aria-label={tFn('settings.sounds.dm_aria')}
                         >
                             <span class="s-toggle-thumb"></span>
                         </button>
@@ -1278,12 +1260,12 @@
                 <div class="s-row">
                     <div class="s-row-info">
                         <div class="s-row-title">{tFn('settings.streamer.enabled')}</div>
-                        <div class="s-row-sub">Écoute les events Twitch de ton instance en direct.</div>
+                        <div class="s-row-sub">{tFn('settings.streamer.master_desc')}</div>
                     </div>
                     <button
                         onclick={() => streamerNotifSettings.update(s => ({ ...s, masterEnabled: !s.masterEnabled }))}
                         class="s-toggle {cur.masterEnabled ? 'on' : 'off'}"
-                        aria-label="Activer les notifs streamer">
+                        aria-label={tFn('settings.streamer.master_aria')}>
                         <span class="s-toggle-thumb"></span>
                     </button>
                 </div>
@@ -1291,7 +1273,7 @@
                 {#if cur.masterEnabled}
                 <div class="s-row" style="margin-top: 8px; align-items: center; gap: 12px">
                     <div class="s-row-info">
-                        <div class="s-row-title">Volume</div>
+                        <div class="s-row-title">{tFn('settings.sounds.volume')}</div>
                     </div>
                     <div class="sound-volume-wrap">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:#6b7280;flex-shrink:0">
@@ -1319,8 +1301,8 @@
                 {#if i > 0}<div class="s-divider"></div>{/if}
                 <div class="s-row">
                     <div class="s-row-info">
-                        <div class="s-row-title">{ev.label}</div>
-                        <div class="s-row-sub">{ev.sub}</div>
+                        <div class="s-row-title">{tFn('settings.streamer.ev.' + ev.id + '.label')}</div>
+                        <div class="s-row-sub">{tFn('settings.streamer.ev.' + ev.id + '.sub')}</div>
                     </div>
                     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
                         <select
@@ -1330,12 +1312,12 @@
                                 streamerNotifSettings.update(s => ({ ...s, events: { ...s.events, [ev.key]: { ...s.events[ev.key], preset: v } } }))
                             }}
                             class="streamer-preset-select"
-                            aria-label="Son de l'event {ev.label}">
+                            aria-label={tFn('settings.streamer.sound_of', { label: tFn('settings.streamer.ev.' + ev.id + '.label') })}>
                             {#each STREAMER_PRESETS as p (p.key)}
                                 <option value={p.key}>{p.emoji} {p.label}</option>
                             {/each}
                         </select>
-                        <button onclick={() => testStreamerNotif(ev.key)} class="sound-test-btn" title="Tester ce son">
+                        <button onclick={() => testStreamerNotif(ev.key)} class="sound-test-btn" title={tFn('settings.streamer.test')}>
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polygon points="5 3 19 12 5 21 5 3"/>
                             </svg>
@@ -1343,7 +1325,7 @@
                         <button
                             onclick={() => streamerNotifSettings.update(s => ({ ...s, events: { ...s.events, [ev.key]: { ...s.events[ev.key], enabled: !s.events[ev.key].enabled } } }))}
                             class="s-toggle {evCfg.enabled ? 'on' : 'off'}"
-                            aria-label="Activer son {ev.label}">
+                            aria-label={tFn('settings.streamer.enable_of', { label: tFn('settings.streamer.ev.' + ev.id + '.label') })}>
                             <span class="s-toggle-thumb"></span>
                         </button>
                     </div>
@@ -1360,42 +1342,6 @@
         {/if}
 
         <!-- ═══ LANGUE ════════════════════════════════════════════════════════ -->
-        {#if activeSection === 'language'}
-        <div class="s-pane" style="--accent: #34d399; --accent-bg: rgba(16,185,129,0.08); --accent-border: rgba(16,185,129,0.2)">
-            <div class="s-pane-header">
-                <div class="s-pane-icon" style="background: var(--accent-bg); border-color: var(--accent-border); color: var(--accent)">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
-                        <path d="M5 8l6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6"/>
-                    </svg>
-                </div>
-                <div>
-                    <h2 class="s-pane-title">{tFn('settings.language.title')}</h2>
-                    <p class="s-pane-desc">{tFn('settings.language.desc')}</p>
-                </div>
-            </div>
-
-            <div class="s-card">
-                {#if langSaved}
-                <div class="s-success-banner" style="margin-bottom:16px">{tFn('settings.language.saved')}</div>
-                {/if}
-                <div class="lang-flags">
-                    {#each LOCALES as loc}
-                    <button
-                        onclick={() => setLocale(loc.code)}
-                        class="lang-flag-item {currentLocale === loc.code ? 'active' : ''}"
-                    >
-                        <span class="lang-flag">{loc.flag}</span>
-                        <span class="lang-flag-label">{loc.label}</span>
-                        {#if currentLocale === loc.code}
-                        <span class="lang-flag-active">{tFn('common.current')}</span>
-                        {/if}
-                    </button>
-                    {/each}
-                </div>
-            </div>
-        </div>
-        {/if}
-
     </main>
 </div>
 
@@ -1406,7 +1352,7 @@
 /* ── Root layout ─────────────────────────────────────────────────────────── */
 .settings-root {
     display: flex;
-    min-height: calc(100vh - 48px);
+    min-height: calc(100dvh - 48px);
     background: #06060a;
     color: #e2e8f0;
 }
@@ -1421,7 +1367,7 @@
     border-right: 1px solid rgba(255,255,255,0.05);
     position: sticky;
     top: 48px;
-    height: calc(100vh - 48px);
+    height: calc(100dvh - 48px);
     overflow-y: auto;
     scrollbar-width: thin;
 }
@@ -1951,32 +1897,7 @@
 }
 .signet-copy-btn.copied { color: #4ade80; border-color: rgba(74,222,128,0.3); }
 
-/* ── Langue ──────────────────────────────────────────────────────────────── */
-.lang-flags {
-    display: flex;
-    justify-content: center;
-    gap: 16px;
-    padding: 8px 0;
-}
-.lang-flag-item {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-    padding: 16px 28px;
-    border-radius: 8px;
-    border: 1px solid rgba(255,255,255,0.06);
-    background: rgba(255,255,255,0.02);
-    cursor: pointer;
-    transition: border-color 0.15s, background 0.15s;
-    color: inherit;
-    font-family: inherit;
-}
-.lang-flag-item:hover { border-color: rgba(255,255,255,0.12); background: rgba(255,255,255,0.04); }
-.lang-flag-item.active { border-color: rgba(16,185,129,0.25); background: rgba(16,185,129,0.05); }
-.lang-flag { font-size: 28px; }
-.lang-flag-label { font-size: 13px; font-weight: 600; color: #6b7280; }
-.lang-flag-active { font-size: 10px; font-weight: 700; color: #34d399; text-transform: uppercase; letter-spacing: 0.08em; }
+
 
 /* ── Sons ────────────────────────────────────────────────────────────────── */
 .sound-volume-wrap {

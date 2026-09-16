@@ -55,7 +55,7 @@
 			})
 			if (!res.ok) {
 				const j = await res.json().catch(() => ({}))
-				throw new Error(j.error ?? 'Erreur upload')
+				throw new Error(j.error ?? tFn('pedit.upload_error'))
 			}
 			const { url, family } = await res.json()
 			nameFontFamily = family
@@ -63,7 +63,7 @@
 			nameFontUrl = url.startsWith('http') ? url : base + url
 			if (nameFontUrl) ensureFontLoaded(nameFontFamily, nameFontUrl!)
 		} catch (err: unknown) {
-			fontError = err instanceof Error ? err.message : 'Erreur upload'
+			fontError = err instanceof Error ? err.message : tFn('pedit.upload_error')
 		} finally {
 			fontUploading = false
 		}
@@ -146,7 +146,7 @@
 		})
 		if (!res.ok) {
 			const j = await res.json().catch(() => ({}))
-			throw new Error(j.error ?? 'Erreur upload')
+			throw new Error(j.error ?? tFn('pedit.upload_error'))
 		}
 		const { url } = await res.json()
 		const base = PUBLIC_API_URL.replace('/api/v1', '')
@@ -163,7 +163,7 @@
 			avatarUrl  = await uploadFile('avatar', file)
 			avatarMode = 'url'
 		}
-		catch (err: unknown) { avatarError = err instanceof Error ? err.message : 'Erreur upload' }
+		catch (err: unknown) { avatarError = err instanceof Error ? err.message : tFn('pedit.upload_error') }
 		finally { avatarUploading = false }
 	}
 
@@ -177,13 +177,13 @@
 			bannerUrl  = await uploadFile('banner', file)
 			bannerMode = 'url'
 		}
-		catch (err: unknown) { bannerError = err instanceof Error ? err.message : 'Erreur upload' }
+		catch (err: unknown) { bannerError = err instanceof Error ? err.message : tFn('pedit.upload_error') }
 		finally { bannerUploading = false }
 	}
 </script>
 
 <svelte:head>
-	<title>Modifier mon profil — Nodyx</title>
+	<title>{tFn('pedit.meta_title')}</title>
 </svelte:head>
 
 <!-- ═══════════════════════════════════════════════════════════════
@@ -201,7 +201,7 @@
 
 	<!-- "Voir mon profil" pill button — top-right of the banner -->
 	<a href="/users/{profile.username}"
-	   class="absolute top-3 right-4 flex items-center gap-1.5 px-3 py-1.5 rounded-full
+	   class="absolute top-3 right-4 flex items-center gap-1.5 px-3 py-1.5 max-sm:py-2.5 rounded-full
 	          bg-gray-900/70 backdrop-blur-sm border border-gray-700/50
 	          text-xs font-medium text-gray-300 hover:text-white hover:bg-gray-800/90
 	          transition-colors shadow-md">
@@ -209,13 +209,13 @@
 			<path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.964-7.178z"/>
 			<path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
 		</svg>
-		Voir mon profil
+		{tFn('pedit.view_profile')}
 	</a>
 
 	<!-- Avatar — overlapping the banner bottom edge, fully visible -->
 	<div class="absolute bottom-0 left-6 translate-y-1/2 w-20 h-20 rounded-full border-4 border-gray-950 overflow-hidden bg-indigo-800 shadow-xl z-10">
 		{#if avatarPreview}
-			<img src={avatarPreview} alt="Avatar" class="w-full h-full object-cover" />
+			<img src={avatarPreview} alt={tFn('pedit.avatar_alt')} class="w-full h-full object-cover" />
 		{:else}
 			<div class="w-full h-full flex items-center justify-center text-white text-2xl font-bold select-none">{initials}</div>
 		{/if}
@@ -270,10 +270,12 @@
 	<input type="hidden" name="name_font_url" value={nameFontUrl ?? ''} />
 
 	<!-- ─── ROW 1: Identité + Visuels ──────────────────────────────────── -->
-	<div class="grid grid-cols-5 gap-4">
+	<!-- Empile sous `md`. A 502px les deux colonnes cote a cote laissaient 260px
+	     et 150px : « Status » et « Location » tronquaient, la bio etait coupee. -->
+	<div class="grid grid-cols-1 md:grid-cols-5 gap-4">
 
 		<!-- Identité (3/5) -->
-		<div class="col-span-3 bg-gray-900/80 border border-gray-800 rounded-xl p-5 space-y-4">
+		<div class="md:col-span-3 bg-gray-900/80 border border-gray-800 rounded-xl p-5 space-y-4">
 			<h2 class="text-xs uppercase tracking-widest text-gray-500 font-semibold flex items-center gap-2">
 				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"/></svg>
 				{tFn('pedit.section_identity')}
@@ -306,7 +308,7 @@
 				</div>
 			</div>
 
-			<div class="grid grid-cols-2 gap-3">
+			<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
 				<div>
 					<label for="status" class="block text-xs text-gray-400 mb-1.5 font-medium">{tFn('pedit.status')}</label>
 					<input id="status" name="status" type="text" maxlength="100"
@@ -337,7 +339,7 @@
 		</div>
 
 		<!-- Visuels (2/5) -->
-		<div class="col-span-2 bg-gray-900/80 border border-gray-800 rounded-xl p-5 space-y-5">
+		<div class="md:col-span-2 bg-gray-900/80 border border-gray-800 rounded-xl p-5 space-y-5">
 			<h2 class="text-xs uppercase tracking-widest text-gray-500 font-semibold flex items-center gap-2">
 				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/></svg>
 				{tFn('pedit.section_visuals')}
@@ -346,7 +348,7 @@
 			<!-- Avatar -->
 			<div>
 				<div class="flex items-center justify-between mb-2">
-					<p class="text-xs text-gray-400 font-medium">Avatar</p>
+					<p class="text-xs text-gray-400 font-medium">{tFn('pedit.avatar_section')}</p>
 					{#if avatarPreview}
 						<button type="button" onclick={deleteAvatar}
 							class="text-[11px] text-red-400 hover:text-red-300 transition-colors flex items-center gap-1">
@@ -360,24 +362,24 @@
 				<div class="flex items-center gap-3 mb-3">
 					<div class="w-14 h-14 rounded-full overflow-hidden bg-indigo-800 border-2 border-gray-700 shrink-0">
 						{#if avatarPreview}
-							<img src={avatarPreview} alt="Avatar" class="w-full h-full object-cover" />
+							<img src={avatarPreview} alt={tFn('pedit.avatar_alt')} class="w-full h-full object-cover" />
 						{:else}
 							<div class="w-full h-full flex items-center justify-center text-white text-xl font-bold select-none">{initials}</div>
 						{/if}
 					</div>
 					<div class="flex gap-1">
 						<button type="button" onclick={() => { avatarMode = 'url' }}
-							class="px-2.5 py-1 rounded-md text-xs font-medium transition-colors {avatarMode === 'url' ? 'bg-indigo-600 text-white' : 'bg-gray-700/80 text-gray-400 hover:text-white'}">
+							class="px-2.5 max-sm:py-2.5 py-1 rounded-md text-xs font-medium transition-colors {avatarMode === 'url' ? 'bg-indigo-600 text-white' : 'bg-gray-700/80 text-gray-400 hover:text-white'}">
 							URL
 						</button>
 						<button type="button" onclick={() => { avatarMode = 'file' }}
-							class="px-2.5 py-1 rounded-md text-xs font-medium transition-colors {avatarMode === 'file' ? 'bg-indigo-600 text-white' : 'bg-gray-700/80 text-gray-400 hover:text-white'}">
+							class="px-2.5 max-sm:py-2.5 py-1 rounded-md text-xs font-medium transition-colors {avatarMode === 'file' ? 'bg-indigo-600 text-white' : 'bg-gray-700/80 text-gray-400 hover:text-white'}">
 							{tFn('pedit.file')}
 						</button>
 					</div>
 				</div>
 				{#if avatarMode === 'url'}
-					<input type="url" maxlength="500" placeholder="https://…"
+					<input type="url" maxlength="500" placeholder={tFn('pedit.url_ph')}
 						bind:value={avatarUrl} oninput={() => { avatarPreview = avatarUrl }}
 						class="w-full rounded-lg bg-gray-800/70 border border-gray-700 px-3 py-2 text-white text-sm
 						       placeholder-gray-600 focus:outline-none focus:border-indigo-500 transition-colors" />
@@ -417,16 +419,16 @@
 				{/if}
 				<div class="flex gap-1 mb-2">
 					<button type="button" onclick={() => { bannerMode = 'url' }}
-						class="px-2.5 py-1 rounded-md text-xs font-medium transition-colors {bannerMode === 'url' ? 'bg-indigo-600 text-white' : 'bg-gray-700/80 text-gray-400 hover:text-white'}">
+						class="px-2.5 max-sm:py-2.5 py-1 rounded-md text-xs font-medium transition-colors {bannerMode === 'url' ? 'bg-indigo-600 text-white' : 'bg-gray-700/80 text-gray-400 hover:text-white'}">
 						URL
 					</button>
 					<button type="button" onclick={() => { bannerMode = 'file' }}
-						class="px-2.5 py-1 rounded-md text-xs font-medium transition-colors {bannerMode === 'file' ? 'bg-indigo-600 text-white' : 'bg-gray-700/80 text-gray-400 hover:text-white'}">
+						class="px-2.5 max-sm:py-2.5 py-1 rounded-md text-xs font-medium transition-colors {bannerMode === 'file' ? 'bg-indigo-600 text-white' : 'bg-gray-700/80 text-gray-400 hover:text-white'}">
 						{tFn('pedit.file')}
 					</button>
 				</div>
 				{#if bannerMode === 'url'}
-					<input type="url" maxlength="500" placeholder="https://…"
+					<input type="url" maxlength="500" placeholder={tFn('pedit.url_ph')}
 						bind:value={bannerUrl} oninput={() => { bannerPreview = bannerUrl }}
 						class="w-full rounded-lg bg-gray-800/70 border border-gray-700 px-3 py-2 text-white text-sm
 						       placeholder-gray-600 focus:outline-none focus:border-indigo-500 transition-colors" />
@@ -483,7 +485,7 @@
 
 			<!-- Color fine-tuning -->
 			<div class="space-y-3">
-				<p class="text-xs text-gray-400 font-medium">Personnaliser</p>
+				<p class="text-xs text-gray-400 font-medium">{tFn('pedit.customize')}</p>
 				<div class="space-y-2">
 					{#each colorPickers as picker}
 						<div class="flex items-center gap-2.5">
@@ -637,7 +639,7 @@
 			<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244"/></svg>
 			{tFn('pedit.section_social')}
 		</h2>
-		<div class="grid grid-cols-2 gap-4">
+		<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 			<div>
 				<label for="github_username" class="block text-xs text-gray-400 mb-1.5 font-medium">
 					GitHub <span class="text-gray-600 font-normal">{tFn('pedit.eg_username')}</span>
@@ -700,7 +702,7 @@
 	</div>
 
 	<!-- ─── ROW 3: Tags + Liens personnalisés ──────────────────────────────── -->
-	<div class="grid grid-cols-2 gap-4">
+	<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 
 		<!-- Tags -->
 		<div class="bg-gray-900/80 border border-gray-800 rounded-xl p-5">
@@ -729,12 +731,12 @@
 				{#each links as link, i}
 					<div class="flex gap-2 items-center">
 						<input name="link_label_{i}" type="text" maxlength="50"
-							placeholder="Label"
+							placeholder={tFn('pedit.label_ph')}
 							bind:value={link.label}
 							class="w-28 shrink-0 rounded-lg bg-gray-800/70 border border-gray-700 px-2.5 py-2 text-white text-xs
 							       placeholder-gray-600 focus:outline-none focus:border-indigo-500 transition-colors" />
 						<input name="link_url_{i}" type="url" maxlength="500"
-							placeholder="https://…"
+							placeholder={tFn('pedit.url_ph')}
 							bind:value={link.url}
 							class="flex-1 rounded-lg bg-gray-800/70 border border-gray-700 px-2.5 py-2 text-white text-xs
 							       placeholder-gray-600 focus:outline-none focus:border-indigo-500 transition-colors" />

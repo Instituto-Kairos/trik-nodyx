@@ -27,6 +27,14 @@ const ALLOWED_ATTRS: sanitizeHtml.IOptions['allowedAttributes'] = {
   'p':      ['class', 'style', 'data-align', 'data-type'],
   // id sur les titres : permet les sommaires à ancres (#section). Pas d'id
   // ailleurs pour limiter le risque de DOM clobbering.
+  //
+  // h1 EN FAIT PARTIE, et son absence a coûté cher (2026-08-19). Un rédacteur a
+  // passé deux titres ancrés de h2 à h1 depuis l'éditeur : TipTap avait bien
+  // conservé leur id, mais cette liste le retirait, et deux entrées du sommaire
+  // sont mortes SANS le moindre message. Perdre une ancre en silence parce qu'on
+  // a changé un niveau de titre est un piège, pas une protection : les trois
+  // autres niveaux l'autorisaient déjà, la surface de risque est la même.
+  'h1':     ['class', 'id', 'style', 'data-align', 'data-type'],
   'h2':     ['class', 'id', 'style', 'data-align', 'data-type'],
   'h3':     ['class', 'id', 'data-align', 'data-type'],
   'h4':     ['class', 'id', 'data-align', 'data-type'],
@@ -78,7 +86,21 @@ export function sanitize(raw: string): string {
   return sanitizeHtml(raw, {
     allowedTags: ALLOWED_TAGS,
     allowedAttributes: ALLOWED_ATTRS,
-    allowedIframeHostnames: ['www.youtube.com', 'youtube.com', 'www.youtube-nocookie.com', 'player.vimeo.com', 'vimeo.com'],
+    // Embeds vidéo : uniquement les domaines de lecteur OFFICIELS de chaque
+    // plateforme (pas une page quelconque du site). Twitch permet d'intégrer un
+    // live dans un post : le LECTEUR vit sur player.twitch.tv, le CHAT sur
+    // www.twitch.tv/embed/<chaine>/chat. Les deux EXIGENT un paramètre
+    // `parent=<domaine>` correspondant au site qui les affiche.
+    //
+    // ⚠ `embed.twitch.tv` (le layout tout-en-un lecteur+chat) est VOLONTAIREMENT
+    // absent : la CSP de prod ne l'autorise pas en frame-src. L'ajouter ici
+    // poserait un piège, le sanitizer le laisserait passer et le navigateur le
+    // bloquerait, sans que l'auteur comprenne pourquoi son embed est mort.
+    allowedIframeHostnames: [
+      'www.youtube.com', 'youtube.com', 'www.youtube-nocookie.com',
+      'player.vimeo.com', 'vimeo.com',
+      'player.twitch.tv', 'www.twitch.tv',
+    ],
     transformTags: {
       'nodyx-audio-player': (tagName, attribs) => {
         if (attribs.cover && !isAllowedImgSrc(attribs.cover)) {

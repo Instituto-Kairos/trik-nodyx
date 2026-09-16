@@ -3,6 +3,9 @@
 	import { browser } from '$app/environment'
 	import { page } from '$app/state'
 	import { PUBLIC_API_URL } from '$env/static/public'
+	import { t } from '$lib/i18n'
+
+	const tFn = $derived($t)
 
 	// ─── Overlay Playlist (OBS browser source) ──────────────────────────────
 	// Lit une playlist du streamer en autoplay loop pour servir de musique
@@ -320,14 +323,14 @@
 			}
 			case 'skip': {
 				advance()
-				flashCmd('⏭ Suivant')
+				flashCmd(tFn('overlay_playlist.next'))
 				break
 			}
 			case 'prev': {
 				if (order.length === 0) break
 				cursor = (cursor - 1 + order.length) % order.length
 				playCurrent()
-				flashCmd('⏮ Précédent')
+				flashCmd(tFn('overlay_playlist.prev'))
 				break
 			}
 			case 'stop': {
@@ -372,7 +375,7 @@
 </script>
 
 <svelte:head>
-	<title>{playlist?.name ?? 'Playlist'} — Overlay</title>
+	<title>{playlist?.name ?? 'Playlist'} · Overlay</title>
 	<style>
 		html, body { background: transparent !important; margin: 0; padding: 0; }
 	</style>
@@ -392,18 +395,18 @@
 	<button type="button" onclick={startFromClick}
 		class="fixed inset-0 grid place-items-center bg-black/40 backdrop-blur-sm cursor-pointer">
 		<div class="px-5 py-3 rounded-lg bg-zinc-900/90 border border-zinc-700 text-zinc-100 text-sm font-medium shadow-2xl">
-			▶ Cliquer pour démarrer
+			{tFn('overlay_playlist.click_start')}
 		</div>
 	</button>
 {/if}
 
 {#if status === 'invalid'}
 	<div class="fixed top-3 left-3 px-3 py-1.5 rounded-md bg-rose-950/85 border border-rose-700 text-rose-100 text-xs font-medium">
-		Lien d'overlay invalide ou playlist supprimée.
+		{tFn('overlay_playlist.invalid')}
 	</div>
 {:else if status === 'error'}
 	<div class="fixed top-3 left-3 px-3 py-1.5 rounded-md bg-rose-950/85 border border-rose-700 text-rose-100 text-xs font-medium">
-		Erreur de chargement.
+		{tFn('overlay_playlist.load_error')}
 	</div>
 {:else if status === 'empty'}
 	<div class="fixed top-3 left-3 px-3 py-1.5 rounded-md bg-amber-950/85 border border-amber-700 text-amber-100 text-xs font-medium">
@@ -434,7 +437,7 @@
 			</div>
 			<div class="text-sm font-medium truncate" title={current.title}>{current.title}</div>
 			<div class="text-[11px] text-zinc-400 truncate flex items-center gap-1.5">
-				<span class="truncate">{current.artist ?? '—'}</span>
+				<span class="truncate">{current.artist ?? '·'}</span>
 				<span class="text-zinc-600 font-mono shrink-0">· {fmtTime(progressMs)} / {fmtTime(durationMs)}</span>
 			</div>
 			<!-- Barre de progression -->

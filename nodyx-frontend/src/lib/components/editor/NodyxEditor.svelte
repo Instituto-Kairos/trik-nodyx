@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { onMount, onDestroy, untrack } from 'svelte'
-	import { page } from '$app/stores'
+	import { page } from '$app/state'
 	import { apiFetch } from '$lib/api'
+	import { anchoredPopover } from '$lib/actions/anchoredPopover'
 	import { t } from '$lib/i18n'
 	import { TextSelection } from '@tiptap/pm/state'
 
@@ -23,7 +24,7 @@
 	const tFn = $derived($t)
 
 	// ── Auth token (used for authenticated uploads) ─────────────────────────
-	const token = $derived(($page.data as any)?.token as string | undefined)
+	const token = $derived((page.data as any)?.token as string | undefined)
 
 	// ── Placeholder (i18n fallback) ─────────────────────────────────────────
 	const resolvedPlaceholder = $derived(placeholder || tFn('editor.default_placeholder'))
@@ -49,7 +50,10 @@
 	let linkUrl     = $state('')
 	let imageUrl    = $state('')
 	let imageAlt    = $state('')
-	let imageAlign  = $state<'left'|'center'|'right'|'full'>('center')
+	// `inline` place l'image DANS la ligne de texte, au lieu de la poser sur sa
+	// propre ligne comme les quatre autres. C'est ce qui permet une icône devant
+	// un lien, un logo au fil d'une phrase, un pictogramme dans un tableau.
+	let imageAlign  = $state<'left'|'center'|'right'|'full'|'inline'>('center')
 	// Position du noeud image sélectionné quand on ouvre le menu image : permet
 	// de REMPLACER l'image au lieu d'en insérer une nouvelle (la sélection se
 	// perd dès qu'on tape dans le champ URL, on la capture donc à l'ouverture).
@@ -160,6 +164,24 @@
 
 		// ── Custom Image with alignment ──────────────────────────────────────
 		const AlignableImage = Image.extend({
+			// `inline: true` est STRUCTUREL, pas cosmétique.
+			//
+			// Par défaut l'extension Image crée un nœud de BLOC (`group: 'block'`).
+			// Un nœud de bloc ne peut pas vivre dans un paragraphe : à la lecture,
+			// ProseMirror l'EXTRAIT et le pose entre deux paragraphes. Une icône
+			// posée devant un lien se retrouvait donc seule sur sa ligne dès que
+			// l'auteur rouvrait son article dans l'éditeur, alors qu'elle était
+			// correcte à la publication. Constaté en production le 2026-08-19.
+			//
+			// En `inline`, l'image devient un nœud de ligne : elle reste dans le
+			// paragraphe. Les alignements de bloc (`center`, `full`) continuent de
+			// s'afficher en bloc, c'est le CSS qui les gouverne, pas le schéma.
+			addOptions() {
+				// `this.parent?.()` est typé optionnel, mais il est toujours défini
+				// sur une extension dérivée : sans l'assertion, le type résultant a
+				// des champs facultatifs et ne satisfait plus `ImageOptions`.
+				return { ...this.parent!(), inline: true }
+			},
 			addAttributes() {
 				return {
 					...this.parent?.(),
@@ -258,7 +280,50 @@
 		// donc au rechargement l'extension ne reconnaissait plus son wrapper et
 		// JETAIT l'iframe (vidéos qui disparaissent à la réédition). On ajoute
 		// une règle parseHTML qui reparse aussi un <iframe> nu d'origine YouTube.
+		// ── Liens : une ancre interne ne s'ouvre pas dans un onglet ──────────
+		//
+		// L'extension Link applique par DÉFAUT `target="_blank"` et
+		// `rel="noopener noreferrer nofollow"` à tous les liens, sans distinguer
+		// leur destination. Appliqué à une ancre `#section`, ça ouvre un onglet
+		// VIDE au lieu de descendre dans la page : tout sommaire éditable était
+		// donc cassé dès la première réouverture de l'article. Constaté en
+		// production le 2026-08-19.
+		//
+		// On ne retire ces attributs que pour les ancres, jamais pour les liens
+		// sortants, où ils restent la bonne pratique.
+		const SmartLink = Link.extend({
+			renderHTML({ HTMLAttributes }: any) {
+				const href = HTMLAttributes?.href
+				if (typeof href === 'string' && href.startsWith('#')) {
+					const { target: _t, rel: _r, ...interne } = HTMLAttributes
+					return ['a', mergeAttributes(interne), 0]
+				}
+				return ['a', mergeAttributes(this.options.HTMLAttributes, HTMLAttributes), 0]
+			},
+		})
+
 		const RobustYoutube = Youtube.extend({
+			// L'extension enveloppe l'iframe dans `<div data-youtube-video>`. Or
+			// l'assainisseur du coeur n'autorise pas cet attribut : il le retire et
+			// laisse un `<div>` NU, sans aucune prise pour le style. Consequence
+			// mesuree le 2026-08-20 : toute video inseree depuis l'editeur perdait
+			// sa mise en forme, gardant 360 px de haut pour 324 de large, donc un
+			// ratio faux. Ce n'etait pas un defaut d'aller-retour, c'etait le cas
+			// NORMAL, et les videos ecrites a la main etaient l'exception.
+			//
+			// `class` fait partie des attributs autorises : on y accroche la classe
+			// que la feuille de style attend deja, sans rien retirer de ce que
+			// l'extension produit pour son propre usage dans l'editeur.
+			renderHTML(props: any) {
+				// `this.parent!` et non `?.` : sur une extension derivee le parent est
+				// toujours defini, et `renderHTML` doit rendre un DOMOutputSpec, jamais
+				// `undefined`. Meme contrainte que pour `addOptions` plus bas.
+				const rendu = this.parent!(props)
+				if (Array.isArray(rendu) && rendu[0] === 'div' && rendu[1] && typeof rendu[1] === 'object') {
+					rendu[1] = mergeAttributes(rendu[1], { class: 'youtube-wrapper' })
+				}
+				return rendu
+			},
 			parseHTML() {
 				return [
 					...(this.parent?.() ?? []),
@@ -312,6 +377,49 @@
 			parseHTML()  { return [{ tag: 'div.toc' }] },
 			renderHTML({ HTMLAttributes }) {
 				return ['div', mergeAttributes(HTMLAttributes, { class: 'toc' }), 0]
+			},
+		})
+
+		// ── Live Twitch (.twitch-live) : bloc HTML protégé ───────────────────
+		// Même piège que la console SSH ci-dessous, découvert en prod : l'éditeur
+		// ne connaît pas les iframes Twitch, donc il les JETAIT silencieusement à
+		// la réédition. On corrigeait une virgule ailleurs dans l'article, et le
+		// lecteur + le chat disparaissaient à l'enregistrement.
+		// Nœud ATOMIQUE : capture son HTML interne au chargement, le ré-émet tel
+		// quel à la sauvegarde. Les paramètres de l'embed (chaîne, `parent`,
+		// thème) sont donc préservés à l'identique, sans qu'on ait à les deviner.
+		const TwitchLive = Node.create({
+			name: 'twitchLive',
+			group: 'block',
+			atom: true,
+			selectable: true,
+			draggable: true,
+			addAttributes() {
+				return {
+					html: { default: '', parseHTML: (el: HTMLElement) => el.innerHTML, renderHTML: () => ({}) },
+				}
+			},
+			parseHTML() { return [{ tag: 'div.twitch-live' }] },
+			renderHTML({ node }: any) {
+				const dom = document.createElement('div')
+				dom.className = 'twitch-live'
+				dom.innerHTML = node.attrs.html
+				return dom
+			},
+			addNodeView() {
+				return ({ node }: any) => {
+					// Aperçu non éditable. `pointer-events: none` sur les iframes :
+					// sinon le lecteur avale les clics et le bloc devient impossible
+					// à sélectionner, donc à déplacer ou supprimer.
+					const dom = document.createElement('div')
+					dom.setAttribute('contenteditable', 'false')
+					const inner = document.createElement('div')
+					inner.className = 'twitch-live'
+					inner.innerHTML = node.attrs.html
+					inner.style.pointerEvents = 'none'
+					dom.appendChild(inner)
+					return { dom }
+				}
 			},
 		})
 
@@ -562,7 +670,7 @@
 				StarterKit.configure({ codeBlock: false, link: false, underline: false }),
 				Underline,
 				TextAlign.configure({ types: ['heading', 'paragraph', 'image'] }),
-				Link.configure({ openOnClick: false, autolink: true }),
+				SmartLink.configure({ openOnClick: false, autolink: true }),
 				AlignableImage,
 				RobustYoutube.configure({ nocookie: true }),
 				Table.configure({ resizable: false }),
@@ -574,7 +682,7 @@
 				HeadingIds, TocBox,
 				NodyxTwoCols, NodyxColumn,
 				NodyxAudio, NodyxTrack,
-				NodyxTerm,
+				NodyxTerm, TwitchLive,
 			],
 			content: initialContent,
 			onTransaction() { syncActive(); syncBubble() },
@@ -590,46 +698,19 @@
 
 	// ── Close popups when clicking outside the editor ─────────────────────────
 	function onDocClick(e: MouseEvent) {
-		if (wrapperEl && !wrapperEl.contains(e.target as Node)) {
+		const t = e.target as Node
+		// Les popups sont portalées dans <body> (hors du wrapper) : un clic DEDANS
+		// ne doit pas les refermer, sinon on ne peut rien y taper.
+		const inPopup = t instanceof Element && !!t.closest('.popup')
+		if (wrapperEl && !wrapperEl.contains(t) && !inPopup) {
 			showColor = showEmoji = showLink = showImage = showVideo = showAudio = showTable = false
 			bubbleVisible = false
 		}
 	}
 
-	// ── Auto-flip popups that would overflow their scroll container ──────────
-	function autoFlip(node: HTMLElement) {
-		function findScrollContainer(): HTMLElement {
-			let p = node.parentElement
-			while (p && p !== document.body) {
-				const o = getComputedStyle(p).overflow
-				if (o !== 'visible' && o !== '') return p
-				p = p.parentElement
-			}
-			return document.body
-		}
-		function adjust() {
-			node.style.left = '0px'
-			node.style.right = 'auto'
-			const rect = node.getBoundingClientRect()
-			const container = findScrollContainer()
-			const cRect = container.getBoundingClientRect()
-			const boundary = Math.min(window.innerWidth, cRect.right) - 8
-			if (rect.right > boundary) {
-				node.style.left = 'auto'
-				node.style.right = '0px'
-			}
-		}
-		adjust()
-		const ro = new ResizeObserver(adjust)
-		ro.observe(node)
-		window.addEventListener('resize', adjust)
-		return {
-			destroy() {
-				ro.disconnect()
-				window.removeEventListener('resize', adjust)
-			},
-		}
-	}
+	// Placement des popups : action partagée `anchoredPopover` (portal dans <body>
+	// + ancrage au bouton + bornage écran + bascule). Le calcul vient d'ici à
+	// l'origine ; il est désormais mutualisé, cf src/lib/actions/anchoredPopover.ts.
 
 	$effect(() => {
 		document.addEventListener('click', onDocClick)
@@ -678,7 +759,7 @@
 
 	function insertImage() {
 		if (!imageUrl.trim()) return
-		const alignClass = { left: 'float-left mr-4', right: 'float-right ml-4', center: 'mx-auto block', full: 'w-full block' }[imageAlign]
+		const alignClass = { left: 'float-left mr-4', right: 'float-right ml-4', center: 'mx-auto block', full: 'w-full block', inline: 'inline align-middle' }[imageAlign]
 		const attrs = { src: imageUrl, alt: imageAlt || '', class: alignClass, 'data-align': imageAlign, align: imageAlign }
 		if (replaceImagePos !== null) {
 			// Remplace l'image existante à sa position (conserve le noeud, change
@@ -728,7 +809,7 @@
 		})
 		if (!res.ok) {
 			const j = await res.json().catch(() => ({}))
-			audioError = j.error ?? `Erreur upload (${res.status})`
+			audioError = j.error ?? tFn('editor.audio.err_upload', { status: res.status })
 			return null
 		}
 		return (await res.json()).url as string
@@ -739,7 +820,7 @@
 		if (!file) return
 		audioError = ''
 		if (!file.type.startsWith('audio/')) {
-			audioError = 'Format non supporté (mp3, ogg, wav, m4a, webm).'
+			audioError = tFn('editor.audio.err_format')
 			audioPickedFile = null
 			return
 		}
@@ -774,7 +855,7 @@
 		const file = (e.target as HTMLInputElement).files?.[0]
 		if (!file) return
 		if (!file.type.startsWith('image/')) {
-			audioError = 'Cover : formats acceptés jpg, png, webp, gif.'
+			audioError = tFn('editor.audio.err_cover_format')
 			return
 		}
 		if (file.size > 8 * 1024 * 1024) {
@@ -802,7 +883,7 @@
 			return
 		}
 		if (!token) {
-			audioError = 'Session expirée, recharge la page.'
+			audioError = tFn('editor.audio.err_session')
 			return
 		}
 		audioUploading = true
@@ -839,7 +920,7 @@
 			if (audioFileEl) audioFileEl.value = ''
 			if (audioCoverFileEl) audioCoverFileEl.value = ''
 		} catch (err) {
-			audioError = 'Erreur réseau pendant l’upload.'
+			audioError = tFn('editor.audio.err_network')
 		} finally {
 			audioUploading = false
 		}
@@ -874,7 +955,7 @@
 		const src = audioUrlExternal.trim()
 		if (!src) return
 		if (!src.startsWith('/uploads/')) {
-			audioError = 'Seuls les fichiers hébergés sur cette instance sont acceptés (uploade-le via le bouton ci-dessus).'
+			audioError = tFn('editor.audio.err_local_only')
 			return
 		}
 		const attrs: Record<string, string> = { src }
@@ -1202,7 +1283,7 @@
 				<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-width="2" d="M7 20h10M12 4l5 12H7L12 4z"/></svg>
 			</button>
 			{#if showColor}
-			<div class="popup w-48 grid grid-cols-6 gap-1 p-2" use:autoFlip>
+			<div class="popup w-48 grid grid-cols-6 gap-1 p-2" use:anchoredPopover>
 				<button type="button" onclick={() => editor?.chain().focus().unsetColor().run()} class="col-span-6 text-xs text-gray-400 hover:text-white text-left mb-1">{tFn('editor.color_reset')}</button>
 				{#each COLORS as c}
 					<button type="button" onclick={() => setColor(c)} class="w-6 h-6 rounded border border-gray-700 hover:scale-110 transition-transform" style="background:{c}" title={c}></button>
@@ -1219,8 +1300,8 @@
 				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
 			</button>
 			{#if showLink}
-			<div class="popup w-72 flex flex-col gap-2 p-3" use:autoFlip>
-				<input type="url" bind:value={linkUrl} placeholder="https://..." class="popup-input" onkeydown={e => e.key === 'Enter' && insertLink()} />
+			<div class="popup w-72 flex flex-col gap-2 p-3" use:anchoredPopover>
+				<input type="url" bind:value={linkUrl} placeholder={tFn('editor.link.url_ph')} class="popup-input" onkeydown={e => e.key === 'Enter' && insertLink()} />
 				<div class="flex gap-2">
 					<button type="button" onclick={insertLink} class="flex-1 popup-btn-primary">{tFn('editor.insert')}</button>
 					{#if a.link}<button type="button" onclick={() => { editor?.chain().focus().unsetLink().run(); showLink = false }} class="popup-btn-danger">{tFn('editor.delete_link')}</button>{/if}
@@ -1235,11 +1316,11 @@
 				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" stroke-width="2"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" stroke="none"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 15l-5-5L5 21"/></svg>
 			</button>
 			{#if showImage}
-			<div class="popup w-80 flex flex-col gap-2 p-3" use:autoFlip>
+			<div class="popup w-80 flex flex-col gap-2 p-3" use:anchoredPopover>
 				{#if replaceImagePos !== null}
 					<div class="flex items-center gap-1.5 text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1">
 						<svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16 3h5v5M21 3l-7 7M8 21H3v-5M3 21l7-7"/></svg>
-						Remplacement de l'image sélectionnée
+						{tFn('editor.img.replacing')}
 					</div>
 				{/if}
 				<!-- Bouton médiathèque -->
@@ -1248,7 +1329,7 @@
 					<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 						<path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/>
 					</svg>
-					Choisir depuis la médiathèque
+					{tFn('editor.img.choose_library')}
 				</button>
 				<div class="flex items-center gap-2 text-gray-600">
 					<span class="flex-1 h-px bg-gray-800"></span>
@@ -1257,15 +1338,18 @@
 				</div>
 				<input type="url" bind:value={imageUrl} placeholder={tFn('editor.image_url_placeholder')} class="popup-input" />
 				<input type="text" bind:value={imageAlt} placeholder={tFn('editor.image_alt_placeholder')} class="popup-input" />
-				<div class="flex gap-1">
-					{#each [['left', tFn('editor.img_align_left')],['center', tFn('editor.img_align_center')],['right', tFn('editor.img_align_right')],['full', tFn('editor.img_align_full')]] as [v, label]}
+				<!-- `flex-wrap` : à cinq choix, les libellés traduits ne tiennent plus
+				     forcément sur une ligne. Sans lui, un libellé long écraserait les
+				     autres au lieu de passer dessous. -->
+				<div class="flex flex-wrap gap-1">
+					{#each [['left', tFn('editor.img_align_left')],['center', tFn('editor.img_align_center')],['right', tFn('editor.img_align_right')],['full', tFn('editor.img_align_full')],['inline', tFn('editor.img_align_inline')]] as [v, label]}
 						<button type="button" onclick={() => imageAlign = v as any}
 							class="flex-1 text-xs px-2 py-1 rounded border transition-colors {imageAlign === v ? 'border-indigo-500 bg-indigo-900/50 text-indigo-300' : 'border-gray-700 text-gray-500 hover:border-gray-500'}">
 							{label}
 						</button>
 					{/each}
 				</div>
-				<button type="button" onclick={insertImage} class="popup-btn-primary">{replaceImagePos !== null ? 'Remplacer' : tFn('editor.insert')}</button>
+				<button type="button" onclick={insertImage} class="popup-btn-primary">{replaceImagePos !== null ? tFn('editor.replace') : tFn('editor.insert')}</button>
 			</div>
 			{/if}
 		</div>
@@ -1276,9 +1360,9 @@
 				<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M19.615 3.184c-3.604-.246-11.631-.245-15.23 0-3.897.266-4.356 2.62-4.385 8.816.029 6.185.484 8.549 4.385 8.816 3.6.245 11.626.246 15.23 0 3.897-.266 4.356-2.62 4.385-8.816-.029-6.185-.484-8.549-4.385-8.816zm-10.615 12.816v-8l8 3.993-8 4.007z"/></svg>
 			</button>
 			{#if showVideo}
-			<div class="popup w-80 flex flex-col gap-2 p-3" use:autoFlip>
+			<div class="popup w-80 flex flex-col gap-2 p-3" use:anchoredPopover>
 				<p class="text-xs text-gray-500">{tFn('editor.video_hint')}</p>
-				<input type="url" bind:value={videoUrl} placeholder="https://youtu.be/…" class="popup-input" onkeydown={e => e.key === 'Enter' && insertVideo()} />
+				<input type="url" bind:value={videoUrl} placeholder={tFn('editor.video.url_ph')} class="popup-input" onkeydown={e => e.key === 'Enter' && insertVideo()} />
 				<button type="button" onclick={insertVideo} class="popup-btn-primary">{tFn('editor.embed_video')}</button>
 			</div>
 			{/if}
@@ -1286,12 +1370,12 @@
 
 		<!-- Audio (mp3 / ogg / wav / m4a / webm) -->
 		<div class="relative">
-			<button type="button" onclick={() => { showAudio = !showAudio; showColor = showEmoji = showLink = showImage = showVideo = showTable = false }} class="tb-btn" title="Insérer un fichier audio">
+			<button type="button" onclick={() => { showAudio = !showAudio; showColor = showEmoji = showLink = showImage = showVideo = showTable = false }} class="tb-btn" title={tFn('editor.audio.btn_title')}>
 				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19a3 3 0 11-6 0 3 3 0 016 0zm12-3a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
 			</button>
 			{#if showAudio}
-			<div class="popup w-96 flex flex-col gap-2 p-3" use:autoFlip>
-				<p class="text-xs text-gray-500">Fichier audio (mp3, ogg, wav, m4a, webm) — max 8 Mo. Les métadonnées (titre, artiste, pochette) sont lues automatiquement pour les mp3.</p>
+			<div class="popup w-96 flex flex-col gap-2 p-3" use:anchoredPopover>
+				<p class="text-xs text-gray-500">{tFn('editor.audio.hint')}</p>
 				<input
 					bind:this={audioFileEl}
 					type="file"
@@ -1305,32 +1389,32 @@
 					<div class="flex gap-3 items-start mt-1">
 						<div class="shrink-0">
 							{#if audioCoverPreview}
-								<img src={audioCoverPreview} alt="Pochette" class="w-16 h-16 rounded object-cover border border-indigo-700/40" />
+								<img src={audioCoverPreview} alt={tFn('editor.audio.cover_alt')} class="w-16 h-16 rounded object-cover border border-indigo-700/40" />
 							{:else}
 								<div class="w-16 h-16 rounded border border-dashed border-gray-700 flex items-center justify-center text-gray-600 text-xs">aucune</div>
 							{/if}
 							<div class="flex gap-1 mt-1">
-								<button type="button" onclick={() => audioCoverFileEl?.click()} class="flex-1 text-[10px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-400 hover:border-indigo-500 hover:text-indigo-300 transition-colors">choisir</button>
+								<button type="button" onclick={() => audioCoverFileEl?.click()} class="flex-1 text-[10px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-400 hover:border-indigo-500 hover:text-indigo-300 transition-colors">{tFn('editor.audio.choose_cover')}</button>
 								{#if audioCoverPreview}
-									<button type="button" onclick={clearCover} class="text-[10px] px-1.5 py-0.5 rounded border border-gray-700 text-red-400 hover:border-red-500 transition-colors" title="Retirer la pochette">×</button>
+									<button type="button" onclick={clearCover} class="text-[10px] px-1.5 py-0.5 rounded border border-gray-700 text-red-400 hover:border-red-500 transition-colors" title={tFn('editor.audio.clear_cover')}>×</button>
 								{/if}
 							</div>
 							<input bind:this={audioCoverFileEl} type="file" accept="image/jpeg,image/png,image/webp,image/gif" class="hidden" onchange={onCoverFileChange} />
 						</div>
 						<div class="flex-1 flex flex-col gap-1.5 min-w-0">
-							<input type="text" bind:value={audioTitle}  placeholder="Titre" class="popup-input" />
-							<input type="text" bind:value={audioArtist} placeholder="Artiste / auteur" class="popup-input" />
+							<input type="text" bind:value={audioTitle}  placeholder={tFn('editor.audio.title_ph')} class="popup-input" />
+							<input type="text" bind:value={audioArtist} placeholder={tFn('editor.audio.artist_ph')} class="popup-input" />
 						</div>
 					</div>
 
 					<button type="button" onclick={stageAudio} class="popup-btn-primary mt-1" disabled={audioUploading}>
-						{audioUploading ? 'Upload en cours…' : (audioStaged.length === 0 ? 'Ajouter cette piste' : '+ Ajouter cette piste à la file')}
+						{audioUploading ? tFn('editor.audio.uploading') : (audioStaged.length === 0 ? tFn('editor.audio.add_track') : tFn('editor.audio.add_more'))}
 					</button>
 				{/if}
 
 				{#if audioStaged.length > 0}
 					<div class="mt-2 flex flex-col gap-1 max-h-40 overflow-y-auto border border-indigo-700/40 rounded p-1.5 bg-indigo-950/30">
-						<div class="text-[10px] text-indigo-300 uppercase tracking-wider px-1">File ({audioStaged.length} piste{audioStaged.length > 1 ? 's' : ''})</div>
+						<div class="text-[10px] text-indigo-300 uppercase tracking-wider px-1">{audioStaged.length === 1 ? tFn('editor.audio.queue_one', { count: audioStaged.length }) : tFn('editor.audio.queue_many', { count: audioStaged.length })}</div>
 						{#each audioStaged as t, i}
 							<div class="flex items-center gap-2 text-xs px-1 py-0.5 hover:bg-indigo-900/30 rounded">
 								<span class="text-indigo-400 font-mono">{i + 1}.</span>
@@ -1343,18 +1427,18 @@
 									<div class="text-gray-200 truncate">{t.title || t.src.split('/').pop()}</div>
 									{#if t.artist}<div class="text-gray-500 text-[10px] truncate">{t.artist}</div>{/if}
 								</div>
-								<button type="button" onclick={() => removeStaged(i)} class="text-red-400 hover:text-red-300 text-base leading-none px-1" title="Retirer">×</button>
+								<button type="button" onclick={() => removeStaged(i)} class="text-red-400 hover:text-red-300 text-base leading-none px-1" title={tFn('editor.remove')}>×</button>
 							</div>
 						{/each}
 					</div>
 
 					<label class="flex items-center gap-2 text-xs text-gray-400 mt-1 cursor-pointer select-none">
 						<input type="checkbox" bind:checked={audioAllowDownload} class="accent-indigo-500" />
-						<span>Autoriser le téléchargement (bouton ⬇ visible)</span>
+						<span>{tFn('editor.audio.allow_download')}</span>
 					</label>
 
 					<button type="button" onclick={insertStaged} class="popup-btn-primary" disabled={audioUploading}>
-						Insérer {audioStaged.length === 1 ? 'le morceau' : `la playlist (${audioStaged.length} pistes)`}
+						{audioStaged.length === 1 ? tFn('editor.audio.insert_one') : tFn('editor.audio.insert_playlist', { count: audioStaged.length })}
 					</button>
 				{/if}
 
@@ -1367,8 +1451,8 @@
 					<span class="text-[10px]">ou URL /uploads/…</span>
 					<span class="flex-1 h-px bg-gray-800"></span>
 				</div>
-				<input type="text" bind:value={audioUrlExternal} placeholder="/uploads/posts/xxx.mp3" class="popup-input" onkeydown={e => e.key === 'Enter' && insertAudioFromUrl()} />
-				<button type="button" onclick={insertAudioFromUrl} class="popup-btn-primary" disabled={audioUploading || !audioUrlExternal.trim()}>Insérer depuis l'URL</button>
+				<input type="text" bind:value={audioUrlExternal} placeholder={tFn('editor.audio.url_ph')} class="popup-input" onkeydown={e => e.key === 'Enter' && insertAudioFromUrl()} />
+				<button type="button" onclick={insertAudioFromUrl} class="popup-btn-primary" disabled={audioUploading || !audioUrlExternal.trim()}>{tFn('editor.audio.insert_from_url')}</button>
 			</div>
 			{/if}
 		</div>
@@ -1377,7 +1461,7 @@
 		<div class="relative">
 			<button type="button" onclick={() => { showEmoji = !showEmoji; showColor = showLink = showImage = showVideo = showAudio = showTable = false }} class="tb-btn text-base" title={tFn('editor.insert_emoji')}>😊</button>
 			{#if showEmoji}
-			<div class="popup w-72 p-2 grid grid-cols-10 gap-0.5 max-h-48 overflow-y-auto" use:autoFlip>
+			<div class="popup w-72 p-2 grid grid-cols-10 gap-0.5 max-h-48 overflow-y-auto" use:anchoredPopover>
 				{#each EMOJIS as e}
 					<button type="button" onclick={() => insertEmoji(e)} class="text-base p-1 rounded hover:bg-gray-700 transition-colors leading-none">{e}</button>
 				{/each}
@@ -1400,7 +1484,7 @@
 				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" stroke-width="2"/><path stroke-width="1.5" d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
 			</button>
 			{#if showTable}
-			<div class="popup w-52 p-2 flex flex-col gap-1" use:autoFlip>
+			<div class="popup w-52 p-2 flex flex-col gap-1" use:anchoredPopover>
 				{#if !a.table}
 					<button type="button" onclick={() => { toggleAny('insertTable'); showTable = false }} class="table-btn">{tFn('editor.insert_table')}</button>
 				{:else}
@@ -1432,7 +1516,7 @@
 		     onclick={(e) => e.stopPropagation()}>
 			<!-- Header -->
 			<div class="flex items-center justify-between px-5 py-4 border-b border-gray-800 shrink-0">
-				<h3 class="text-sm font-bold text-white">Médiathèque</h3>
+				<h3 class="text-sm font-bold text-white">{tFn('editor.library.title')}</h3>
 				<button type="button" onclick={() => showMediaPicker = false} class="text-gray-500 hover:text-white transition-colors">
 					<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 						<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
@@ -1442,14 +1526,14 @@
 			<!-- Grid -->
 			<div class="overflow-y-auto p-4 flex-1">
 				{#if mediaLoading}
-					<div class="flex items-center justify-center py-12 text-gray-500 text-sm">Chargement…</div>
+					<div class="flex items-center justify-center py-12 text-gray-500 text-sm">{tFn('editor.loading')}</div>
 				{:else if mediaImages.length === 0}
 					<div class="flex flex-col items-center justify-center py-12 gap-2 text-gray-600">
 						<svg class="w-8 h-8 opacity-40" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
 							<path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909"/>
 						</svg>
-						<p class="text-sm">Aucune image hébergée.</p>
-						<a href="/admin/media" target="_blank" class="text-xs text-indigo-400 hover:underline">Ouvrir la médiathèque →</a>
+						<p class="text-sm">{tFn('editor.library.empty')}</p>
+						<a href="/admin/media" target="_blank" class="text-xs text-indigo-400 hover:underline">{tFn('editor.library.open')}</a>
 					</div>
 				{:else}
 					<div class="grid grid-cols-3 sm:grid-cols-4 gap-3">
@@ -1469,11 +1553,9 @@
 			</div>
 			<!-- Footer -->
 			<div class="px-5 py-3 border-t border-gray-800 shrink-0 flex items-center justify-between">
-				<a href="/admin/media" target="_blank" class="text-xs text-indigo-400 hover:underline">Gérer la médiathèque</a>
+				<a href="/admin/media" target="_blank" class="text-xs text-indigo-400 hover:underline">{tFn('editor.library.manage')}</a>
 				<button type="button" onclick={() => showMediaPicker = false}
-					class="px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 text-xs hover:bg-gray-700 transition-colors">
-					Annuler
-				</button>
+					class="px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 text-xs hover:bg-gray-700 transition-colors">{tFn('editor.cancel')}</button>
 			</div>
 		</div>
 	</div>
@@ -1487,17 +1569,17 @@
 
 	<!-- ── Barre flottante (quickbar) sur la sélection ──────────────────── -->
 	{#if bubbleVisible}
-	<div bind:this={bubbleEl} class="nodyx-bubble {bubbleBelow ? 'below' : ''}" style="top:{bubbleTop}px; left:{bubbleLeft}px;" role="toolbar" aria-label="Mise en forme rapide">
+	<div bind:this={bubbleEl} class="nodyx-bubble {bubbleBelow ? 'below' : ''}" style="top:{bubbleTop}px; left:{bubbleLeft}px;" role="toolbar" aria-label={tFn('editor.bubble.aria')}>
 		<button type="button" class="nb-btn {a.bold ? 'active' : ''}" title={tFn('editor.bold')}
 			onmousedown={(e) => e.preventDefault()} onclick={() => editor?.chain().focus().toggleBold().run()}><b>B</b></button>
 		<button type="button" class="nb-btn {a.italic ? 'active' : ''}" title={tFn('editor.italic')}
 			onmousedown={(e) => e.preventDefault()} onclick={() => editor?.chain().focus().toggleItalic().run()}><i>I</i></button>
 		<span class="nb-sep"></span>
 		<button type="button" class="nb-btn nb-anchor {blockIsAnchored ? 'active' : ''}"
-			title={blockIsAnchored ? 'Retirer du sommaire' : 'Ajouter cette ligne au sommaire'}
+			title={blockIsAnchored ? tFn('editor.anchor.remove_title') : tFn('editor.anchor.add_title')}
 			onmousedown={(e) => e.preventDefault()} onclick={toggleAnchor}>
 			<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="5" r="2.4"/><line x1="12" y1="22" x2="12" y2="8"/><path d="M5 12a7 7 0 0014 0"/><line x1="3" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="21" y2="12"/></svg>
-			<span>{blockIsAnchored ? 'Ancré' : 'Ancre'}</span>
+			<span>{blockIsAnchored ? tFn('editor.anchor.anchored') : tFn('editor.anchor.anchor')}</span>
 		</button>
 	</div>
 	{/if}
@@ -1585,11 +1667,9 @@
 
 	/* ── Popups ────────────────────────────────────────────────────────── */
 	:global(.popup) {
-		position: absolute;
-		top: 100%;
-		left: 0;
-		margin-top: 0.25rem;
-		z-index: 50;
+		position: fixed;        /* échappe au clipping des overflow ancêtres ; placée par use:anchoredPopover */
+		z-index: 1000;          /* au-dessus des modals (chat z-400, tâches…) */
+		max-width: calc(100vw - 16px);   /* jamais plus large que l'écran (mobile) */
 		background-color: rgb(31 41 55);
 		border: 1px solid rgb(55 65 81);
 		border-radius: 0.75rem;

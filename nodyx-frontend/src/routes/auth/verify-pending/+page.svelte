@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { t } from '$lib/i18n'
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 
 	const tFn = $derived($t)
 
-	const email = $derived($page.url.searchParams.get('email') ?? '');
+	const email = $derived(page.url.searchParams.get('email') ?? '');
 
 	let resending   = $state(false);
 	let resendDone  = $state(false);
@@ -24,10 +24,10 @@
 				resendDone = true;
 			} else {
 				const j = await res.json();
-				resendError = j.error ?? 'Erreur lors du renvoi.';
+				resendError = j.error ?? tFn('auth.resend_error');
 			}
 		} catch {
-			resendError = 'Impossible de contacter le serveur.';
+			resendError = tFn('auth.server_error');
 		} finally {
 			resending = false;
 		}
@@ -35,7 +35,7 @@
 </script>
 
 <svelte:head>
-	<title>{tFn('auth.verify_email.title')} — Nodyx</title>
+	<title>{tFn('auth.verify_email.title')} · Nodyx</title>
 </svelte:head>
 
 <div class="mx-auto max-w-md pt-16 px-4 text-center">

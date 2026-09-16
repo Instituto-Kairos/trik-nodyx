@@ -1,8 +1,12 @@
 <script lang="ts">
-	import { page } from '$app/stores'
+	import { page } from '$app/state'
 	import { goto } from '$app/navigation'
 	import type { PageData } from './$types'
 	import { untrack } from 'svelte'
+	import NodyxEditor from '$lib/components/editor/NodyxEditor.svelte'
+	import { t, locale } from '$lib/i18n'
+
+	const tFn = $derived($t)
 
 	let { data }: { data: PageData } = $props()
 
@@ -10,7 +14,7 @@
 	let board   = $state(untrack(() => structuredClone(data.board)))
 	let members = $state(untrack(() => data.members))
 
-	const token     = $derived($page.data.token as string)
+	const token     = $derived(page.data.token as string)
 	const API       = '/api/v1/tasks'
 
 	// ── Drag & drop ───────────────────────────────────────────────────────────
@@ -30,11 +34,12 @@
 	let boardNameDraft = $state(board.name)
 
 	// ── Helpers ───────────────────────────────────────────────────────────────
-	const PRIORITY_META: Record<string, { label: string; cls: string }> = {
-		low:    { label: 'Basse',   cls: 'text-gray-500 bg-gray-800 border-gray-700' },
-		normal: { label: 'Normale', cls: 'text-gray-400 bg-gray-800 border-gray-700' },
-		high:   { label: 'Haute',   cls: 'text-amber-400 bg-amber-900/30 border-amber-800/50' },
-		urgent: { label: 'Urgente', cls: 'text-red-400 bg-red-900/30 border-red-800/50' },
+	// labelKey résolu via tFn dans le template (réactif à la locale).
+	const PRIORITY_META: Record<string, { labelKey: string; cls: string }> = {
+		low:    { labelKey: 'tasks.priority.low',    cls: 'text-gray-500 bg-gray-800 border-gray-700' },
+		normal: { labelKey: 'tasks.priority.normal', cls: 'text-gray-400 bg-gray-800 border-gray-700' },
+		high:   { labelKey: 'tasks.priority.high',   cls: 'text-amber-400 bg-amber-900/30 border-amber-800/50' },
+		urgent: { labelKey: 'tasks.priority.urgent', cls: 'text-red-400 bg-red-900/30 border-red-800/50' },
 	}
 
 	const COL_COLORS: Record<string, string> = {
@@ -51,16 +56,16 @@
 
 	const COLOR_OPTS = Object.keys(COL_COLORS)
 
-	function fDue(iso: string | null) {
+	function fDue(iso: string | null, dateLocale: string) {
 		if (!iso) return null
 		const d = new Date(iso)
 		const today = new Date(); today.setHours(0,0,0,0)
 		const diff  = Math.ceil((d.getTime() - today.getTime()) / 86400000)
-		if (diff < 0)   return { label: 'En retard', cls: 'text-red-400 bg-red-900/30 border-red-800/50' }
-		if (diff === 0) return { label: "Aujourd'hui", cls: 'text-amber-400 bg-amber-900/30 border-amber-800/50' }
-		if (diff === 1) return { label: 'Demain', cls: 'text-yellow-400 bg-yellow-900/30 border-yellow-800/50' }
+		if (diff < 0)   return { labelKey: 'tasks.due.overdue', cls: 'text-red-400 bg-red-900/30 border-red-800/50' }
+		if (diff === 0) return { labelKey: 'tasks.due.today', cls: 'text-amber-400 bg-amber-900/30 border-amber-800/50' }
+		if (diff === 1) return { labelKey: 'tasks.due.tomorrow', cls: 'text-yellow-400 bg-yellow-900/30 border-yellow-800/50' }
 		return {
-			label: d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }),
+			label: d.toLocaleDateString(dateLocale, { day: 'numeric', month: 'short' }),
 			cls:   'text-gray-400 bg-gray-800 border-gray-700',
 		}
 	}
@@ -90,7 +95,7 @@
 	}
 
 	async function deleteCard(cardId: string, colId: string) {
-		if (!confirm('Supprimer cette carte ?')) return
+		if (!confirm(tFn('tasks.confirm_delete_card'))) return
 		await api(`/cards/${cardId}`, 'DELETE')
 		const col = board.columns.find((c: any) => c.id === colId)
 		if (col) col.cards = col.cards.filter((k: any) => k.id !== cardId)
@@ -169,7 +174,7 @@
 
 	async function deleteColumn(colId: string) {
 		const col = board.columns.find((c: any) => c.id === colId)
-		if (!confirm(`Supprimer la colonne "${col?.name}" et toutes ses cartes ?`)) return
+		if (!confirm(tFn('tasks.confirm_delete_col', { name: col?.name }))) return
 		await api(`/columns/${colId}`, 'DELETE')
 		board.columns = board.columns.filter((c: any) => c.id !== colId)
 	}
@@ -185,17 +190,17 @@
 	}
 
 	async function deleteBoard() {
-		if (!confirm(`Supprimer le tableau "${board.name}" et toutes ses colonnes ?`)) return
+		if (!confirm(tFn('tasks.confirm_delete_board', { name: board.name }))) return
 		await api(`/boards/${board.id}`, 'DELETE')
 		goto('/tasks')
 	}
 </script>
 
-<svelte:head><title>{board.name} — Tâches — Nodyx</title></svelte:head>
+<svelte:head><title>{tFn('tasks.meta_title', { board: board.name })}</title></svelte:head>
 
 <!-- ── Header ──────────────────────────────────────────────────────────────── -->
 <div class="flex items-center gap-3 mb-6 flex-wrap">
-	<a href="/tasks" class="text-gray-500 hover:text-gray-300 text-sm transition-colors">← Tableaux</a>
+	<a href="/tasks" class="text-gray-500 hover:text-gray-300 text-sm transition-colors">← {tFn('tasks.boards_breadcrumb')}</a>
 	<span class="text-gray-700">/</span>
 
 	{#if editingBoardName}
@@ -219,7 +224,7 @@
 	{/if}
 
 	{#if board.description}
-		<span class="text-sm text-gray-500 hidden sm:inline">— {board.description}</span>
+		<span class="text-sm text-gray-500 hidden sm:inline">· {board.description}</span>
 	{/if}
 
 	{#if data.canManage}
@@ -227,7 +232,7 @@
 			onclick={deleteBoard}
 			class="ml-auto text-xs text-gray-600 hover:text-red-400 transition-colors"
 		>
-			Supprimer le tableau
+			{tFn('tasks.delete_board')}
 		</button>
 	{/if}
 </div>
@@ -238,7 +243,7 @@
 	{#each board.columns as col (col.id)}
 		<!-- Colonne -->
 		<div
-			class="flex-shrink-0 w-72 flex flex-col rounded-xl border transition-colors
+			class="flex-1 min-w-[15rem] flex flex-col rounded-xl border transition-colors
 			       {dragOverColId === col.id ? 'border-indigo-600 bg-indigo-950/20' : 'border-gray-800 bg-gray-900/40'}"
 			ondragover={(e) => onDragOver(e, col.id)}
 			ondragleave={onDragLeave}
@@ -254,7 +259,7 @@
 					<button
 						onclick={() => deleteColumn(col.id)}
 						class="text-gray-700 hover:text-red-400 text-sm leading-none transition-colors ml-1"
-						title="Supprimer la colonne"
+						title={tFn('tasks.delete_col_title')}
 					>×</button>
 				{/if}
 			</div>
@@ -262,7 +267,7 @@
 			<!-- Cartes -->
 			<div class="flex flex-col gap-2 p-2 min-h-[4rem]">
 				{#each col.cards as card (card.id)}
-					{@const due     = fDue(card.due_date)}
+					{@const due     = fDue(card.due_date, $locale)}
 					{@const priMeta = PRIORITY_META[card.priority] ?? PRIORITY_META.normal}
 					<div
 						draggable="true"
@@ -276,28 +281,36 @@
 							<p class="flex-1 text-sm text-gray-200 leading-snug">{card.title}</p>
 							<div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
 								<button
-									onclick={() => editingCard = structuredClone(card)}
+									onclick={() => editingCard = $state.snapshot(card)}
 									class="text-gray-600 hover:text-indigo-400 text-xs leading-none"
-									title="Modifier"
+									title={tFn('tasks.edit')}
 								>✎</button>
 								<button
 									onclick={() => deleteCard(card.id, col.id)}
 									class="text-gray-600 hover:text-red-400 text-xs leading-none ml-0.5"
-									title="Supprimer"
+									title={tFn('tasks.delete')}
 								>×</button>
 							</div>
 						</div>
+
+						<!-- Description riche : HTML assaini côté serveur (écriture ET
+						     lecture), donc sûr à rendre. Bornée en hauteur sur la tuile. -->
+						{#if card.description}
+							<div class="task-card-desc mt-1.5 max-h-28 overflow-hidden text-xs leading-snug text-gray-400">
+								{@html card.description}
+							</div>
+						{/if}
 
 						<!-- Badges -->
 						<div class="flex flex-wrap gap-1.5 mt-2">
 							{#if card.priority !== 'normal'}
 								<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border {priMeta.cls}">
-									{priMeta.label}
+									{tFn(priMeta.labelKey)}
 								</span>
 							{/if}
 							{#if due}
 								<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border {due.cls}">
-									📅 {due.label}
+									📅 {due.labelKey ? tFn(due.labelKey) : due.label}
 								</span>
 							{/if}
 							{#if card.assignee_username}
@@ -320,7 +333,7 @@
 						<!-- svelte-ignore a11y_autofocus -->
 						<input
 							bind:value={newCardTitle}
-							placeholder="Titre de la carte..."
+							placeholder={tFn('tasks.card_title_ph')}
 							maxlength="200"
 							autofocus
 							class="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-gray-200
@@ -330,12 +343,12 @@
 							<button
 								type="submit"
 								class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors"
-							>Ajouter</button>
+							>{tFn('tasks.add')}</button>
 							<button
 								type="button"
 								onclick={() => { addingCardColId = null; newCardTitle = '' }}
 								class="px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-xs text-gray-400 transition-colors"
-							>Annuler</button>
+							>{tFn('tasks.cancel')}</button>
 						</div>
 					</form>
 				{:else}
@@ -343,7 +356,7 @@
 						onclick={() => { addingCardColId = col.id; newCardTitle = '' }}
 						class="w-full text-left px-2 py-1.5 text-xs text-gray-600 hover:text-gray-300 hover:bg-gray-800 rounded-lg transition-colors"
 					>
-						+ Ajouter une carte
+						{tFn('tasks.add_card')}
 					</button>
 				{/if}
 			</div>
@@ -358,7 +371,7 @@
 					<!-- svelte-ignore a11y_autofocus -->
 					<input
 						bind:value={newColName}
-						placeholder="Nom de la colonne"
+						placeholder={tFn('tasks.col_name_ph')}
 						maxlength="100"
 						autofocus
 						class="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-gray-200
@@ -377,11 +390,11 @@
 						<button
 							onclick={addColumn}
 							class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors"
-						>Ajouter</button>
+						>{tFn('tasks.add')}</button>
 						<button
 							onclick={() => { addingColumn = false; newColName = '' }}
 							class="px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-xs text-gray-400 transition-colors"
-						>Annuler</button>
+						>{tFn('tasks.cancel')}</button>
 					</div>
 				</div>
 			{:else}
@@ -389,7 +402,7 @@
 					onclick={() => addingColumn = true}
 					class="w-full px-4 py-3 rounded-xl border border-dashed border-gray-700 hover:border-indigo-700 text-sm text-gray-600 hover:text-indigo-400 transition-colors"
 				>
-					+ Nouvelle colonne
+					{tFn('tasks.new_col')}
 				</button>
 			{/if}
 		</div>
@@ -408,7 +421,7 @@
 	>
 		<div class="w-full max-w-lg bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl p-6 space-y-4">
 			<div class="flex items-center justify-between">
-				<h2 class="text-base font-semibold text-white">Modifier la carte</h2>
+				<h2 class="text-base font-semibold text-white">{tFn('tasks.edit_card')}</h2>
 				<button onclick={() => editingCard = null} class="text-gray-600 hover:text-gray-300 text-lg leading-none">×</button>
 			</div>
 
@@ -426,22 +439,25 @@
 
 			<!-- Description -->
 			<div>
-				<label for="task-edit-desc" class="block text-xs font-medium text-gray-500 mb-1.5">Description</label>
-				<textarea
-					id="task-edit-desc"
-					bind:value={editingCard.description}
-					rows="3"
-					maxlength="10000"
-					placeholder="Détails, liens, notes..."
-					class="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-gray-200
-					       placeholder-gray-600 focus:outline-none focus:border-indigo-600 resize-none"
-				></textarea>
+				<span class="block text-xs font-medium text-gray-500 mb-1.5">Description</span>
+				<!-- Éditeur riche (liens, images, mise en forme). Le HTML est assaini
+				     CÔTÉ SERVEUR, à l'écriture et à la lecture.
+				     ⚠ Ne PAS l'envelopper dans un conteneur à overflow : l'éditeur borne
+				     déjà sa hauteur lui-même (son contenu scrolle en interne) et sa racine
+				     est en overflow-visible EXPRÈS pour que les popups (lien, image...)
+				     puissent dépasser. Un wrapper overflow-y-auto les rognait. -->
+				<NodyxEditor
+					compact
+					initialContent={editingCard.description}
+					placeholder={tFn('tasks.details_ph')}
+					onchange={(html) => { if (editingCard) editingCard.description = html }}
+				/>
 			</div>
 
 			<div class="grid grid-cols-2 gap-3">
 				<!-- Priorité -->
 				<div>
-					<label for="task-edit-priority" class="block text-xs font-medium text-gray-500 mb-1.5">Priorité</label>
+					<label for="task-edit-priority" class="block text-xs font-medium text-gray-500 mb-1.5">{tFn('tasks.priority_label')}</label>
 					<select
 						id="task-edit-priority"
 						bind:value={editingCard.priority}
@@ -449,14 +465,14 @@
 						       focus:outline-none focus:border-indigo-600"
 					>
 						{#each Object.entries(PRIORITY_META) as [val, meta]}
-							<option value={val}>{meta.label}</option>
+							<option value={val}>{tFn(meta.labelKey)}</option>
 						{/each}
 					</select>
 				</div>
 
 				<!-- Échéance -->
 				<div>
-					<label for="task-edit-due" class="block text-xs font-medium text-gray-500 mb-1.5">Échéance</label>
+					<label for="task-edit-due" class="block text-xs font-medium text-gray-500 mb-1.5">{tFn('tasks.due_label')}</label>
 					<input
 						id="task-edit-due"
 						type="date"
@@ -469,14 +485,14 @@
 
 			<!-- Assigné à -->
 			<div>
-				<label for="task-edit-assignee" class="block text-xs font-medium text-gray-500 mb-1.5">Assigné à</label>
+				<label for="task-edit-assignee" class="block text-xs font-medium text-gray-500 mb-1.5">{tFn('tasks.assignee_label')}</label>
 				<select
 					id="task-edit-assignee"
 					bind:value={editingCard.assignee_id}
 					class="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-gray-200
 					       focus:outline-none focus:border-indigo-600"
 				>
-					<option value={null}>— Personne</option>
+					<option value={null}>{tFn('tasks.none')}</option>
 					{#each members as m}
 						<option value={m.id}>{m.username}</option>
 					{/each}
@@ -487,12 +503,31 @@
 				<button
 					onclick={saveCard}
 					class="flex-1 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors"
-				>Enregistrer</button>
+				>{tFn('tasks.save')}</button>
 				<button
 					onclick={() => editingCard = null}
 					class="px-4 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-sm text-gray-400 transition-colors"
-				>Annuler</button>
+				>{tFn('tasks.cancel')}</button>
 			</div>
 		</div>
 	</div>
 {/if}
+
+<style>
+	/* Contenu riche des cartes : venu de l'éditeur, assaini côté serveur. On borne
+	   ce qui pourrait casser une tuile étroite, sans imposer tout un thème. */
+	.task-card-desc :global(p)          { margin: 0 0 0.25rem 0; }
+	.task-card-desc :global(a)          { color: rgb(129, 140, 248); text-decoration: underline; }
+	.task-card-desc :global(a:hover)    { color: rgb(165, 180, 252); }
+	.task-card-desc :global(img)        { max-width: 100%; max-height: 6rem; border-radius: 0.375rem; margin: 0.25rem 0; }
+	.task-card-desc :global(pre)        { overflow-x: auto; background: rgb(17, 24, 39); border-radius: 0.375rem; padding: 0.375rem 0.5rem; margin: 0.25rem 0; }
+	.task-card-desc :global(code)       { font-size: 0.7rem; }
+	.task-card-desc :global(ul),
+	.task-card-desc :global(ol)         { margin: 0.25rem 0; padding-left: 1.1rem; }
+	.task-card-desc :global(h1),
+	.task-card-desc :global(h2),
+	.task-card-desc :global(h3),
+	.task-card-desc :global(h4)         { font-size: 0.8rem; font-weight: 600; color: rgb(209, 213, 219); margin: 0.25rem 0; }
+	.task-card-desc :global(blockquote) { border-left: 2px solid rgb(75, 85, 99); padding-left: 0.5rem; margin: 0.25rem 0; }
+	.task-card-desc :global(iframe)     { max-width: 100%; max-height: 8rem; }
+</style>

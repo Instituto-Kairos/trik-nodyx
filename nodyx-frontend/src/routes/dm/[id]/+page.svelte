@@ -373,7 +373,7 @@
 			sender_username: '',
 			sender_avatar: null,
 			sender_name_color: null,
-			content: `${invited_by} a ajouté ${user.username} à la conversation`,
+			content: tFn('dm_conv.added', { by: invited_by, user: user.username }),
 			created_at: new Date().toISOString(),
 			deleted_at: null,
 			_systemMessage: true,
@@ -604,7 +604,7 @@
 	})
 
 	// Effet 0 : inhiber le scroll de la fenêtre (body + html) tant que le DM
-	// est monté. Le +layout global a min-h-screen sur sa racine + un <main>
+	// est monté. Le +layout global a min-h-dvh sur sa racine + un <main>
 	// avec h-full overflow-y-auto, ce qui crée une deuxième scrollbar de
 	// fenêtre quand le DM rentre dans le viewport mais que le main pense
 	// avoir une hauteur géante. En bloquant le scroll fenêtre, seul le
@@ -897,7 +897,7 @@
 	function replyPreview(msg: DmMessage): string {
 		if (msg.is_encrypted) {
 			if (msg._decrypted) return msg._decrypted.slice(0, 120)
-			return '🔒 message chiffré'
+			return tFn('dm_conv.encrypted')
 		}
 		return (msg.content || '').slice(0, 120)
 	}
@@ -1037,7 +1037,7 @@
 </script>
 
 <svelte:head>
-	<title>DM — {conversation ? convLabel(conversation) : tFn('dm.title')}</title>
+	<title>DM · {conversation ? convLabel(conversation) : tFn('dm.title')}</title>
 </svelte:head>
 
 <!-- Layout deux colonnes : sidebar + zone chat -->
@@ -1413,7 +1413,7 @@
 					</div>
 					{#if conversation.created_at}
 						<div class="dm-hero-since">
-							Vous vous parlez depuis le {formatHeroDate(conversation.created_at)}
+							{tFn('dm.talking_since', { date: formatHeroDate(conversation.created_at) })}
 						</div>
 					{/if}
 				</div>
@@ -1530,7 +1530,7 @@
 									<!-- Bouton répondre (visible pour tous, sauf messages systèmes) -->
 									<button onclick={() => startReply(msg)}
 										class="p-1 rounded-md hover:bg-white/[0.08] text-gray-600 hover:text-indigo-400 transition-colors"
-										title={tFn('dm.reply') ?? 'Répondre'}>
+										title={tFn('dm.reply')}>
 										<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 											<polyline points="9 14 4 9 9 4"/>
 											<path d="M20 20v-7a4 4 0 0 0-4-4H4"/>
@@ -1590,7 +1590,7 @@
 									></textarea>
 									<div class="flex gap-1.5 mt-1.5">
 										<button onclick={saveEdit} class="text-[10px] px-2 py-0.5 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white transition-colors">{tFn('dm.enter')}</button>
-										<button onclick={cancelEdit} class="text-[10px] px-2 py-0.5 rounded-md bg-white/[0.06] hover:bg-white/[0.10] text-gray-400 transition-colors">Échap</button>
+										<button onclick={cancelEdit} class="text-[10px] px-2 py-0.5 rounded-md bg-white/[0.06] hover:bg-white/[0.10] text-gray-400 transition-colors">{tFn('dm_conv.esc')}</button>
 									</div>
 								{:else}
 									<!-- Quote inline si ce message est une réponse à un autre -->
@@ -1600,7 +1600,7 @@
 											<div class="dm-quote-content">
 												<div class="dm-quote-author">{msg.reply_snapshot.sender_username}</div>
 												<div class="dm-quote-preview">
-													{msg.reply_snapshot.is_encrypted ? '🔒 message chiffré' : msg.reply_snapshot.content}
+													{msg.reply_snapshot.is_encrypted ? tFn('dm_conv.encrypted') : msg.reply_snapshot.content}
 												</div>
 											</div>
 										</div>
@@ -1696,7 +1696,13 @@
 		</div>
 
 		<!-- Zone de saisie -->
-		<div class="shrink-0 px-5 py-4 border-t border-white/[0.06] bg-gray-950/30">
+		<!-- `--bottom-nav-h` réserve la hauteur de la barre de navigation mobile,
+		     qui est `fixed bottom-0` et passerait donc PAR DESSUS ce champ. La
+		     variable vaut 56px plus la zone sûre du téléphone, et 0 à partir de
+		     `lg` où la barre n'existe plus. Le chat le faisait déjà, cette page
+		     ne l'a jamais fait : on y écrivait sous le menu. -->
+		<div class="shrink-0 px-5 py-4 border-t border-white/[0.06] bg-gray-950/30"
+		     style="padding-bottom: calc(var(--bottom-nav-h) + 1rem)">
 			<!-- Banner reply : indique le message qu'on est en train de citer -->
 			{#if replyingTo}
 				<div class="dm-reply-banner">
@@ -1738,7 +1744,7 @@
 						class="dm-composer-emoji-btn w-8 h-8 rounded-xl flex items-center justify-center
 						       text-gray-500 hover:text-gray-200 hover:bg-white/[0.06]
 						       transition-all duration-150"
-						title={tFn('common.add_emoji') ?? 'Insérer un emoji'}
+						title={tFn('common.add_emoji')}
 						aria-label={tFn('dm.insert_emoji')}
 					>
 						<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">

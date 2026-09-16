@@ -2,9 +2,12 @@
 	import type { PageData } from './$types';
 	import { onMount, onDestroy } from 'svelte';
 	import { t } from '$lib/i18n';
+	import { replyCount } from '$lib/forumCounts';
 	import WidgetZone from '$lib/components/homepage/WidgetZone.svelte';
 	import GridRenderer from '$lib/components/homepage/GridRenderer.svelte';
+	import type { PublicExtension } from '$lib/components/homepage/extensionCatalog';
 	import type { HomepagePosition, GridLayout, GridTheme } from '$lib/types/homepage';
+	import { GRID_GOOGLE_FONTS_URL } from '$lib/types/homepage';
 	const tFn = $derived($t)
 
 	let { data }: { data: PageData } = $props();
@@ -17,6 +20,7 @@
 	const hpPositions      = $derived((data as any).homepagePositions as HomepagePosition[] ?? []);
 	const user             = $derived((data as any).user ?? null);
 	const installedWidgets = $derived((data as any).installedWidgets as Record<string, { entry: string }> ?? {});
+	const extensions = $derived(((data as { extensions?: PublicExtension[] }).extensions ?? []) satisfies PublicExtension[])
 	const gridLayout       = $derived((data as any).gridLayout as GridLayout | null ?? null);
 	const gridTheme        = $derived((data as any).gridTheme as Partial<GridTheme> ?? {});
 	const hasGrid          = $derived(gridLayout !== null && (gridLayout as GridLayout)?.rows?.length > 0);
@@ -86,7 +90,10 @@
 	<meta property="og:description" content={instance.description} />
 	<link rel="preconnect" href="https://fonts.googleapis.com" />
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
-	<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700;800&display=swap" rel="stylesheet" />
+	<!-- Les 10 polices proposées par le thème du Homepage Builder (--nfont) : sans
+	     ce lien, choisir une police dans le panneau n'a aucun effet visuel, le
+	     navigateur retombe sur une police système générique. -->
+	<link href={GRID_GOOGLE_FONTS_URL} rel="stylesheet" />
 </svelte:head>
 
 <style>
@@ -209,6 +216,7 @@
 		{instance}
 		{user}
 		{installedWidgets}
+		{extensions}
 	/>
 {:else}
 
@@ -218,14 +226,14 @@
 
 <!-- BANNER -->
 {#if hasPos('banner')}
-	<WidgetZone widgets={posWidgets('banner')} {instance} {user} layout="full" {installedWidgets} />
+	<WidgetZone widgets={posWidgets('banner')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 {/if}
 
 <!-- ═══════════════════════════════════════════════════════════════════
      HERO — position 'hero' (WidgetZone) ou fallback hardcodé
 ════════════════════════════════════════════════════════════════════════ -->
 {#if hasPos('hero')}
-	<WidgetZone widgets={posWidgets('hero')} {instance} {user} layout="full" {installedWidgets} />
+	<WidgetZone widgets={posWidgets('hero')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 {:else}
 <!-- Fallback hero hardcodé (tant qu'aucun widget n'est configuré) -->
 <section class="relative overflow-hidden noise" style="background: #0a0a0f; border-bottom: 1px solid rgba(255,255,255,.05); min-height: 220px">
@@ -258,12 +266,12 @@
 				</div>
 			{/if}
 			<div>
+				<!-- Le nom de l'instance vit dans la barre de contexte (taille unique
+				     partout) ; le hero ne le répète plus pour éviter le doublon + l'effet
+				     "le titre change de taille" en quittant l'accueil. Ici : accroche. -->
 				<h1 class="sg font-extrabold leading-none mb-1" style="font-size: clamp(1.3rem,2.5vw,1.9rem)">
-					<span class="gt">{instance.name}</span>
+					<span class="gt">{instance.description || tFn('home.hero_welcome')}</span>
 				</h1>
-				{#if instance.description}
-					<p class="text-sm max-w-lg leading-relaxed" style="color: #6b7280">{instance.description}</p>
-				{/if}
 			</div>
 		</div>
 
@@ -322,7 +330,7 @@
 ════════════════════════════════════════════════════════════════════════ -->
 {#if hasPos('stats-bar')}
 	<div class="flex flex-wrap px-8 py-3 gap-0.5" style="background:#0d0d12; border-bottom:1px solid rgba(255,255,255,.05)">
-		<WidgetZone widgets={posWidgets('stats-bar')} {instance} {user} layout="full" {installedWidgets} />
+		<WidgetZone widgets={posWidgets('stats-bar')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 	</div>
 {/if}
 
@@ -330,7 +338,7 @@
      MAIN — position 'main' (WidgetZone) — above main content
 ════════════════════════════════════════════════════════════════════════ -->
 {#if hasPos('main')}
-	<WidgetZone widgets={posWidgets('main')} {instance} {user} layout="full" {installedWidgets} />
+	<WidgetZone widgets={posWidgets('main')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 {/if}
 
 <!-- ═══════════════════════════════════════════════════════════════════
@@ -479,7 +487,7 @@
 							<button onclick={() => { slideTo(i); startTimers(); }}
 							        class="relative h-px transition-all duration-300 {i === slideIndex ? 'w-14' : 'w-4 opacity-25 hover:opacity-50'}"
 							        style="background: rgba(255,255,255,.15)"
-							        aria-label="Slide {i+1}">
+							        aria-label={tFn('home.slide_aria', { n: i+1 })}>
 								{#if i === slideIndex}
 									<span class="absolute top-[-1px] left-0 h-[3px] transition-none"
 									      style="width:{progressPct}%; background: linear-gradient(to right, var(--nx-accent-2-strong), var(--nx-cyan))"></span>
@@ -498,7 +506,7 @@
 							<button onclick={() => { slideNext(); startTimers(); }}
 							        class="w-8 h-8 flex items-center justify-center transition-all"
 							        style="border: 1px solid rgba(255,255,255,.08); color: #6b7280"
-							        aria-label="Suivant"
+							        aria-label={tFn('home.next')}
 							        onmouseenter={e => (e.currentTarget as HTMLElement).style.borderColor='rgb(var(--nx-accent-2-rgb) / .5)'}
 							        onmouseleave={e => (e.currentTarget as HTMLElement).style.borderColor='rgba(255,255,255,.08)'}>
 								<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
@@ -549,8 +557,8 @@
 						<span class="text-[10px] ml-auto" style="color: #374151">{timeAgo(thread.created_at)}</span>
 					</div>
 				</div>
-				{#if (thread.post_count ?? 0) > 1}
-					<span class="sg shrink-0 text-[10px] font-bold tabular-nums mt-0.5" style="color: #374151">{thread.post_count}</span>
+				{#if replyCount(thread.post_count) > 0}
+					<span class="sg shrink-0 text-[10px] font-bold tabular-nums mt-0.5" style="color: #374151">{replyCount(thread.post_count)}</span>
 				{/if}
 			</a>
 			{:else}
@@ -577,7 +585,7 @@
 {#if hasPos('sidebar')}
 	<div class="px-6 py-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
 	     style="border-bottom:1px solid rgba(255,255,255,.05); background:#08080d">
-		<WidgetZone widgets={posWidgets('sidebar')} {instance} {user} layout="grid-3" {installedWidgets} />
+		<WidgetZone widgets={posWidgets('sidebar')} {instance} {user} layout="grid-3" {installedWidgets} {extensions} />
 	</div>
 {/if}
 
@@ -615,7 +623,7 @@
 					<svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 						<path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
 					</svg>
-					<span class="sg text-[10px] font-bold">{thread.post_count ?? 0}</span>
+					<span class="sg text-[10px] font-bold">{replyCount(thread.post_count)}</span>
 				</div>
 			</div>
 
@@ -738,13 +746,13 @@
 				<div class="flex items-center gap-2 mb-1">
 					<span class="text-[10px] font-bold tracking-widest uppercase" style="color: var(--nx-cyan)">Agenda</span>
 				</div>
-				<h2 class="text-xl font-bold text-white">Prochains événements</h2>
+				<h2 class="text-xl font-bold text-white">{tFn('home.upcoming_events')}</h2>
 			</div>
 			<a href="/calendar" class="flex items-center gap-1.5 text-xs font-medium transition-colors"
 				style="color: var(--nx-cyan)"
 				onmouseenter={e => (e.currentTarget as HTMLElement).style.color='var(--nx-cyan-soft)'}
 				onmouseleave={e => (e.currentTarget as HTMLElement).style.color='var(--nx-cyan)'}>
-				Voir tout
+				{tFn('home.see_all')}
 				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
 					<path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
 				</svg>
@@ -757,7 +765,7 @@
 				{@const d  = new Date(ev.starts_at)}
 				{@const day = d.toLocaleDateString(instance.language === 'fr' ? 'fr-FR' : 'en-US', { day: 'numeric' })}
 				{@const mon = d.toLocaleDateString(instance.language === 'fr' ? 'fr-FR' : 'en-US', { month: 'short' })}
-				{@const time = ev.is_all_day ? (instance.language === 'fr' ? 'Journée entière' : 'All day') : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+				{@const time = ev.is_all_day ? tFn('home.all_day') : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
 				<a href="/calendar" class="group relative flex flex-col rounded-2xl overflow-hidden transition-all duration-200"
 					style="background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.07);"
 					onmouseenter={e => { (e.currentTarget as HTMLElement).style.borderColor = 'rgb(var(--nx-cyan-rgb) / .35)'; (e.currentTarget as HTMLElement).style.background = 'rgb(var(--nx-cyan-rgb) / .06)' }}
@@ -821,19 +829,19 @@
 ════════════════════════════════════════════════════════════════════════ -->
 {#if hasPos('wide-1')}
 	<section style="border-bottom:1px solid rgba(255,255,255,.05)">
-		<WidgetZone widgets={posWidgets('wide-1')} {instance} {user} layout="full" {installedWidgets} />
+		<WidgetZone widgets={posWidgets('wide-1')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 	</section>
 {/if}
 {#if hasPos('half-1') || hasPos('half-2')}
 	<div class="grid grid-cols-1 md:grid-cols-2 gap-0" style="border-bottom:1px solid rgba(255,255,255,.05)">
 		{#if hasPos('half-1')}
 			<div style="border-right:1px solid rgba(255,255,255,.05)">
-				<WidgetZone widgets={posWidgets('half-1')} {instance} {user} layout="full" {installedWidgets} />
+				<WidgetZone widgets={posWidgets('half-1')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 			</div>
 		{/if}
 		{#if hasPos('half-2')}
 			<div>
-				<WidgetZone widgets={posWidgets('half-2')} {instance} {user} layout="full" {installedWidgets} />
+				<WidgetZone widgets={posWidgets('half-2')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 			</div>
 		{/if}
 	</div>
@@ -841,7 +849,7 @@
 
 {#if hasPos('wide-2')}
 	<section style="border-bottom:1px solid rgba(255,255,255,.05)">
-		<WidgetZone widgets={posWidgets('wide-2')} {instance} {user} layout="full" {installedWidgets} />
+		<WidgetZone widgets={posWidgets('wide-2')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 	</section>
 {/if}
 
@@ -849,17 +857,17 @@
 	<div class="grid grid-cols-1 md:grid-cols-3 gap-0" style="border-bottom:1px solid rgba(255,255,255,.05)">
 		{#if hasPos('trio-1')}
 			<div style="border-right:1px solid rgba(255,255,255,.05)">
-				<WidgetZone widgets={posWidgets('trio-1')} {instance} {user} layout="full" {installedWidgets} />
+				<WidgetZone widgets={posWidgets('trio-1')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 			</div>
 		{/if}
 		{#if hasPos('trio-2')}
 			<div style="border-right:1px solid rgba(255,255,255,.05)">
-				<WidgetZone widgets={posWidgets('trio-2')} {instance} {user} layout="full" {installedWidgets} />
+				<WidgetZone widgets={posWidgets('trio-2')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 			</div>
 		{/if}
 		{#if hasPos('trio-3')}
 			<div>
-				<WidgetZone widgets={posWidgets('trio-3')} {instance} {user} layout="full" {installedWidgets} />
+				<WidgetZone widgets={posWidgets('trio-3')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 			</div>
 		{/if}
 	</div>
@@ -872,24 +880,24 @@
 	<div class="grid grid-cols-1 md:grid-cols-3 gap-0" style="border-top:1px solid rgba(255,255,255,.05)">
 		{#if hasPos('footer-1')}
 			<div style="border-right:1px solid rgba(255,255,255,.05)">
-				<WidgetZone widgets={posWidgets('footer-1')} {instance} {user} layout="full" {installedWidgets} />
+				<WidgetZone widgets={posWidgets('footer-1')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 			</div>
 		{/if}
 		{#if hasPos('footer-2')}
 			<div style="border-right:1px solid rgba(255,255,255,.05)">
-				<WidgetZone widgets={posWidgets('footer-2')} {instance} {user} layout="full" {installedWidgets} />
+				<WidgetZone widgets={posWidgets('footer-2')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 			</div>
 		{/if}
 		{#if hasPos('footer-3')}
 			<div>
-				<WidgetZone widgets={posWidgets('footer-3')} {instance} {user} layout="full" {installedWidgets} />
+				<WidgetZone widgets={posWidgets('footer-3')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 			</div>
 		{/if}
 	</div>
 {/if}
 {#if hasPos('footer-bar')}
 	<div style="border-top:1px solid rgba(255,255,255,.05)">
-		<WidgetZone widgets={posWidgets('footer-bar')} {instance} {user} layout="full" {installedWidgets} />
+		<WidgetZone widgets={posWidgets('footer-bar')} {instance} {user} layout="full" {installedWidgets} {extensions} />
 	</div>
 {/if}
 

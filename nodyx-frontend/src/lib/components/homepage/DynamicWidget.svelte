@@ -1,4 +1,7 @@
 <script lang="ts">
+
+	import { t } from '$lib/i18n'
+	const tFn = $derived($t)
 	// Charge un widget externe (Web Component) à la volée
 	// Le widget doit s'auto-enregistrer via customElements.define('nodyx-widget-{id}', ...)
 	import { onMount } from 'svelte'
@@ -32,7 +35,7 @@
 			el.src = src
 			el.dataset.nodyx_widget = src
 			el.onload  = () => resolve()
-			el.onerror = () => reject(new Error(`Impossible de charger ${src}`))
+			el.onerror = () => reject(new Error(tFn('dw.load_failed', { src })))
 			document.head.appendChild(el)
 		})
 	}
@@ -47,7 +50,7 @@
 				await Promise.race([
 					customElements.whenDefined(tagName),
 					new Promise((_, reject) =>
-						setTimeout(() => reject(new Error(`${tagName} non enregistré après 5s`)), 5000)
+						setTimeout(() => reject(new Error(tFn('dw.not_registered', { tag: tagName }))), 5000)
 					),
 				])
 			}
@@ -69,13 +72,13 @@
 	<div class="w-full flex items-center justify-center py-8 gap-2" style="color:#374151">
 		<div class="w-4 h-4 rounded-full border-2 animate-spin"
 		     style="border-color:rgba(167,139,250,.2); border-top-color:var(--nx-accent-2-soft)"></div>
-		<span class="text-xs">Chargement du widget…</span>
+		<span class="text-xs">{tFn('dw.loading')}</span>
 	</div>
 
 {:else if loadStatus === 'error'}
 	<!-- Erreur visible uniquement en dev / pour l'admin -->
 	<div class="w-full px-4 py-3 text-xs" style="background:rgba(239,68,68,.06); border:1px solid rgba(239,68,68,.2); color:#fca5a5">
-		<span class="font-bold">Widget {widgetId} — erreur de chargement :</span>
+		<span class="font-bold">Widget {widgetId} : erreur de chargement</span>
 		{errorMsg}
 	</div>
 

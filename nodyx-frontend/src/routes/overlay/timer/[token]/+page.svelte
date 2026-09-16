@@ -1,9 +1,12 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte'
-	import { page } from '$app/stores'
+	import { page } from '$app/state'
 	import { browser } from '$app/environment'
 	import { PUBLIC_API_URL } from '$env/static/public'
 	import { fade } from 'svelte/transition'
+	import { t } from '$lib/i18n'
+
+	const tFn = $derived($t)
 
 	// Stream timer overlay : affiche le temps écoulé depuis le started_at de
 	// la session en cours. Bootstrap l'état + config via REST, tick local
@@ -13,7 +16,7 @@
 	//
 	// 6 thèmes (cyber/soft/retro/neon/minimal/custom), 5 positions, 3 formats.
 
-	const token = $derived(($page.params as { token: string }).token)
+	const token = $derived((page.params as { token: string }).token)
 
 	type State = { isLive: boolean; startedAt: string | null }
 	type Theme    = 'cyber' | 'soft' | 'retro' | 'neon' | 'minimal' | 'custom'
@@ -173,11 +176,11 @@
 <div class="overlay-root pos-{config.position}">
 	{#if status === 'invalid'}
 		<div class="status-msg status-error" transition:fade>
-			Overlay invalide ou révoquée.
+			{tFn('overlay_board.invalid')}
 		</div>
 	{:else if status === 'error'}
 		<div class="status-msg status-error" transition:fade>
-			Connexion Nodyx impossible.
+			{tFn('overlay_alert.conn_failed')}
 		</div>
 	{:else if status === 'ready' && isLive}
 		<div class="timer-card theme-{config.theme}" style={customStyle()} transition:fade>

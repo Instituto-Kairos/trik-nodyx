@@ -1,4 +1,7 @@
 <script lang="ts">
+
+	import { t } from '$lib/i18n'
+	const tFn = $derived($t)
     let {
         stream,
         username,
@@ -30,11 +33,16 @@
             : y - 4
     )
 
+    // ⚠ Réassigner srcObject réinitialise l'élément (noir jusqu'à la keyframe) même
+    // pour le même objet : on ne le fait que si le flux change réellement.
     function streamSrc(node: HTMLVideoElement, s: MediaStream) {
         node.srcObject = s
         return {
-            update(ns: MediaStream) { node.srcObject = ns },
-            destroy()              { node.srcObject = null },
+            update(ns: MediaStream) {
+                if (node.srcObject === ns) return
+                node.srcObject = ns
+            },
+            destroy() { node.srcObject = null },
         }
     }
 </script>
@@ -63,7 +71,7 @@
         <div class="absolute top-2 left-2 flex items-center gap-1 px-1.5 py-0.5"
              style="background: rgba(0,0,0,0.72); border: 1px solid rgba(59,130,246,0.3)">
             <span class="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"></span>
-            <span class="text-[9px] font-bold" style="color: rgb(96,165,250); letter-spacing: 0.08em">ÉCRAN</span>
+            <span class="text-[9px] font-bold" style="color: rgb(96,165,250); letter-spacing: 0.08em">{tFn('msp.screen')}</span>
         </div>
     </div>
 
@@ -79,6 +87,6 @@
             </div>
         {/if}
         <span class="text-[11px] font-semibold text-white truncate flex-1">{username}</span>
-        <span class="text-[9px] font-medium shrink-0" style="color: rgb(75,85,99)">Double-clic → plein écran</span>
+        <span class="text-[9px] font-medium shrink-0" style="color: rgb(75,85,99)">{tFn('msp.dblclick')}</span>
     </div>
 </div>
