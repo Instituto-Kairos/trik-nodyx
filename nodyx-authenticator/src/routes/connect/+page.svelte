@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte'
 	import { goto } from '$app/navigation'
-	import { decryptPrivateKey, signChallenge } from '$lib/crypto'
-	import { getAllDevices, isSetupDone } from '$lib/storage'
+	import { decryptPrivateKey, decryptSeed, deriveIdentity, encryptPrivateKey, exportPublicKey, signChallenge } from '$lib/crypto'
+	import { getDevicesByOrigin, getMasterSeed, hasMasterSeed, saveDevice } from '$lib/storage'
 	import type { DeviceRecord } from '$lib/storage'
 
 	// Params passés via QR : ?instance=https://...&challengeId=xxx&challenge=xxx&nonce=xxx
@@ -12,17 +12,25 @@
 	let challenge    = $state('')
 	let pollNonce    = $state('')
 
-	let devices      = $state<DeviceRecord[]>([])
-	let selectedDevice = $state<DeviceRecord | null>(null)
-	let passphrase   = $state('')
-	let error        = $state('')
-	let loading      = $state(false)
+	// Appareils déjà connus POUR CETTE INSTANCE précisément (jamais un appareil
+	// enregistré pour une autre instance : cf SPECS/
+	// NODYX_SIGNET_CLOISONNEMENT_IDENTITE_CDC.md, l'ancien "devices[0]" envoyait
+	// silencieusement la mauvaise identité à la mauvaise instance).
+	let matchingDevices = $state<DeviceRecord[]>([])
+	let selectedDevice  = $state<DeviceRecord | null>(null)
+	let passphrase      = $state('')
+	let error           = $state('')
+	let loading         = $state(false)
 	let result: 'approved' | 'error' | null = $state(null)
-	let isNewUser    = $state(false)
+	let isNewUser       = $state(false)
 	let createdUsername = $state('')
 
-	// Si l'utilisateur n'a pas de clé configurée → proposer le setup
-	let noDevice     = $state(false)
+	// Aucun appareil connu pour cette instance, mais une graine maître existe :
+	// une identité dédiée à cette instance sera dérivée dès que la passphrase
+	// (qui protège la graine) sera saisie. Pas de nouvelle décision à prendre.
+	let needsDerivation = $state(false)
+	// Vraiment rien : ni appareil pour cette instance, ni graine maître du tout.
+	let noDevice        = $state(false)
 
 	onMount(async () => {
 		const params = new URLSearchParams(window.location.search)
@@ -36,16 +44,22 @@
 			return
 		}
 
-		// Charger les appareils enregistrés
-		devices = await getAllDevices()
-
-		if (devices.length === 0) {
-			noDevice = true
+		let origin: string
+		try {
+			origin = new URL(instanceUrl).origin
+		} catch {
+			error = `URL d'instance invalide : "${instanceUrl}"`
 			return
 		}
 
-		// Sélectionner le premier appareil par défaut
-		selectedDevice = devices[0]
+		matchingDevices = await getDevicesByOrigin(origin)
+		if (matchingDevices.length > 0) {
+			selectedDevice = matchingDevices[0]
+		} else if (await hasMasterSeed()) {
+			needsDerivation = true
+		} else {
+			noDevice = true
+		}
 
 		// Récupérer le nom de l'instance
 		try {
@@ -60,13 +74,44 @@
 	})
 
 	async function approve() {
-		if (!selectedDevice || !passphrase) return
+		if (!passphrase) return
+		if (!selectedDevice && !needsDerivation) return
 		error = ''
 		loading = true
 
 		try {
-			// Déchiffrer la clé privée
-			const privateKey = await decryptPrivateKey(selectedDevice.encryptedPrivateKey, passphrase)
+			let device = selectedDevice
+
+			if (!device) {
+				// Pas d'appareil pour cette instance : dériver une identité dédiée
+				// depuis la graine maître, la mettre en cache localement (comme un
+				// DeviceRecord ordinaire, `derived: true`) pour les prochaines fois.
+				const seedRecord = await getMasterSeed()
+				if (!seedRecord) throw new Error('Aucune identité Nodyx Signet configurée sur cet appareil.')
+
+				const masterSeed = await decryptSeed(seedRecord.encryptedSeed, passphrase)
+				const origin = new URL(instanceUrl).origin
+				const { deviceId, keyPair } = await deriveIdentity(masterSeed, origin)
+
+				const publicKey = await exportPublicKey(keyPair.publicKey)
+				const encryptedPrivateKey = await encryptPrivateKey(keyPair.privateKey, passphrase)
+
+				device = {
+					id: deviceId,
+					label: instanceName || origin.replace(/^https?:\/\//, ''),
+					publicKey,
+					encryptedPrivateKey,
+					createdAt: Date.now(),
+					hubUrl: instanceUrl,
+					derived: true
+				}
+				await saveDevice(device)
+				selectedDevice = device
+			}
+
+			// Déchiffrer la clé privée (chemin normal, appareil déjà connu OU
+			// tout juste dérivé et mis en cache ci-dessus)
+			const privateKey = await decryptPrivateKey(device.encryptedPrivateKey, passphrase)
 
 			// Signer le challenge
 			const signed = await signChallenge(privateKey, challenge)
@@ -75,9 +120,9 @@
 			const completeUrl = new URL(`${instanceUrl}/auth/signet-complete`)
 			completeUrl.searchParams.set('challenge',    signed.challenge)
 			completeUrl.searchParams.set('signature',    signed.signature)
-			completeUrl.searchParams.set('pubkey',       JSON.stringify(selectedDevice.publicKey))
-			completeUrl.searchParams.set('deviceId',     selectedDevice.id)
-			completeUrl.searchParams.set('deviceLabel',  selectedDevice.label)
+			completeUrl.searchParams.set('pubkey',       JSON.stringify(device.publicKey))
+			completeUrl.searchParams.set('deviceId',     device.id)
+			completeUrl.searchParams.set('deviceLabel',  device.label)
 
 			// Redirection browser — le serveur de l'instance pose le cookie et redirige vers /
 			window.location.href = completeUrl.toString()
@@ -160,7 +205,7 @@
 			</button>
 		</div>
 
-	{:else if selectedDevice}
+	{:else if selectedDevice || needsDerivation}
 		<!-- ── Écran d'approbation ────────────────────────────────────────────── -->
 		<div class="w-full max-w-sm flex flex-col gap-6">
 
@@ -184,12 +229,22 @@
 				</div>
 				<div class="flex justify-between">
 					<span style="color: var(--color-text-muted)">Appareil</span>
-					<span style="color: var(--color-text)">{selectedDevice.label}</span>
+					<span style="color: var(--color-text)">
+						{selectedDevice ? selectedDevice.label : 'Nouvelle identité pour cette instance'}
+					</span>
 				</div>
 			</div>
 
-			<!-- Sélection appareil si plusieurs -->
-			{#if devices.length > 1}
+			{#if needsDerivation && !selectedDevice}
+				<p class="text-xs rounded-xl px-4 py-3 leading-relaxed"
+					style="background: var(--color-surface); border: 1px solid var(--color-border); color: var(--color-text-muted)">
+					Première connexion à cette instance depuis cet appareil : une identité
+					dédiée, différente de celles utilisées ailleurs, sera créée automatiquement.
+				</p>
+			{/if}
+
+			<!-- Sélection appareil si plusieurs enregistrés pour CETTE instance -->
+			{#if matchingDevices.length > 1}
 				<div class="flex flex-col gap-1.5">
 					<label class="text-xs font-medium uppercase tracking-wider" style="color: var(--color-text-muted)">
 						Appareil
@@ -198,7 +253,7 @@
 						bind:value={selectedDevice}
 						class="w-full px-4 py-3 rounded-xl text-sm outline-none"
 						style="background: var(--color-surface); border: 1px solid var(--color-border); color: var(--color-text)">
-						{#each devices as d}
+						{#each matchingDevices as d}
 							<option value={d}>{d.label}</option>
 						{/each}
 					</select>
