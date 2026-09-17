@@ -353,8 +353,13 @@ describe('PATCH /api/v1/forums/threads/:id — is_featured réservé aux admins'
 
   it('renvoie 403 pour un modérateur (pas admin)', async () => {
     vi.mocked(ThreadModel.findById).mockResolvedValueOnce({ ...FAKE_THREAD, author_id: OTHER_AUTHOR } as any)
-    // isMod -> moderator (true) ; isAdmin -> moderator (false)
-    vi.mocked(db.query).mockResolvedValue({ rows: [{ role: 'moderator' }], rowCount: 1 } as any)
+    // isInstanceAdmin() résout d'abord communityId via getInstanceCommunityId() (FROM communities),
+    // puis interroge community_members : router par contenu SQL, pas par ordre d'appel.
+    vi.mocked(db.query).mockImplementation(async (sql: string) => {
+      const s = String(sql)
+      if (s.includes('FROM communities')) return { rows: [{ id: 'community-1' }], rowCount: 1 } as any
+      return { rows: [{ role: 'moderator' }], rowCount: 1 } as any
+    })
 
     const res = await app.inject({
       method:  'PATCH',
@@ -369,7 +374,11 @@ describe('PATCH /api/v1/forums/threads/:id — is_featured réservé aux admins'
 
   it('laisse un admin mettre en avant', async () => {
     vi.mocked(ThreadModel.findById).mockResolvedValueOnce({ ...FAKE_THREAD, author_id: OTHER_AUTHOR } as any)
-    vi.mocked(db.query).mockResolvedValue({ rows: [{ role: 'admin' }], rowCount: 1 } as any)
+    vi.mocked(db.query).mockImplementation(async (sql: string) => {
+      const s = String(sql)
+      if (s.includes('FROM communities')) return { rows: [{ id: 'community-1' }], rowCount: 1 } as any
+      return { rows: [{ role: 'admin' }], rowCount: 1 } as any
+    })
     vi.mocked(ThreadModel.update).mockResolvedValueOnce({ ...FAKE_THREAD, is_featured: true } as any)
 
     const res = await app.inject({
