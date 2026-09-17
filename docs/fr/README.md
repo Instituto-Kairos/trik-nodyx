@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/img/nodyx-icon.svg" alt="Nodyx" width="80"/>
+<img src="../img/nodyx-icon.svg" alt="Nodyx" width="80"/>
 
 # Nodyx
 
@@ -12,7 +12,7 @@ Forum + Chat + Voix + P2P + Canvas + Constructeur de page d'accueil + Streamer H
 [![Version](https://img.shields.io/github/v/release/Pokled/nodyx?label=version&color=7c3aed)](https://github.com/Pokled/nodyx/releases/latest)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![CI](https://github.com/Pokled/Nodyx/actions/workflows/ci.yml/badge.svg)](https://github.com/Pokled/Nodyx/actions/workflows/ci.yml)
-[![Stack](https://img.shields.io/badge/stack-Fastify%20%2B%20SvelteKit%20%2B%20PostgreSQL%20%2B%20Rust-green)](docs/en/ARCHITECTURE.md)
+[![Stack](https://img.shields.io/badge/stack-Fastify%20%2B%20SvelteKit%20%2B%20PostgreSQL%20%2B%20Rust-green)](./ARCHITECTURE.md)
 [![Ko-fi](https://img.shields.io/badge/Soutenir-Ko--fi-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/Pokled)
 
 <sub>⭐ Si Nodyx vous parle, une étoile aide les autres à le trouver, et nous garde en vie.</sub>
@@ -26,7 +26,7 @@ Forum + Chat + Voix + P2P + Canvas + Constructeur de page d'accueil + Streamer H
 **[🌐 Découvrir → start.nodyx.org](https://start.nodyx.org)** &nbsp;·&nbsp;
 **[📖 Documentation → nodyx.dev](https://nodyx.dev)** &nbsp;·&nbsp;
 **[🚀 Démo en direct → nodyx.org](https://nodyx.org)** &nbsp;·&nbsp;
-<a href="README.md"><img src="https://flagcdn.com/16x12/gb.png" alt="EN"> English</a> · <a href="docs/fr/README.md"><img src="https://flagcdn.com/16x12/fr.png" alt="FR"> Français</a>
+<a href="../../README.md"><img src="https://flagcdn.com/16x12/gb.png" alt="EN"> English</a> · <img src="https://flagcdn.com/16x12/fr.png" alt="FR"> Français
 
 </div>
 
@@ -39,7 +39,7 @@ Forum + Chat + Voix + P2P + Canvas + Constructeur de page d'accueil + Streamer H
 ---
 
 <div align="center">
-  <img src="docs/img/nodyx_home_page.png" alt="Nodyx, Constructeur de page d'accueil" width="860"/>
+  <img src="../img/nodyx_home_page.png" alt="Nodyx, Constructeur de page d'accueil" width="860"/>
 </div>
 
 ---
@@ -277,7 +277,7 @@ Messages entre pairs qui ne passent jamais par le serveur.
 ### NodyxCanvas, Tableau blanc collaboratif (v2.2)
 
 <div align="center">
-  <img src="docs/img/Nodyx_canvas_alternative_Mural.png" alt="NodyxCanvas, tableau blanc collaboratif" width="860"/>
+  <img src="../img/Nodyx_canvas_alternative_Mural.png" alt="NodyxCanvas, tableau blanc collaboratif" width="860"/>
 </div>
 
 Dessinez, annotez et construisez ensemble en temps réel, directement dans les salons vocaux.
@@ -331,16 +331,16 @@ Chat propre au tableau (indépendant du chat du salon vocal)
     <td align="center"><b>Forum</b></td>
   </tr>
   <tr>
-    <td><img src="docs/img/nodyx_home_page.png" alt="Page d'accueil avec widgets du Constructeur de grille" width="460"/></td>
-    <td><img src="docs/img/Nodyx_Forum.png" alt="Forum, catégories, fils, éditeur riche" width="460"/></td>
+    <td><img src="../img/nodyx_home_page.png" alt="Page d'accueil avec widgets du Constructeur de grille" width="460"/></td>
+    <td><img src="../img/Nodyx_Forum.png" alt="Forum, catégories, fils, éditeur riche" width="460"/></td>
   </tr>
   <tr>
     <td align="center"><b>Chat en temps réel</b></td>
     <td align="center"><b>Salons vocaux, WebRTC P2P</b></td>
   </tr>
   <tr>
-    <td><img src="docs/img/Nodyx_chat.png" alt="Chat texte en temps réel" width="460"/></td>
-    <td><img src="docs/img/Vocal_Nodyx_salon.png" alt="Salon vocal avec maillage P2P" width="460"/></td>
+    <td><img src="../img/Nodyx_chat.png" alt="Chat texte en temps réel" width="460"/></td>
+    <td><img src="../img/Vocal_Nodyx_salon.png" alt="Salon vocal avec maillage P2P" width="460"/></td>
   </tr>
 </table>
 
@@ -350,7 +350,7 @@ Chat propre au tableau (indépendant du chat du salon vocal)
 
 <b>,  Constructeur de page d'accueil , </b>
 
-<img src="docs/img/Nodyx_grid_builder_home_page_website.png" alt="Constructeur de page d'accueil, drag & drop, 11 zones, aperçu en direct" width="940"/>
+<img src="../img/Nodyx_grid_builder_home_page_website.png" alt="Constructeur de page d'accueil, drag & drop, 11 zones, aperçu en direct" width="940"/>
 
 <sub>Éditeur de grille drag-and-drop, 11 zones de mise en page, aperçu en direct, règles d'audience par widget et planification</sub>
 
@@ -364,8 +364,8 @@ Chat propre au tableau (indépendant du chat du salon vocal)
     <td align="center"><b>Gestion des modules</b></td>
   </tr>
   <tr>
-    <td><img src="docs/img/widget_store_nodyx.png" alt="Boutique de widgets, installation .zip en un clic" width="460"/></td>
-    <td><img src="docs/img/Nodyx_gestion_des_modules.png" alt="Gestion des modules, 26 modules activables" width="460"/></td>
+    <td><img src="../img/widget_store_nodyx.png" alt="Boutique de widgets, installation .zip en un clic" width="460"/></td>
+    <td><img src="../img/Nodyx_gestion_des_modules.png" alt="Gestion des modules, 26 modules activables" width="460"/></td>
   </tr>
 </table>
 
@@ -379,16 +379,16 @@ Chat propre au tableau (indépendant du chat du salon vocal)
     <td align="center"><b>Sondages, Forum & Chat</b></td>
   </tr>
   <tr>
-    <td><img src="docs/img/Nodyx_Moteur_de_recherche_inter_reseau.png" alt="Moteur de recherche fédéré inter-instances" width="460"/></td>
-    <td><img src="docs/img/Nodyx_sondage.png" alt="Sondages avec résultats en temps réel" width="460"/></td>
+    <td><img src="../img/Nodyx_Moteur_de_recherche_inter_reseau.png" alt="Moteur de recherche fédéré inter-instances" width="460"/></td>
+    <td><img src="../img/Nodyx_sondage.png" alt="Sondages avec résultats en temps réel" width="460"/></td>
   </tr>
   <tr>
     <td align="center"><b>Wiki</b></td>
     <td align="center"><b>Bibliothèque d'assets</b></td>
   </tr>
   <tr>
-    <td><img src="docs/img/Nodyx_wiki.png" alt="Wiki communautaire" width="460"/></td>
-    <td><img src="docs/img/Asset_nodyx.png" alt="Bibliothèque d'assets, cadres, badges, bannières" width="460"/></td>
+    <td><img src="../img/Nodyx_wiki.png" alt="Wiki communautaire" width="460"/></td>
+    <td><img src="../img/Asset_nodyx.png" alt="Bibliothèque d'assets, cadres, badges, bannières" width="460"/></td>
   </tr>
 </table>
 
@@ -443,8 +443,8 @@ Génère les secrets, exécute toutes les migrations de la base de données, cr�
 
 > Pris en charge : Ubuntu 22.04 / 24.04, Debian 11 / 12 / 13.
 
-→ **[Guide d'installation complet (EN)](docs/en/INSTALL.md)**  
-→ **[Guide d'installation complet (FR)](docs/fr/INSTALL.md)**
+→ **[Guide d'installation complet (EN)](../install.md)**  
+→ **[Guide d'installation complet (FR)](./INSTALL.md)**
 
 ### Mise à jour d'une instance existante
 
@@ -764,19 +764,19 @@ Et elle se propage de la même façon. Chaque instance qui se lance expose d'aut
 
 | Langue | Docs |
 |---|---|
-| <img src="https://flagcdn.com/16x12/gb.png" alt="EN"> English | [nodyx.dev](https://nodyx.dev) · [docs/en/](docs/en/) |
-| <img src="https://flagcdn.com/16x12/fr.png" alt="FR"> Français | [docs/fr/](docs/fr/) |
+| <img src="https://flagcdn.com/16x12/gb.png" alt="EN"> English | [nodyx.dev](https://nodyx.dev) · [docs/en/](https://github.com/Pokled/nodyx/tree/main/docs/en) |
+| <img src="https://flagcdn.com/16x12/fr.png" alt="FR"> Français | [docs/fr/](https://github.com/Pokled/nodyx/tree/main/docs/fr) |
 | <img src="https://flagcdn.com/16x12/es.png" alt="ES"> Español | *bientôt disponible* |
 | <img src="https://flagcdn.com/16x12/de.png" alt="DE"> Deutsch | *bientôt disponible* |
 
 - [**nodyx.dev**](https://nodyx.dev), Wiki de documentation complet
 - [**Créer un Widget**](https://nodyx.dev/create-widget), Guide SDK Widget pas à pas
-- [Manifeste](docs/en/MANIFESTO.md), Pourquoi Nodyx existe
-- [Architecture](docs/en/ARCHITECTURE.md), Comment c'est construit
-- [Roadmap](docs/en/ROADMAP.md), Où on va
-- [Moteur Audio](docs/en/AUDIO.md), EQ broadcast, RNNoise, chaîne audio complète
-- [Moteur Neural](docs/en/NEURAL-ENGINE.md), IA locale avec Ollama
-- [**NODYX-ETHER**](docs/ideas/NODYX-ETHER.md), La vision de la couche physique (LoRa / radio HF / ionosphère)
+- [Manifeste](./MANIFESTO.md), Pourquoi Nodyx existe
+- [Architecture](./ARCHITECTURE.md), Comment c'est construit
+- [Roadmap](./ROADMAP.md), Où on va
+- [Moteur Audio](./AUDIO.md), EQ broadcast, RNNoise, chaîne audio complète
+- [Moteur Neural](./NEURAL-ENGINE.md), IA locale avec Ollama
+- [**NODYX-ETHER**](https://github.com/Pokled/nodyx/blob/main/docs/ideas/NODYX-ETHER.md), La vision de la couche physique (LoRa / radio HF / ionosphère)
 
 ---
 
@@ -785,7 +785,7 @@ Et elle se propage de la même façon. Chaque instance qui se lance expose d'aut
 Nodyx appartient à sa communauté.
 
 1. Parcourez les [Issues ouvertes](https://github.com/Pokled/Nodyx/issues) ou ouvrez une [Discussion](https://github.com/Pokled/Nodyx/discussions)
-2. Lisez [CONTRIBUTING.md](docs/en/CONTRIBUTING.md) avant d'ouvrir une PR
+2. Lisez [CONTRIBUTING.md](./CONTRIBUTING.md) avant d'ouvrir une PR
 3. Les commits suivent les [Conventional Commits](https://www.conventionalcommits.org/), rédigés en anglais
 
 Contribuez librement, sans validation préalable requise :
@@ -801,7 +801,7 @@ Le core (`nodyx-core/src/`) nécessite une discussion préalable, ouvrez une Iss
 
 ## 🌟 Étoiles Nodyx, Contributeurs
 
-Toute contribution externe vaut une étoile. Chaque Étoile figure sur [notre Hall of Fame](CONTRIBUTORS.md), avec avatar, lien de profil et rang.
+Toute contribution externe vaut une étoile. Chaque Étoile figure sur [notre Hall of Fame](https://github.com/Pokled/nodyx/blob/main/CONTRIBUTORS.md), avec avatar, lien de profil et rang.
 
 **La reconnaissance n'est pas optionnelle ici.** L'open source sans reconnaissance, c'est du travail gratuit, et ce n'est pas notre façon de faire.
 
@@ -845,7 +845,7 @@ Toute contribution externe vaut une étoile. Chaque Étoile figure sur [notre Ha
 
 <br/>
 
-👉 **[Voir tous les contributeurs →](CONTRIBUTORS.md)**
+👉 **[Voir tous les contributeurs →](https://github.com/Pokled/nodyx/blob/main/CONTRIBUTORS.md)**
 
 ---
 
@@ -864,7 +864,7 @@ Votre soutien aide à couvrir les coûts serveur et maintient Nodyx 100% gratuit
 **AGPL-3.0**, La licence open source la plus forte pour les logiciels en réseau.
 
 Si vous utilisez Nodyx, même via un réseau, vos modifications doivent être open source.
-Si Nodyx trahit un jour ses principes, cette licence permet à n'importe qui de le forker et de continuer dans l'esprit du [Manifeste](docs/en/MANIFESTO.md).
+Si Nodyx trahit un jour ses principes, cette licence permet à n'importe qui de le forker et de continuer dans l'esprit du [Manifeste](./MANIFESTO.md).
 
 ---
 

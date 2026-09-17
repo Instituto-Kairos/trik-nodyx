@@ -5,7 +5,8 @@
 > before moving to the next.
 
 > This document gives the current state and direction. For the full, line-by-line
-> detail of every shipped feature, the [CHANGELOG](../../CHANGELOG.md) is the source of
+> detail of every shipped feature, the
+> [CHANGELOG](https://github.com/Pokled/nodyx/blob/main/CHANGELOG.md) is the source of
 > truth, it's the only document updated on every release.
 
 ---
@@ -338,7 +339,7 @@ This isn't a feature for tomorrow, it's a call for contributors: ham radio opera
 makers, Meshtastic contributors, embedded Rust developers. The architecture is there, the CRDT
 foundation has shipped, the radio layer is waiting for the right hands.
 
-→ **[Full spec: docs/ideas/NODYX-ETHER.md](../ideas/NODYX-ETHER.md)**
+→ **[Full spec: docs/ideas/NODYX-ETHER.md](https://github.com/Pokled/nodyx/blob/main/docs/ideas/NODYX-ETHER.md)**
 
 ---
 
@@ -358,7 +359,7 @@ listeners each add up to 16,000 local listeners, a scale a local business or a r
 can actually pay for. Geographic targeting only, zero tracking, zero user profiles. The money
 stays local, the infrastructure stays free.
 
-→ **[Full vision: docs/ideas/NODYX-RADIO.md](../ideas/NODYX-RADIO.md)**
+→ **[Full vision: docs/ideas/NODYX-RADIO.md](https://github.com/Pokled/nodyx/blob/main/docs/ideas/NODYX-RADIO.md)**
 
 ---
 

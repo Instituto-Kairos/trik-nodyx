@@ -157,7 +157,7 @@ ROADMAP.md     , Development roadmap
 - If a concept has no equivalent in your language, keep the English term
 - Proper nouns (Nodyx, NodyxPoints, Guard Protocol, etc.) are never translated
 
-Translators get a star and a place in [CONTRIBUTORS.md](../../CONTRIBUTORS.md), like every other contributor.
+Translators get a star and a place in [CONTRIBUTORS.md](https://github.com/Pokled/nodyx/blob/main/CONTRIBUTORS.md), like every other contributor.
 
 ---
 
