@@ -1,695 +1,372 @@
 # NODYX — Roadmap
-### Version 2.4 — Système de sauvegarde + Mode maintenance live
-
----
 
 > *"Un projet qui veut tout faire en même temps ne fait rien bien."*
-> La roadmap Nodyx est construite sur une règle simple :
-> chaque phase doit fonctionner parfaitement avant de passer à la suivante.
+> La roadmap Nodyx est construite sur une règle simple : chaque phase doit fonctionner
+> parfaitement avant de passer à la suivante.
+
+> Ce document donne l'état actuel et la direction. Pour le détail complet de chaque
+> fonctionnalité livrée, ligne par ligne, c'est le [CHANGELOG](../../CHANGELOG.md) qui fait foi :
+> lui seul est mis à jour à chaque version.
 
 ---
 
-## ÉTAT ACTUEL — Mai 2026
+## ÉTAT ACTUEL, septembre 2026, v2.12.0 et au-delà
 
 | Phase | Titre | État |
 |---|---|---|
 | **Phase 1** | Forum MVP + Admin | ✅ Complète |
 | **Phase 2** | Chat temps réel + Annuaire + Identité réseau | ✅ Complète |
 | **Phase 2.5** | Personnalisation communautaire + Fédération légère | ✅ Complète |
-| **Phase 3** | Infrastructure P2P + Fondation Rust | ✅ Complète |
-| **Phase 4** | Enrichissement de la plateforme (v1.4 → v1.8) | ✅ Complète |
-| **Phase 4.5** | Durcissement sécurité (v1.8.2) | ✅ Complète |
-| **Phase 4.6** | Défense active & sécurité runtime (v1.9.0) | ✅ Complète |
-| **Phase 4.7** | Double authentification — TOTP + Nodyx Signet 2FA (v1.9.1) | ✅ Complète |
-| **Phase 4.8** | Stabilité production & cohérence cross-runtime (v1.9.3) | ✅ Complète |
-| **Phase 4.9** | Isolation processus, couverture de tests & CI (v1.9.4) | ✅ Complète |
-| **Phase 4.10** | Profil vivant + Refonte Forum (v1.9.5) | ✅ Complète |
-| **Phase 4.11** | Communications privées et souveraines — DM chiffrés bout-en-bout (v2.0) | ✅ Complète |
-| **Phase 4.12** | Homepage Builder + Widget SDK (v2.1) | ✅ Complète |
-| **Phase 4.13** | NodyxCanvas — Mise à jour majeure (v2.2) | ✅ Complète |
-| **Phase 4.14** | Lecteur multimédia universel + fusion catalogue Builder + Hardening tunnel (v2.3) | ✅ Complète |
-| **Phase 4.15** | Système de sauvegarde Phase 1 + Mode maintenance live (v2.4) | ✅ Complète |
-| **Phase 4.16** | OctoGuard Phase 1 — Auto-modération native (v2.6) | ✅ Complète (rollout) |
+| **Phase 3** | Infrastructure P2P + Fondation Rust | 🔨 En cours (voir 3.0-D) |
+| **Phase 4** | Enrichissement de la plateforme | ✅ Complète |
+| **Phase 4.5 à 4.16** | Durcissement sécurité, stabilité, tests, OctoGuard | ✅ Complètes |
+| **Phase 4.17** | Streamer Hub, la chaîne complète pour les streamers | ✅ Complète |
+| **Phase 4.18** | Vocal nouvelle génération : le SFU (audio + vidéo) | ✅ Complète |
+| **Phase 4.19** | Nodyx parle sept langues | ✅ Complète (traduction continue) |
+| **Phase 4.20** | Personnalisation avancée de l'instance | ✅ Complète |
+| **Phase 4.21** | SDK d'extensions + marketplace | ✅ Complète (v1) |
+| **Phase 4.22** | Activités communautaires en vocal | ✅ Complète (v1) |
+| **Phase 4.23** | Vitrine musique + durcissement de la vitrine publique | ✅ Complète |
 | Phase 5 | Mobile + Nodes + Réputation | 🔨 En cours |
-| **Phase Horizon** | NODYX-ETHER — Souveraineté de la couche physique | 🌌 Vision |
-| **Phase Radio** | NODYX-RADIO — Tuner radio internet + régie publicitaire coopérative | 📻 Vision |
+| **Phase Horizon** | NODYX-ETHER, souveraineté de la couche physique | 🌌 Vision |
+| **Phase Radio** | NODYX-RADIO, tuner radio internet + régie coopérative | 📻 Vision |
+
+Chaque ligne ci-dessous donne l'essentiel. Le détail (migrations, fichiers, bench, PR) vit dans
+le CHANGELOG à la version indiquée.
 
 ---
 
-## PHASE 1 — MVP Forum + Admin ✅ COMPLÈTE
-### Objectif : Une communauté peut s'installer, se configurer, et vivre sur Nodyx
+## PHASE 1, MVP Forum + Admin ✅ COMPLÈTE
 
-### 1.1 Backend Forum
-- [x] Migration SQL initiale (users, communities, categories, threads, posts)
-- [x] Migration 002 — user_profiles (bio, avatar, tags, liens, champs sociaux)
-- [x] Migration 003 — grades (grades, community_grades, community_members.grade_id)
-- [x] Migration 004 — liens sociaux (github, youtube, twitter, instagram, website)
-- [x] Migration 005 — categories.parent_id (catégories infinies, CTE récursive)
-- [x] Migration 006 — threads.is_featured (articles mis en avant)
-- [x] Migration 007 — post_reactions + post_thanks (réactions emoji + karma)
-- [x] Migration 008 — tags + thread_tags (tags community-scoped)
-- [x] Migration 009 — search_vector + triggers GIN (full-text français)
-- [x] Migration 010 — notifications (thread_reply, post_thanks, mention)
-- [x] Route POST /api/v1/auth/register
-- [x] Route POST /api/v1/auth/login + logout
-- [x] Route GET  /api/v1/communities + /communities/:slug
-- [x] Route POST /api/v1/communities/:slug/members (join/leave)
-- [x] Routes forum (catégories, threads, posts) — CRUD complet
-- [x] Édition du titre de thread (auteur + mods)
-- [x] Réactions emoji sur les posts (6 emojis, toggle)
-- [x] Bouton Merci (+5 karma à l'auteur, 1 par user/post)
-- [x] Tags sur les threads (admin crée, sélection à la création)
-- [x] Recherche full-text PostgreSQL (ts_headline, filtre communauté)
-- [x] Notifications (réponse, merci reçu, @mention)
-- [x] Middleware authentification JWT
-- [x] Middleware rate limiting Redis
-- [x] Validation Zod sur toutes les routes
-- [x] Tracking "online" — heartbeat Redis 900s TTL
-- [x] Routes instance — /instance/info, /instance/categories, /instance/threads/recent
-- [x] Routes admin — stats, membres, threads (pin/lock/delete), catégories, tags
+Une communauté peut s'installer, se configurer et vivre sur Nodyx en autonomie complète.
 
-### 1.2 SEO et indexation
-- [x] Routes forum rendues en HTML statique (SvelteKit SSR)
-- [x] Balises meta dynamiques (title, description, og:*)
-- [x] Sitemap.xml automatique
-- [x] Robots.txt configurable
-- [x] RSS feed
-- [x] JSON-LD Schema.org (Forum, DiscussionForumPosting)
-- [x] llms.txt (pour les agents IA)
+- Forum complet : catégories récursives, threads, posts, réactions, tags, recherche full-text,
+  notifications, panneau admin
+- SEO natif : rendu SSR, sitemap, RSS, JSON-LD, `llms.txt` pour les agents IA. Passe de
+  durcissement SEO/GEO en v2.8 (sitemap, og:image, guides d'installation)
+- Self-hosting en 15 minutes : `install.sh` (VPS), `install_tunnel.sh` (zéro port, Raspberry Pi),
+  Docker, script Windows sans Docker, health check visuel post-install
 
-### 1.3 Frontend
-- [x] SvelteKit initialisé + Tailwind v4
-- [x] Homepage = communauté de l'instance (NODYX_COMMUNITY_NAME via .env)
-- [x] Arbre de catégories récursif (CategoryTree.svelte)
-- [x] Page liste catégories + threads (avec pills de tags)
-- [x] Page thread + posts + formulaire réponse
-- [x] Éditeur WYSIWYG (Tiptap — gras, code, tableaux, images, iframes)
-- [x] Formulaire inscription / connexion
-- [x] Profils utilisateurs complets (bio, tags, links, GitHub widget)
-- [x] Système de grades (CRUD admin + badge coloré)
-- [x] Annuaire des instances (/communities — alimenté par nodyx.org)
-- [x] Panneau admin complet (/admin — 9 pages dont Tags)
-- [x] Navbar adaptive (loupe recherche, cloche notifications, lien Admin)
-- [x] Page /search — onglets Threads/Posts, extraits surlignés
-- [x] Page /notifications — liste + marquer lu + polling 30s
-
-### 1.4 Self-hosting
-- [x] `install.sh` — installeur one-click VPS (ports 80/443, Let's Encrypt via Caddy, PM2, coturn, PostgreSQL, Redis)
-- [x] `install_tunnel.sh` — installeur home server via Cloudflare Tunnel (aucun port à ouvrir, Raspberry Pi, box)
-- [x] docker-compose.yml (Nodyx + PostgreSQL + Redis)
-- [x] Dockerfile multi-stage
-- [x] Script seed (données de démonstration)
-- [x] Script PowerShell "Nodyx-Easy-Install" — automatise Node/PostgreSQL/Redis sur Windows Server sans Docker
-- [x] Health check visuel post-installation (spinner braille, score PASS/WARN/FAIL)
-- [x] Documentation installation en 15 minutes
-- [x] Guide complet des noms de domaine (DOMAIN.md — types, compatibilité, FAQ)
-- [x] .env.example documenté
-
-### Critère de succès Phase 1 ✅
-Une personne non-développeur peut :
-1. Installer Nodyx sur son serveur en moins de 15 minutes ✅
-2. Configurer son instance via l'installeur interactif ✅
-3. Créer des catégories, des threads, des tags ✅
-4. Administrer sa communauté via le panneau admin ✅
-5. Être trouvé sur les moteurs de recherche (Google, Bing, Brave, Qwant...) ✅
+**Critère de succès** : installer, configurer, créer du contenu, administrer et être indexé par
+les moteurs de recherche, sans être développeur. Validé.
 
 ---
 
-## PHASE 2 — Chat temps réel + Annuaire + Identité réseau ✅ COMPLÈTE
-### Objectif : Les membres communiquent en live, l'annuaire est réel, chaque instance a son URL
+## PHASE 2, Chat temps réel + Annuaire + Identité réseau ✅ COMPLÈTE
 
-### 2.1 Chat temps réel ✅
-- [x] WebSocket (Socket.io) intégré dans Fastify v5
-- [x] Canaux textuels configurables par l'admin
-- [x] Notifications temps réel (WebSocket — remplace le polling 30s)
-- [x] Historique des messages persisté en PostgreSQL
+Les membres communiquent en direct, l'annuaire est réel, chaque instance a son URL propre.
 
-### 2.2 nodyx.org — Directory ✅
-- [x] Service d'annuaire global réel — API d'enregistrement des instances
-- [x] Page /communities alimentée par l'annuaire réel (fin du mock)
-- [x] Enregistrement automatique d'une instance au premier démarrage
-- [x] Ping automatique toutes les 5 minutes (membres live, stats en ligne)
-
-### 2.3 Identité réseau — `slug.nodyx.org` ✅
-- [x] Chaque instance choisit un slug unique à l'installation
-- [x] Le slug est réservé auprès du nodyx.org directory (API REST)
-- [x] DNS wildcard `*.nodyx.org` géré par notre Cloudflare
-- [x] Caddy route `slug.nodyx.org → IP du nœud` (Cloudflare Origin Certificate)
-- [x] L'admin n'a aucun DNS à configurer — URL propre en 1 clic
-
-### 2.4 Salons vocaux — Couche réseau ✅
-- [x] Serveur coturn (STUN/TURN) configuré et démarré par `install.sh`
-- [x] Signalisation WebRTC via Socket.io (`src/socket/voice.ts`)
-- [x] VoicePanel.svelte — barre flottante + gestion micro/caméra/partage écran
-- [x] VoiceSettings.svelte — chaîne AudioContext configurable
-- [x] MediaCenter.svelte — partage d'écran + clips
+- Chat WebSocket (Socket.IO), canaux configurables, historique persisté
+- `nodyx.org` Directory : enregistrement automatique, ping toutes les 5 minutes, page
+  `/communities` réelle
+- Identité réseau `slug.nodyx.org` : DNS wildcard, Caddy, zéro configuration admin
+- Salons vocaux, couche réseau : coturn puis `nexus-turn` (Rust), signalisation WebRTC
 
 ---
 
-## PHASE 2.5 — Personnalisation communautaire + Fédération légère ✅ COMPLÈTE
-### Objectif : Chaque instance est unique, et les instances peuvent partager leurs créations
+## PHASE 2.5, Personnalisation communautaire + Fédération légère ✅ COMPLÈTE
 
-### v0.6 — Bibliothèque d'assets & Jardin ✅
+Chaque instance devient unique, et les instances peuvent partager leurs créations.
 
-- [x] Migration 017 — `community_assets` (cadres, bannières, badges, stickers, avatars, fonds)
-- [x] Migration 018 — `user_equipped_assets` (slots de personnalisation sur le profil)
-- [x] Migration 019 — `feature_seeds` (propositions de fonctionnalités)
-- [x] Migration 020 — `user_seed_balance` (3 graines/semaine par utilisateur)
-- [x] Route `POST /api/v1/assets` — upload multipart avec compression Sharp (WebP)
-- [x] Routes CRUD + like + equip/unequip pour les assets communautaires
-- [x] Service `assetService.ts` — thumbnails automatiques, resize, gestion des slots
-- [x] Page `/library` — galerie d'assets avec filtres catégorie/tags/popularité
-- [x] Page `/library/[id]` — détail d'un asset avec like, équipement, bouton Chuchoter
-- [x] Routes `/api/v1/garden` — propositions + vote par graines + changement de statut (admin)
-- [x] Page `/garden` — liste des propositions, vote visuel avec compteur de graines
-- [x] Profil utilisateur — affichage des assets équipés (frame, banner, badge, wallpaper)
-- [x] Page `/users/me/edit` — gestion des slots d'assets sur son propre profil
-
-### v0.7 — Fédération assets + Chuchotements ✅
-
-- [x] Migration 021 — `directory_assets` (snapshot fédéré des assets d'autres instances)
-- [x] Migration 022 — `whisper_rooms` + `whisper_messages` (salons éphémères)
-- [x] Route `POST /api/directory/assets` — push d'assets vers le répertoire (Bearer token)
-- [x] Route `GET /api/directory/assets/search` — recherche publique multi-instances
-- [x] Scheduler — push assets toutes les heures vers `nodyx.org`
-- [x] Scheduler — nettoyage des whispers expirés toutes les 10 minutes
-- [x] Onglet "🌐 Toutes les instances" dans `/library` — assets fédérés depuis le répertoire
-- [x] Routes `/api/v1/whispers` — création, récupération, suppression de salons éphémères
-- [x] Socket.IO — événements `whisper:*` (join, leave, message, typing, history, expired)
-- [x] Page `/whisper/[id]` — salon de chuchotement temps réel (style iMessage, TTL affiché)
-- [x] Bouton "🤫 Chuchoter" sur les pages asset — création contextuelle d'un salon
-- [x] Bouton "🔗 Partager" — copie du lien avec feedback "✅ Copié!"
-- [x] `linkify.ts` — URLs cliquables dans le chat et les whispers (sans XSS)
-- [x] Clickable URLs in chat (`linkifyHtml`) and whispers (`linkifyText`)
+- Bibliothèque d'assets (cadres, bannières, badges), Jardin (propositions + vote par graines)
+- Fédération d'assets entre instances, Chuchotements (salons éphémères), URLs cliquables
 
 ---
 
-## PHASE 3 — Infrastructure P2P + Fondation Rust
-### Objectif : Se libérer des dépendances réseau tierces. Construire le cœur décentralisé.
+## PHASE 3, Infrastructure P2P + Fondation Rust 🔨 EN COURS
 
 > *"Le P2P est l'âme. Rust est le corps."*
->
-> Nodyx ne remplacera pas Node.js ou SvelteKit — ils font leur travail parfaitement.
-> Rust viendra **en dessous**, invisible pour l'utilisateur, pour gérer les parties
-> que JavaScript ne peut pas bien faire : réseau bas niveau, chiffrement, WireGuard, DHT.
-> La couche Rust communique avec nodyx-core via un socket Unix local — simple et découplé.
+> Rust vient en dessous, invisible pour l'utilisateur, pour le réseau bas niveau,
+> le chiffrement, WireGuard, le DHT. Communication avec `nodyx-core` par socket Unix local.
+
+### 3.0-A, `nodyx-relay-client` ✅ VALIDÉE, mars 2026
+Remplace `install_tunnel.sh` + Cloudflare Tunnel. Zéro domaine, zéro port ouvert, testé sur
+Raspberry Pi. Binaire Rust statique, reconnexion automatique, intégré à `install.sh`.
+
+### 3.0-B, Browser P2P Nodes (WebRTC DataChannels) ✅ LIVRÉE, mars 2026
+Les navigateurs deviennent des nœuds actifs : mesh 1-N, indicateurs de frappe P2P, réactions
+optimistes, transfert d'assets entre pairs par chunks. Réutilise le signaling existant de
+`voice.ts`, zéro nouvelle infrastructure serveur.
+
+### 3.0-C, `nodyx-turn` (remplace coturn) ✅ VALIDÉE, mars 2026
+Serveur STUN/TURN en Rust, 2.9 Mo, zéro dépendance. TURN-over-TCP (RFC 6062), credentials
+dynamiques HMAC, rate limiting, quotas d'allocation. Fix de fond en v2.9 : plage de ports relais
+propre au serveur, indépendante du kernel (le vocal était intermittent pour une partie des
+auto-hébergés avant ce correctif).
+
+### 3.0-D, `nodyx-p2p` core, vision long terme 🔨 DÉMARRÉE
+Le cœur distribué : DHT, WireGuard mesh, gossip, CRDTs, réplication, résilience sans serveur
+central.
+- [x] **`nodyx-gossip`** (v2.9) : découverte de pairs par anti-entropie épidémique, bibliothèque
+  standard uniquement, records signés Ed25519 (anti-spoofing, anti-rejeu)
+- [ ] DHT Kademlia, WireGuard mesh chiffré, API IPC exposée à `nodyx-core`, réplication facteur 3
+
+### 3.1, Salons vocaux, interface et modes avancés
+- [x] VoicePanel sidebar, panneau d'interaction membre (RTT/jitter/perte), self-monitoring
+- [ ] Mode Amphithéâtre (diffusion 1→N), Nodes-as-a-Service
+
+### v1.0, Table Collaborative ⏳ PLANIFIÉE
+Le salon vocal devient un espace de vie : jeux, fichiers, musique partagée, dans la même
+fenêtre. Fondation P2P DataChannels déjà opérationnelle (v0.9). Reste à construire : table SVG,
+protocole `table:*`, jukebox collaboratif, jeux (dés, échecs, poker), système de plugins
+`plugins/table-templates/`. Détail complet conservé dans l'historique de ce fichier sur
+`git log -- docs/fr/ROADMAP.md`, rien de nouveau livré ici depuis la dernière version.
+
+### 3.2, Réseau maillé inter-instances
+- [ ] WireGuard mesh, DHT de secours, fédération légère entre communautés
 
 ---
 
-### 3.0 — `nodyx-p2p` : La fondation Rust 🔨 EN COURS
+## PHASE 4, Enrichissement de la plateforme ✅ COMPLÈTE
 
-#### Pourquoi Rust ici ?
+Nodyx devient la plateforme communautaire complète : NodyxCanvas (tableau blanc P2P), thèmes de
+profil, UI responsive mobile, réponses/citations et messages épinglés dans le chat, DMs
+chiffrés bout-en-bout, sondages, système de ban multi-couches, calendrier d'événements, Gossip
+Protocol pour la recherche et la découverte cross-instances, dashboard admin enrichi, annonces
+système, journal de modération, tâches façon Kanban.
 
-Aujourd'hui, un utilisateur sans domaine et sans ports ouverts doit :
-1. Créer un compte Cloudflare
-2. Ajouter son domaine à Cloudflare (nécessite d'en posséder un, ~1€/an)
-3. Configurer `cloudflared` manuellement ou via `install_tunnel.sh`
-
-C'est trop de friction. Et surtout : **c'est une dépendance à un service tiers**,
-contraire à la philosophie Nodyx.
-
-La couche Rust résout ça de façon radicale et progressive.
-
-#### Architecture
-
-```
-nodyx-frontend (SvelteKit) ──────────────────────┐
-nodyx-core    (Fastify/Node.js) ─────────────────┤
-                                                  │ IPC (Unix socket)
-                                                  ▼
-                                    ┌─────────────────────┐
-                                    │     nodyx-p2p       │
-                                    │       (Rust)        │
-                                    │                     │
-                                    │  ┌───────────────┐  │
-                                    │  │ Relay Client  │  │
-                                    │  │ (QUIC/tokio)  │  │
-                                    │  └───────────────┘  │
-                                    │  ┌───────────────┐  │
-                                    │  │ STUN/TURN     │  │
-                                    │  │ (remplace     │  │
-                                    │  │  coturn)      │  │
-                                    │  └───────────────┘  │
-                                    │  ┌───────────────┐  │
-                                    │  │ DHT Kademlia  │  │
-                                    │  │ + WireGuard   │  │
-                                    │  │ (réseau maillé│  │
-                                    │  │  inter-nodes) │  │
-                                    │  └───────────────┘  │
-                                    └─────────────────────┘
-```
-
-#### Phase 3.0-A — `nodyx-relay-client` ✅ VALIDÉE — 1er mars 2026
-
-> Remplace `install_tunnel.sh` + Cloudflare Tunnel. Zéro domaine requis. Zéro port à ouvrir.
-> **Testé en conditions réelles : Raspberry Pi 4, aucun port ouvert, aucun compte Cloudflare.**
-
-- [x] Binaire Rust statique (9MB) — `tokio` + `hyper` + `tokio-postgres` + `clap` + `dashmap`
-- [x] Connexion TCP sortante vers `relay.nodyx.org:7443` (notre infra)
-- [x] Forward HTTP bidirectionnel (JSON framing 4-byte length prefix)
-- [x] Enregistrement automatique `slug.nodyx.org` sans DNS ni CF account
-- [x] Reconnexion automatique avec backoff exponentiel (1s → 2s → 4s → max 30s)
-- [x] GitHub Release `v0.1.2-p2p` — binaires amd64 + arm64 (rate limiting auth + fix traitement concurrent)
-- [x] Intégration dans `install.sh` : option 2 "Nodyx Relay (recommandé)"
-- [x] Service systemd côté client (`nodyx-relay-client.service`)
-
-**Résultat utilisateur :** `bash install.sh` → choisir "Relay" → obtenir `moncommunaute.nodyx.org` **sans aucune configuration réseau**.
-
-#### Phase 3.0-B — Browser P2P Nodes (WebRTC DataChannels) ✅ POC VALIDÉ — 2 mars 2026
-
-> Les navigateurs des utilisateurs deviennent des nœuds actifs.
-> Communication directe entre pairs sans intermédiaire serveur.
-> **Réutilise le signaling existant de `voice.ts`** — zéro nouvelle infrastructure serveur.
-
-**Approche :** WebRTC DataChannels natifs + signaling Socket.IO existant (pattern voice.ts)
-**Pas pour ce POC :** libp2p (surcharge), DHT (2027+)
-
-**v0.8 — POC deux navigateurs ✅ :**
-- [x] Ajouter events `p2p:offer`, `p2p:answer`, `p2p:ice` dans `voice.ts` (3 lignes — même pattern que `voice:offer/answer/ice`)
-- [x] Créer `nodyx-frontend/src/lib/p2p.ts` — gestionnaire RTCPeerConnection + DataChannel
-- [x] Découverte de pair via Socket.IO existant (handshake polite/impolite — un seul initiateur)
-- [x] Utiliser le coturn de l'instance (déjà installé) — pas de STUN tiers
-- [x] Handler `ondatachannel` côté répondeur (crucial — sinon le répondeur ne reçoit jamais le canal)
-- [x] Indicateur UI "⚡ P2P · N" dans l'en-tête du canal texte (jaune si actif, gris pulsant si connexion en cours)
-- [x] Test validé : deux navigateurs, DataChannel direct confirmé, messages hors serveur
-
-**Résultat utilisateur :** rejoindre un canal texte → l'indicateur ⚡ P2P apparaît automatiquement quand un autre membre est présent. Zéro configuration.
-
-**v0.9 — Mesh 1-N ✅ LIVRÉ — 2 mars 2026 :**
-- [x] Gérer plusieurs connexions pair simultanées (Map de RTCPeerConnections — déjà dans p2p.ts)
-- [x] Indicateurs de frappe P2P instantanés (~1–5ms, dots animés style Discord)
-- [x] Réactions optimistes + pop animation spring physics (arrive avant le serveur)
-- [x] Fallback gracieux si WebRTC échoue (ICE timeout 12s, toast discret, flags _hadAttempt/_hadSuccess)
-- [x] Transfert d'assets entre pairs (chunks 32 Ko, protocole p2p:asset:*, store p2pAssetPeers, bouton ⚡ jaune)
-
-#### Phase 3.0-C — `nodyx-turn` (remplace coturn) ✅ VALIDÉE — 4 mars 2026 / Mise à jour 8 mars 2026
-
-> coturn est un projet C des années 2000. Complexe à configurer, surface d'attaque importante.
-> **Remplacé par un binaire Rust de 2.9MB — zéro dépendance, credentials dynamiques.**
-
-- [x] Serveur STUN/TURN en Rust — RFC 5389 (STUN) + RFC 5766 (TURN)
-- [x] Credentials dynamiques HMAC-SHA1 (time-based, coturn `use-auth-secret` compatible)
-- [x] MESSAGE-INTEGRITY sur toutes les réponses TURN (RFC 5389 §10.3) — obligatoire pour relay Firefox/Chrome
-- [x] **TURN-over-TCP (RFC 6062)** — TCP:3478 en parallèle de UDP:3478, registry d'allocations partagé
-- [x] Framing RFC 4571 (longueur 2 octets big-endian par message TCP)
-- [x] Abstraction `ResponseSink` — tous les handlers TURN transport-agnostiques (UDP et TCP unifiés)
-- [x] nodyx-core génère les creds par utilisateur → `voice:init` Socket.IO (pas d'IPC)
-- [x] ChannelBind / ChannelData (optimisation relay, moins d'overhead header)
-- [x] Rate limiter UDP par IP (30 pkt/sec) — protection flood non authentifié
-- [x] Quotas d'allocations : 10/IP, 1000 total, MAX_LIFETIME=300s (prévient la saturation du quota)
-- [x] 2.9MB statique, `install.sh` intégré, service systemd
-- [x] **Voix — Relay failover** : bascule automatique vers `iceTransportPolicy: relay` après perte de paquets élevée (>25% × 3 mesures consécutives)
-- [x] **Voix — Opus optimisé** : 32 kbps par défaut, DTX désactivé, mono, FEC actif — optimisé pour VPN/liens dégradés
-
-#### Phase 3.0-D — `nodyx-p2p` core (vision long terme 2027-2028)
-
-> Le cœur distribué. Quand un nœud veut contacter un autre nœud directement, sans passer par nous.
-> Réseau immortel : chaque donnée répliquée sur 3+ nœuds, auto-guérison.
-
-- [ ] DHT Kademlia (via `libp2p`) — découverte de pairs sans serveur central
-- [ ] WireGuard (via `wireguard-rs`) — tunnel chiffré direct entre instances volontaires
-- [ ] ICE/STUN natif — traversée NAT sans coturn pour les connexions P2P
-- [ ] API IPC exposée à nodyx-core : `relay.register(slug)`, `peer.connect(slug)`, `network.peers()`
-- [ ] Gossip protocol — propagation naturelle de l'état du réseau
-- [ ] CRDTs — données sans conflit entre nœuds (compteurs de likes, présence distribuée)
-- [ ] Réplication facteur 3 — auto-guérison si un nœud tombe
-- [ ] Si `nodyx.org` est inaccessible, les nœuds se trouvent via DHT (résilience)
+Détail ligne par ligne dans le CHANGELOG, versions 1.1 à 1.8.
 
 ---
 
-### 3.1 — Salons vocaux — Interface & Modes avancés
-*(couche réseau déjà en place — Phase 2.4)*
+## PHASE 4.5, Durcissement sécurité ✅ COMPLÈTE (mars 2026)
+Injection SQL, JWT, SSRF/DNS rebinding, IDOR Socket.IO, injection CSS/XSS, rate limiting auth,
+validation crypto. Premier audit sécurité complet du projet, avant l'ouverture de la Phase 5.
 
-- [x] VoicePanel sidebar — panneau gauche fixe avec liste des participants (Galaxy Bar layout)
-- [x] Panneau d'interaction membre — cliquer sur un membre → stats réseau temps réel (RTT / jitter / perte de paquets) + curseur de volume
-- [x] Panneau self-monitoring — cliquer sur soi → jauge audio live, badges muted / deafened / PTT
-- [x] Popup VoiceSettings — modal large en position fixe (360px), échappe le débordement de la sidebar avec overlay backdrop
-- [x] Boutons d'interaction par pair — lien Profil, Message Direct, Partage de fichier + Mini-jeu (à venir)
-- [ ] Mode Amphithéâtre — diffusion 1→N (9 à 25+ personnes, vidéo sur "toile")
-- [ ] Nodes-as-a-Service — un Raspberry Pi peut devenir relais de flux média pour soulager le serveur principal
+## PHASE 4.6, Défense active et sécurité runtime ✅ COMPLÈTE
+Honeypot (25+ chemins piégés, tarpit, fingerprinting, honeytokens), fail2ban (5 jails), liste
+noire permanente, Argon2id, anti-spam chat, filtre de contenu, scan NSFW optionnel, Olympus Hub
+(centre de commandement sécurité).
 
-#### v1.0 — Table Collaborative ⏳ PLANIFIÉE
-*(fondation P2P DataChannels opérationnelle — v0.9)*
+## PHASE 4.7, Double authentification (2FA) ✅ COMPLÈTE
+TOTP (RFC 6238) et Nodyx Signet comme second facteur, priorité Signet > TOTP > connexion directe.
 
-> *Le salon vocal devient un espace de vie : jouer, travailler, écouter de la musique, partager des fichiers — tout dans la même fenêtre. Premier open-source self-hosted à combiner ces 4 usages.*
+## PHASE 4.8, Stabilité production et cohérence cross-runtime ✅ COMPLÈTE
+Audit chirurgical Node.js/Rust/Caddy/PM2/systemd : keyPrefix Redis unifié, bans et rate limiting
+cohérents entre les deux runtimes, invalidation de session au changement de mot de passe,
+failover Caddy automatique si le service Rust tombe.
 
-**Fondation visuelle**
-- [ ] Table SVG ovale — avatars positionnés sur ellipse (moi = toujours en bas, algo `getAvatarPositions`)
-- [ ] Zone centrale dégagée (drag & drop, même plan SVG)
-- [ ] Clic avatar → menu contextuel (chuchoter, profil, défier, sourdine)
-- [ ] Protocole `table:*` dans les DataChannels (state, event, object:move/add/remove)
-- [ ] Arbitre hôte — source de vérité unique, élection automatique au départ de l'hôte
-- [ ] Persistance de l'état en DB (snapshot 30s) + restauration à la reconnexion
-- [ ] Ondes audio sur les avatars (AnalyserNode + CSS custom property `--voice-intensity`)
+## PHASE 4.9, Isolation processus, couverture de tests et CI ✅ COMPLÈTE
+Tous les processus sous l'utilisateur système `nodyx` (plus aucun root sauf systemd), permissions
+fichiers durcies, premiers tests Rust, dépendances critiques épinglées, pipeline CI à deux jobs
+parallèles.
 
-**Fichiers & présence**
-- [ ] Drag & drop fichier → partagé sur la table pour tous (temporaire)
-- [ ] Épinglage 📎 — fichier reste visible même si l'owner est offline
-- [ ] Drag fichier sur un avatar → ouvre un Whisper avec le fichier
-- [ ] États de présence : 🎙️ vocal / 🪑 à table / 🎮 en jeu
+## PHASE 4.10 à 4.15 ✅ COMPLÈTES
+Profil vivant et refonte forum (v1.9.5), DM chiffrés bout-en-bout (v2.0), Homepage Builder et
+Widget SDK v1 (v2.1), NodyxCanvas mise à jour majeure (v2.2), lecteur multimédia universel et
+hardening tunnel (v2.3), système de sauvegarde et mode maintenance live (v2.4).
 
-**Widgets**
-- [ ] Roue aléatoire "Qui commence ?" (CSS animation, résultat visible de tous)
-- [ ] Timer partagé — Pomodoro / Blitz / Custom (AudioContext pour le son de fin)
-- [ ] Tableau des scores persistant par session
-- [ ] Mode scène — "Prendre la parole" (vote rapide, mic prioritaire, autres -20dB)
-- [ ] Mode spectateur — membres du forum observent sans participer (Socket.IO room séparée)
-- [ ] Historique exportable de session (texte ou PDF)
+## PHASE 4.16, OctoGuard Phase 1, auto-modération native ✅ COMPLÈTE (v2.6)
+> *"La liberté de l'admin n'est pas négociable. OctoGuard arrive désactivé, chaque règle est
+> opt-in."*
 
-**Jukebox collaboratif**
-- [ ] Lecteur Web Audio API (play/pause/next) — synchro P2P, qualité originale
-- [ ] Volume individuel (GainNode + localStorage, jamais broadcasté)
-- [ ] Cover art : tags ID3 → MusicBrainz → Apple iTunes → cache IndexedDB
-- [ ] Playlists collaboratives sauvegardées en DB
-- [ ] Votes 👍👎 + file d'attente prioritaire intelligente
-- [ ] Crossfade entre morceaux (deux GainNode en overlap)
-- [ ] Réactions timecode (style SoundCloud) — stockées en DB, réapparaissent à la réécoute
-- [ ] Sleep timer avec fondu sortant progressif
+Pipeline auto-mod fail-open sous 50 ms, protection ReDoS (moteur `re2`), 6 actions
+(delete/warn/mute/kick/ban/report_only), flux de bienvenue, commandes personnalisées, mutes,
+file de signalements, journal d'audit, webhook HMAC sortant, kill-switch. 69 tests, bench p95
+mesuré à 0,2 ms.
 
-**Templates & plugins**
-- [ ] Sélecteur de template (hôte choisit, broadcaste `table:theme:set` à tous)
-- [ ] 3 templates officiels : Brasserie de Nuit, Table de Feutre, Pierre & Braise
-- [ ] Système de plugins `plugins/table-templates/` — premier exemple pour les devs communautaires
-
-**Jeux (progression séquentielle)**
-- [ ] Dés RPG (d4–d100) — animation CSS 3D + historique visible de tous
-- [ ] Échecs — `chess.js` + plateau SVG + sync état FEN via DataChannel
-- [ ] Poker — machine à états + chiffrement AES-GCM des mains par joueur
-- [ ] RPG / Warhammer — carte hexagonale, tokens (assets de la Bibliothèque), brouillard de guerre *(long terme)*
-
-### 3.2 — Réseau maillé inter-instances
-*(dépend de Phase 3.0-C)*
-
-- [ ] WireGuard mesh entre instances volontaires — tunnel chiffré bout en bout
-- [ ] DHT pour découverte des pairs sans serveur central
-- [ ] Gossip protocol — synchronisation légère de métadonnées entre nœuds
-- [ ] Annuaire de secours distribué — si `nodyx.org` tombe, les nœuds maintiennent l'annuaire
-- [ ] Transition automatique vers connexion P2P directe quand disponible
-- [ ] Fédération légère — un membre de la communauté A peut interagir avec la communauté B
+Les phases 2 (XP/niveaux/leaderboard), 3 (modération forums, filtre NSFW local) et 4 (API Bot
+externe, SDK Python) restent tracées séparément dans `docs/specs/016-Octoguard/`.
 
 ---
 
-## PHASE 4 — Enrichissement de la plateforme
-### Objectif : Nodyx devient la plateforme communautaire complète
+## PHASE 4.17, Streamer Hub, la chaîne complète pour les streamers ✅ COMPLÈTE (v2.5 → v2.8)
 
-**Livré en avance :**
-- [x] **NodyxCanvas** (v0.9) — tableau blanc collaboratif P2P dans les salons vocaux (CRDT LWW, curseurs vocaux, export PNG)
-- [x] **Système de thèmes de profil** (v1.0) — 6 presets (Défaut, Minuit, Forêt, Chaleur, Rose, Verre), moteur CSS variables (`--p-bg`, `--p-card-bg`, `--p-accent`…), éditeur live avec color pickers, propagation dans toute l'app (nav, sidebars, fond)
-- [x] **UI responsive mobile** (v1.0) — drawer de canaux, barre de navigation basse, VoicePanel accessible sur mobile, forum + admin responsives
-- [x] **Bibliothèque d'assets 12 Mo** (v1.0) — limite augmentée (était 5 Mo), conseils de design par type d'asset
-- [x] **Chat — Réponses/citations** (v1.1) — reply_to_id, barre de prévisualisation dans l'input, citation inline dans le message
-- [x] **Chat — Messages épinglés** (v1.1) — bannière sticky dans le header du canal, épinglage/désépinglage admin
-- [x] **Chat — Aperçus de liens** (v1.1) — unfurl Open Graph côté serveur, cache Redis 1h, cartes sous les messages
-- [x] **Chat — Badge de mention** (v1.1) — bulle rouge sur l'icône Chat, séparé de la cloche de notifications
-- [x] **Présence — Statuts personnalisés** (v1.1) — emoji + texte, 8 presets, persisté Redis 24h, visible de tous dans la sidebar
-- [x] **Présence — Membres hors ligne** (v1.1) — section collapsible dans la sidebar, avatars niveaux de gris
-- [x] **Plugins** (v1.1) — fondation `plugins/` avec 3 table-templates officiels (Brasserie de Nuit, Table de Feutre, Pierre & Braise)
-- [x] **Messages privés (DMs)** (v1.2) — conversations 1:1, `dm_conversations` + `dm_messages`, badge non-lu, Socket.IO `dm:send/typing/read`
-- [x] **Sondages** (v1.2) — dans le chat (bouton 📊) et le forum (à la création + standalone), 3 types : choix / planning / classement, résultats temps réel Socket.IO
-- [x] **Système de ban** (v1.2) — ban IP, ban email, enforcement multi-couches (inscription, connexion, middleware), interface admin
-- [x] **nodyx-turn — TURN-over-TCP** (v1.3) — RFC 6062, TCP:3478, bypass VPN/firewall pour la voix
-- [x] **nodyx-turn — Fix MESSAGE-INTEGRITY** (v1.3) — RFC 5389 §10.3, relay fonctionne désormais dans Firefox, Chrome, tous les clients WebRTC
-- [x] **Voix — Relay failover** (v1.3) — redémarrage ICE automatique avec `iceTransportPolicy: relay` après 3 mesures de perte élevée consécutives
-- [x] **Voix — Opus optimisé** (v1.3) — 32 kbps par défaut, DTX désactivé, mono, FEC actif
-- [x] **Calendrier d'événements** (v1.6) — CRUD complet, RSVP, cover upload, pages `/calendar` + `/calendar/[id]` + edit, `can_manage` (auteur OU mod/admin), sanitize-html étendu — [SPEC 011](../en/specs/011-nodyx-event-calendar/SPEC.md)
-- [x] **Gossip Protocol** (v1.6) — `announceEventsToDirectory()` toutes les 10 min, `/discover` multi-type (communautés + threads + événements)
-- [x] **Global Search Gossip-based** (v1.5) — `network_index` FTS GIN PostgreSQL, `announceThreadsToDirectory()`, `/discover` avec barre de recherche et cards cross-instances, opt-in `NODYX_GLOBAL_INDEXING=true` — [SPEC 010](../en/specs/010-nodyx-global-search/SPEC.md)
-- [x] **Admin — Dashboard enrichi** (v1.7) — stats v2 (événements/sondages/assets/chat/DMs), graphique activité duale 7j (posts + nouveaux membres), top 5 contributeurs, derniers inscrits
-- [x] **Annonces système** (v1.7) — bannières colorées (6 variantes) admin-créées, dismissibles, expirables, prévisualisation live — `/admin/announcements`
-- [x] **Journal de modération** (v1.7) — audit trail 11 types d'actions, filtres action/acteur, pagination — `/admin/audit-log`, migrations 045-046
+Un pont bidirectionnel complet entre une instance Nodyx et Twitch, pensé pour qu'un streamer
+n'ait plus besoin de jongler entre trois SaaS.
 
-**Connaissance & Découverte :**
-- [ ] **Nodes** — connaissance structurée durable, Anchors, validée via le Jardin — [SPEC 013](../en/specs/013-node/SPEC.md)
-- [ ] **Galaxy Bar** — switcher multi-instances, SSO décentralisé, notifications bio-luminescentes — [SPEC 012](../en/specs/012-nodyx-galaxy-bar/SPEC.md)
+- **Chat unifié** : bridge temps réel Twitch ↔ Nodyx (EventSub + Helix, zéro IRC), emotes et
+  badges natifs + BTTV/FFZ/7TV, vérifié en prod (277 messages reçus en session test)
+- **Bot Chat** : timers récurrents, six commandes natives (`!nodyx`, `!uptime`, `!so`...),
+  commandes custom avec cooldown configurable
+- **Nodyx Deck** : Stream Deck tactile mobile-first, multi-pages, actions clip/VOD/chat/audio,
+  éditeur WYSIWYG avec presets
+- **Nodyx Soundboard** : bibliothèque audio avec extraction ID3, overlay OBS dédié, queue
+  viewers publique avec anti-spam, commande chat `!nextsound` avec fuzzy matching
+- **Playlists et scènes OBS** : playlists nommées pilotables depuis le Deck, compositeur visuel
+  de scènes façon OBS
 
-**Outils :**
-- [ ] Partage de fichiers (hébergé sur le nœud, pas de CDN central)
-- [x] **Système de tâches léger** (v1.8) — Kanban par communauté, colonnes configurables, cartes avec assignation/échéance/priorité, drag & drop natif, `/tasks`
-- [ ] Ollama IA locale — assistant de savoir (indexe le forum local)
-- [ ] **Nodyx Guard Protocol** — middleware scoring toxicité dans `chat:send`, seuil configurable, logs DB
-- [ ] Marketplace plugins — API stable pour extensions tierces (fondations dans `plugins/`)
+Spec complète et rapports de phase dans `docs/specs/015-streamer-hub/`.
 
 ---
 
----
+## PHASE 4.18, Vocal nouvelle génération, le SFU ✅ COMPLÈTE (v2.9 → v2.11)
 
-## PHASE 4.5 — Durcissement sécurité ✅ COMPLÈTE
-### Objectif : rendre chaque surface imperméable avant que la Phase 5 n'ouvre la plateforme à un usage plus large
+Le mur mathématique du mesh P2P (15 spectateurs à 3 Mbps chacun = impossible sur une connexion
+résidentielle) avait sa réponse écrite dans le CDC depuis longtemps. Elle est livrée.
 
-> *"Livré vite. Maintenant, blindons."*
-> Audit sécurité complet conduit en mars 2026 — avant tout travail sur la Phase 5.
-
-- [x] **Injection SQL** — requêtes paramétrées dans `gardenService` et les routes `notifications`
-- [x] **JWT** — `algorithms: ['HS256']` explicite sur tous les appels `jwt.verify()`
-- [x] **SSRF / DNS Rebinding** — blocklist plages IP privées (RFC 1918 + loopback + link-local) dans l'unfurl Open Graph
-- [x] **IDOR Socket.IO** — vérification appartenance/ownership sur `chat:react`, `chat:delete`, `voice:stats`, événements `jukebox`
-- [x] **Injection CSS / XSS** — valeurs de variables CSS sanitisées (pas de `url()` / `expression()` / `javascript:`) ; `font-family` restreint à une allowlist
-- [x] **Auth** — rate limiting enrollment Nodyx Signet ; nettoyage JWT Redis au logout ; validation assigné tâche = membre communauté
-- [x] **Crypto / Input** — validation magic bytes WebP (RIFF) ; stripping saut de ligne sur les headers email (SMTP header injection)
-
----
-
-## PHASE 4.6 — Défense active & sécurité runtime ✅ COMPLÈTE
-### Objectif : transformer la plateforme en défenseur actif — détecter, dissuader et alerter en temps réel
-
-> *"Le meilleur pare-feu est celui qui pense."*
-> La Phase 4.6 s'appuie sur le durcissement statique de la 4.5 pour construire des systèmes de sécurité dynamiques et runtime.
-
-- [x] **Honeypot** — 25+ chemins scanner piégés (`.env`, `.git`, `wp-admin`, `phpmyadmin`, shells, backups…) ; tarpit 3–7s ; géolocalisation ; page scare terminal ; DB logging + fail2ban auto-ban
-- [x] **fail2ban** — 5 jails : SSH, récidivistes SSH (permanent), brute force auth HTTP, honeypot (7 jours), liste noire permanente
-- [x] **`nodyx-auth.log`** — la route auth alimente désormais le jail fail2ban à chaque tentative échouée
-- [x] **Liste noire permanente** — jail `nodyx-permban` (`bantime = -1`) + DB `ip_bans` pour les acteurs connus malveillants
-- [x] **Surveillance Discord** — embeds temps réel : hits honeypot, brute force, connexion admin, nouvelle IP, nouvelles inscriptions
-- [x] **Argon2id** — standard de hachage OWASP 2026 ; migration bcrypt transparente à la prochaine connexion
-- [x] **Anti-spam chat** — double fenêtre glissante (burst + soutenu) ; UI cooldown côté client
-- [x] **Filtre contenu** — symboles nazis/haineux (6 codepoints Unicode), allowlist images (Tenor/Giphy uniquement), blocklist domaines configurable
-- [x] **Scan NSFW optionnel** — `nsfwjs` + TensorFlow.js sur upload image (`NSFW_SCAN=true`)
-- [x] **Rate limiting upload** — 10 uploads / 10 minutes / utilisateur
-- [x] **Vérification e-mail** — obligatoire si SMTP configuré ; connexion bloquée pour les comptes non vérifiés
-- [x] **Rotation des logs** — rotation quotidienne, rétention 90 jours, compression
-- [x] **Pixel de tracking** (v1.9.2) — PNG 1×1 dans la scary page (`GET /_hp_px/:incidentId`) ; loggé dans `honeypot_pixel_hits` ; alerte Discord au retour de l'attaquant (>30s) ; corrélation IP pixel / IP originale
-- [x] **Pièges de collecte credentials** (v1.9.2) — 12 chemins login déclenchent un faux formulaire WordPress convaincant ; credentials loggés dans `honeypot_credential_attempts` ; embed Discord "🔑 Credential Harvest" à la soumission
-- [x] **Fichiers canari** (v1.9.2) — 11 patterns (`.env`, dumps SQL, `id_rsa`, `wp-config.php`…) servent de fausses credentials réalistes ; PRNG déterministe par IP — même attaquant = mêmes fausses données ; embed Discord "📄 Canary"
-- [x] **Empreinte canvas** (v1.9.2) — JS dans la scary page POSTs le hash fingerprint vers `/_hp_fp` ; upsert dans `honeypot_fingerprints` ; Discord "🔍 Fingerprint Reconnu" si visits > 1 (même cross-IP)
-- [x] **Honeytokens** (v1.9.2) — 3 liens invisibles + 1 quasi-invisible dans le HTML de la scary page ; clic → Discord "🎯 HONEYTOKEN CLICKED" ; signal haute confiance d'attaquant humain
-- [x] **Slowloris inverse** (v1.9.2) — `reply.hijack()` stream la scary page octet par octet (96B/180ms navigateurs, 256B/80ms bots) ; bloque les threads attaquants 45–90s
-- [x] **Olympus Hub** (v1.9.2) — centre de commandement sécurité : stats globales, timeline 48h, top IPs, "PIÈGES ACTIFS", table "CREDENTIAL HARVEST", "ATTAQUANTS RÉCURRENTS" (fingerprints), section pixel, blocklist distribuée fédérée
+- **`nodyx-sfu`** (Rust, zéro `unsafe`) : architecture hexagonale, `VoiceService` derrière un
+  trait `MediaEngine` swap-ready, prouvée par 25 tests contre un moteur nul avant tout moteur réel
+- **Audio en prod** (v2.10) : adaptateur mediasoup, daemon `nodyx-sfud` à jeton constant-time,
+  bascule hybride mesh ↔ SFU automatique
+- **Vidéo et partage d'écran** (v2.11) : un seul flux montant recopié serveur-side, La Scène
+  (plein écran avec chat et fil de discussion dans les salons vocaux), équaliseur réel par
+  personne, chemin TCP de secours pour l'ICE
+- **Exploration en cours** : spike d'un moteur média 100 % Rust (`str0m`) pour lever le dernier
+  verrou "zéro port ouvert" du SFU. Verdict du perçage NAT en attente d'un test sur box
+  résidentielle réelle. Détail dans `SPECS/NODYX_MEDIA_ENGINE_RUST.md`
 
 ---
 
-## PHASE 4.7 — Double authentification (2FA) ✅ COMPLÈTE
-### Objectif : ajouter un second facteur fort sans sacrifier l'expérience utilisateur
+## PHASE 4.19, Nodyx parle sept langues ✅ COMPLÈTE (traduction continue)
 
-- [x] **TOTP (RFC 6238)** — compatible avec toutes les apps d'authentification (Google Authenticator, Aegis, Bitwarden) ; setup QR code ; session pending Redis 5 min
-- [x] **2FA via Nodyx Signet** — si l'utilisateur a un appareil Signet enregistré, Signet est utilisé comme second facteur (ECDSA P-256 > secret TOTP partagé) ; réutilisation complète de l'infrastructure challenge/approbation existante
-- [x] **Chaîne de priorité** — Signet > TOTP > connexion directe ; le système sélectionne automatiquement le facteur le plus fort disponible
-- [x] **Interface Settings** — activer/désactiver le 2FA avec affichage QR code et flux de confirmation
-- [x] **Interface Login** — second step transparent : saisie code TOTP ou déclenchement automatique de l'écran d'attente Signet
-- [x] **Rebuild PWA Nodyx Signet** — placeholders `nexusnode.app` remplacés par `nodyx.org`
+Le grand audit "plus rien en dur" est terminé : toute l'interface, publique et admin, passe par
+des clés de traduction, avec cinq portes CI qui empêchent toute régression (dont une dédiée aux
+fichiers `.ts`, angle mort découvert en cours de route).
 
----
-
-## PHASE 4.8 — Stabilité production & cohérence cross-runtime ✅ COMPLÈTE
-### Objectif : rendre Nodyx imperturbable — tout état partagé entre runtimes cohérent, chaque scénario de panne géré
-
-> *"Un système est aussi stable que sa pire hypothèse silencieuse."*
-> La Phase 4.8 est un audit chirurgical complet sur l'ensemble du stack — Node.js, Rust, Caddy, PM2, systemd —
-> qui identifie et élimine les modes de défaillance silencieux qui paraissaient corrects en développement mais corrompaient l'état en production.
-
-- [x] **Audit Redis keyPrefix — Node.js** — `ioredis keyPrefix: 'nodyx:'` est la seule source de vérité ; tous les préfixes `nodyx:` manuels supprimés dans auth.ts, adminOnly.ts, socket/index.ts, scheduler.ts, index.ts, routes/admin.ts et 6 fichiers de tests (les double-préfixes comme `nodyx:nodyx:heartbeat:` écrivaient silencieusement des clés mortes jamais relues)
-- [x] **Audit Redis keyPrefix — Rust** — Rust n'a pas de keyPrefix ioredis ; les 11 clés partagées portent désormais `nodyx:` manuellement : `banned:`, `user_sessions:`, `login_rate:`, `register_rate:`, `reset_rate:`, `resend_verify:`, `resend_verify_ip:` (auth.rs) + `banned:` × 2, `user_sessions:`, scan `heartbeat:*` (admin.rs) + `rate:search:` (directory.rs)
-- [x] **Cohérence des bans cross-runtime** — les bans posés par Node.js (panneau admin) ou Rust (cache ban login) sont maintenant visibles des deux côtés
-- [x] **Rate limiting cross-runtime** — les limites login/register/reset/resend-verify sont partagées : un attaquant ne peut plus contourner le rate limiting Node.js en frappant l'endpoint Rust
-- [x] **Compteur en ligne corrigé** — le dashboard admin affichait toujours 0 membre en ligne (Rust scannait `heartbeat:*` au lieu de `nodyx:heartbeat:*`)
-- [x] **Invalidation de session au changement de mot de passe** — l'index `user_sessions:{id}` est maintenant cohérent entre les deux runtimes ; changer le mot de passe invalide les sessions Node.js ET Rust
-- [x] **Timeouts fetch scheduler** — `AbortSignal.timeout()` ajouté aux 4 appels HTTP sortants non protégés (pingDirectory 8s, pushAssetsToDirectory 15s, announceThreadsToDirectory 10s, announceEventsToDirectory 10s)
-- [x] **Caddy — failover Rust** — les 18 blocs `localhost:3100` passés en `lb_policy first` + `fail_duration 30s` ; si nodyx-server (Rust) est injoignable, Caddy bascule automatiquement sur nodyx-core (Node.js) — zéro downtime sur crash Rust
-- [x] **install.sh — version centralisée** — variable `NODYX_VERSION` unique utilisée dans la génération `.env`, le payload d'enregistrement annuaire et le résumé post-installation
-- [x] **install.sh — Caddyfile généré durci** — les deux modes (relay et normal) incluent désormais headers de sécurité, bloc honeypot et `header_up -X-Forwarded-For` sur toutes les routes API
-- [x] **Garde-fous PM2** — `max_memory_restart` sur les 4 processus (512M core, 256M frontend, 256M hub, 128M docs)
-- [x] **Log rotation** — `/etc/logrotate.d/nodyx-auth` — daily, 30 jours de rétention, compressé
-- [x] **Rebrand systemd** — `nodyx-relay.service` description et `SyslogIdentifier` mis à jour
-
-**Validation :** 63/63 tests Node.js verts · build Rust 0 erreur · caddy validate OK
+- Sept langues au cœur de l'interface, anglais à parité totale (repli d'exécution avant le
+  français), portugais brésilien première locale communautaire à 100 % (4567 clés)
+- `nodyx.org/translate` : état des traductions calculé depuis les fichiers eux-mêmes, page qui
+  ne peut pas mentir, met en avant tous les contributeurs
+- Fusionner une traduction déploie désormais automatiquement (avant, elle pouvait rester
+  invisible plusieurs jours)
 
 ---
 
-## PHASE 4.9 — Isolation processus, couverture de tests & CI ✅ COMPLÈTE
-### Objectif : Zéro processus root, couverture de tests complète sur les deux runtimes, pipeline CI reproductible
+## PHASE 4.20, Personnalisation avancée de l'instance ✅ COMPLÈTE (v2.12)
 
-- [x] **Isolation processus — User=nodyx** — Tous les processus applicatifs tournent désormais sous l'utilisateur système `nodyx` ; seuls systemd et code-server restent root. Concerne : `nexus-turn.service` (était root), `pm2-nodyx.service` (remplace `pm2-root.service`). `/home/nodyx` créé avec PM2_HOME.
-- [x] **Permissions fichiers durcies** — `nodyx-frontend/.env` et `nodyx-hub/.env` passés de 644 (lisibles par tous) à `root:nodyx 640` ; répertoire `uploads/` transféré à `nodyx:nodyx`
-- [x] **Suite de tests Node.js — 181/181** — 6 nouveaux fichiers de tests couvrant modules, polls, search, notifications, wiki, middleware-extended. Causes racines corrigées : `vi.resetAllMocks()` détruisant les implémentations mock Redis, cache module-level `_communityId`, mock transactions `db.connect()`
-- [x] **Suite de tests Rust — 18/18** — Premiers tests Rust pour `nodyx-server` : `error.rs` (11 tests — tous les status HTTP, format JSON, no-leak erreur interne, header `Retry-After`) + `extractors.rs` (7 tests — serde rename `Claims`, JWT decode, rejet mauvais secret, token expiré, token malformé)
-- [x] **Épinglage dépendances critiques** — Paquets sensibles épinglés à la version exacte dans `nodyx-core/package.json` : `fastify`, `socket.io`, `jsonwebtoken`, `argon2`, `bcrypt`, `pg`, `ioredis`, `web-push`
-- [x] **Pipeline CI durci** — GitHub Actions : deux jobs parallèles (`test-node`, `test-rust`), cache npm, gate `npx tsc --noEmit` avant vitest, build + tests Rust avec cache cargo
-- [x] **Trou de migration comblé** — `052_placeholder.sql` ajouté pour fermer l'écart entre 051 et 053
+Née d'un test grandeur nature : une vraie communauté multigaming a buté sur des éléments non
+configurables dès son premier réflexe d'admin.
 
-**Validation :** 181/181 tests Node.js verts · 18/18 tests Rust verts · TypeScript 0 erreur · Tous les services actifs en utilisateur nodyx
-
----
-
-## PHASE 4.16 — OctoGuard Phase 1 : Auto-modération native ✅ COMPLÈTE (rollout dégressif, v2.6)
-### Objectif : Livrer une suite de modération in-core entièrement paramétrable par l'admin, sans bot externe, sans IA centralisée, anti-ReDoS
-
-> *« La liberté de l'admin n'est pas négociable. OctoGuard arrive désactivé, chaque règle est opt-in. »*
-> La Phase 1 livre le module de modération native. L'API Bot externe + SDK Python + métadonnées vocales sont traçées séparément en Phase 4 de la roadmap OctoGuard.
-
-- [x] **8 migrations idempotentes** (088 → 091 + 5 OctoGuard) — `automod_rules`, `welcome_settings`, `chat_mutes`, `commands`, `reports`, `webhooks`, ban-cache, `community_bans.expires_at`
-- [x] **Pipeline auto-mod** — timeout 50 ms, fail-open, 5 types de matchers : substring, word-boundary, regex, link allow/blocklist, emoji-flood
-- [x] **Protection ReDoS** — moteur `re2` Google linéaire (84 s natif vs 0 ms `re2` mesuré en bench) + `safe-regex` heuristique à l'admission
-- [x] **6 actions** — `delete`, `warn`, `mute_timed`, `kick`, `ban` (avec `community_bans.expires_at` optionnel pour bans temporaires), `report_only` (dry-run)
-- [x] **Flux de bienvenue** — ghost bot `OctoGuard` (`users.is_system=true`, login refusé), message public avec variables `{user}` / `{userMention}` / `{communityName}`, auto-grade optionnel à l'inscription. Message DM système reporté à la spec 019
-- [x] **Commandes personnalisées** — `!règles`, `!discord`, ... en markdown, cooldown Redis par canal (`SET NX EX`), canaux et rôles autorisés configurables par commande
-- [x] **Mutes chat** — table `chat_mutes`, portée globale ou par canal, durée libre (`15m`, `2h`, `1w`, permanent), cache Redis 60 s, worker de purge en arrière-plan
-- [x] **File de signalements** — driven par les membres, anti-abus rate limit par signaleur + cooldown par cible via Redis, inbox admin avec actions mute/delete/dismiss
-- [x] **Journal d'audit** — chaque action persistée dans `admin_audit_log` avec `event_id`. Logger fire-and-forget IIFE — capté par le bench pré-emptif : p95 passé de 13 ms à 0,2 ms après bascule de `await` vers fire-and-forget
-- [x] **Webhook HMAC-SHA256** — POST sortant signé `X-Octoguard-Signature: sha256=hex`, queue Redis, worker async avec timeout 10 s. Le pipeline chat ne paye jamais la latence webhook
-- [x] **UI admin** — `/admin/octoguard` avec 8 onglets : vue d'ensemble, automod, bienvenue, commandes, mutes, signalements, journal, webhook. CRUD complet avec formulaires `enhance` optimistes
-- [x] **Kill-switch** — `OCTOGUARD_ENABLED=false` court-circuite tout le pipeline. Table de règles vide = impact zéro même activé. Rollout dégressif : activation → observation table vide → 1 règle `report_only` → graduation vers live
-- [x] **69 tests Vitest** — matchers, `assessPatternSafety`, `durationToExpiresAt`, `substituteVariables`, mutes, migration env
-- [x] **Script `bench.ts`** — benchmark dédié, prouve p95 < 1 ms en charge, a permis d'attraper le goulot du logger avant activation prod
-
-**Validation :** 69/69 tests OctoGuard verts · bench p95 = 0,202 ms · logs de boot prod confirment `[octoguard] regex DoS protection: re2 native engine active` · `OCTOGUARD_ENABLED` hot-swappable via PM2 `--update-env`
-
-> Phases 2 (XP / niveaux / leaderboard), 3 (modération forums, messages programmés, filtre NSFW avec CLIP / nsfw-detector local, métadonnées vocales) et 4 (API Bot externe + SDK Python + peer WebRTC voix) traçées dans la spec OctoGuard à `docs/specs/016-Octoguard/`. La Phase 1 est la fondation.
+- Widget "En-tête" (Homepage Builder) : fond et logo positionnables et redimensionnables
+  indépendamment, chaque élément affichable ou non, aucune valeur de repli piégeuse
+- Fond d'image pour la sidebar des membres, visibilité par rôle, assombrissement et dézoom
+  réglables
+- Système de thème d'instance (v2.9) : l'owner impose sa base, chaque membre peut surcharger
+  pour lui-même, ~800 couleurs tokenisées
 
 ---
 
-## PHASE 5 — Mobile et réputation
-### Objectif : Nodyx dans la poche de tout le monde
+## PHASE 4.21, SDK d'extensions et marketplace ✅ COMPLÈTE (v1)
+
+Nodyx peut être étendu par des tiers sans toucher au cœur. Couvre une bonne partie de l'objectif
+"API publique documentée pour développeurs tiers" de la Phase 5.
+
+- SDK pensé sécurité d'abord : surface isolée, pont hôte défini, stockage clé/valeur cloisonné
+  par extension, identité projetée (jamais les vrais comptes), proxy réseau anti-SSRF à
+  épinglage d'adresse, écran de permissions admin
+- `extensions.nodyx.org` : vitrine, registre, index. Première extension réelle (`next-event`)
+  comme preuve, tenue par des tests
+- Surfaces d'extension intégrées à la homepage et au Homepage Builder
+
+CDC complet dans `SPECS/NODYX_SDK_CDC.md`, `SPECS/NODYX_SDK_SECURITY.md`,
+`SPECS/NODYX_SDK_REFERENCE.md`.
+
+---
+
+## PHASE 4.22, Activités communautaires en vocal ✅ COMPLÈTE (v1)
+
+Un salon vocal peut héberger une activité, un jeu joué à plusieurs pendant qu'on parle, sur le
+modèle des extensions : bundle applicatif livré par l'instance, relais temps réel dédié, identité
+Nodyx résolue côté hôte. Galerie façon Play Store, dock plein écran, stockage applicatif pour les
+scores et l'état de partie.
+
+Détail dans `SPECS/NODYX_ACTIVITIES_CDC.md`.
+
+---
+
+## PHASE 4.23, Vitrine musique et durcissement de la vitrine publique ✅ COMPLÈTE
+
+**Vitrine musique** : module public `/musique` géré depuis `/admin/music`, né pour héberger une
+bande originale de jeu vidéo et devenu générique (titre, sous-titre, bannière éditables).
+Catégories réordonnables, upload en un geste avec scan anti-malware, attestation de licence PDF
+générée à la volée par catégorie.
+
+**Durcissement de la vitrine publique**, suite à l'incident du 1ᵉʳ septembre 2026 (un compte
+membre standard avait fait remonter du spam en page d'accueil et dans l'annuaire fédéré, sans
+aucune faille d'authentification) : catégories restreignables par rôle, vitrine et annuaire
+limités aux fils explicitement mis en avant par un admin, message de ban IP qui dit la vérité
+quand aucune adresse publique n'est connue. CDC complet dans
+`SPECS/NODYX_DURCISSEMENT_VITRINE_CDC.md`.
+
+En prolongement direct de cet incident, un audit sécurité systématique de tout ce qui tourne en
+production a démarré mi-septembre, module par module : couche temps réel Socket.IO, complétude
+des vérifications d'autorisation admin, et une faille XSS non authentifiée trouvée et corrigée
+au passage sur le titre des fils de discussion. Toujours en cours au moment d'écrire ces lignes.
+
+---
+
+## PHASE 5, Mobile et réputation 🔨 EN COURS
+### Nodyx dans la poche de tout le monde
 
 - [ ] App iOS via Capacitor
 - [ ] App Android via Capacitor
-- [ ] Desktop via Tauri (.exe/.app/.sh ~10MB, autonome)
-- [ ] NodyxPoints — système de réputation communautaire inter-instances
+- [ ] Desktop via Tauri (.exe/.app/.sh ~10 Mo, autonome)
+- [ ] NodyxPoints, système de réputation communautaire inter-instances
 - [ ] Badges et niveaux
-- [ ] API publique documentée pour développeurs tiers
+- [x] **API publique pour développeurs tiers** : largement couverte par le SDK d'extensions, voir
+  Phase 4.21. Reste ouvert : une marketplace tierce au-delà de la première extension de preuve
+- [ ] **Nodes**, connaissance structurée durable, validée via le Jardin, voir
+  [SPEC 013](../en/specs/013-node/SPEC.md)
+- [ ] **Galaxy Bar**, switcher multi-instances, SSO décentralisé, voir
+  [SPEC 012](../en/specs/012-nodyx-galaxy-bar/SPEC.md)
 
 ---
 
 ## RÈGLES DE LA ROADMAP
 
 1. On ne commence pas une phase sans que la précédente soit stable et utilisée
-2. On ne casse pas ce qui marche — on propose des alternatives (ex: Relay vs CF Tunnel vs ports ouverts)
+2. On ne casse pas ce qui marche, on propose des alternatives (ex : Relay vs CF Tunnel vs ports ouverts)
 3. La complexité est cachée : l'utilisateur voit un bouton, la couche Rust gère la complexité
 4. Chaque ajout doit être cohérent avec l'aspect décentralisé et souverain
-5. Le core reste simple. La complexité va dans les plugins.
+5. Le core reste simple, la complexité va dans les plugins
 6. La communauté peut voter pour reprioriser les phases futures
-
----
 
 ## CE QUI N'EST JAMAIS DANS LA ROADMAP
 
-- Publicité
-- Vente de données
-- Fonctionnalité qui nécessite un serveur central **obligatoire** (`nodyx.org` est optionnel — sans lui, l'instance reste pleinement fonctionnelle sur son propre domaine)
+- Publicité, vente de données
+- Fonctionnalité qui nécessite un serveur central obligatoire (`nodyx.org` est optionnel, sans
+  lui l'instance reste pleinement fonctionnelle sur son propre domaine)
 - Backdoor de quelque nature que ce soit
 - Dépendance permanente à un service propriétaire tiers
 - Remplacement de Node.js ou SvelteKit par Rust (chaque outil à sa place)
 
 ---
 
----
-
-## PHASE HORIZON — NODYX-ETHER
+## PHASE HORIZON, NODYX-ETHER
 ### La couche physique. La dernière frontière.
 
 > *"Les ondes radio n'ont pas besoin de permission."*
 
-Nodyx décentralise la couche applicative.
-Mais nous dépendons encore d'une chose : l'infrastructure physique d'internet.
-Des câbles en fibre contrôlés par des FAI. Des satellites contrôlés par des entreprises.
-
-**NODYX-ETHER décentralise la couche physique elle-même.**
-
-Le pont qui rend ça possible : **les CRDTs**.
-Déjà dans Nodyx (NodyxCanvas). Déjà en production.
-Le même CRDT qui synchronise un coup de pinceau peut synchroniser un post de forum
-sur un lien LoRa à 250 bits/s — même avec 2 heures de délai.
+Nodyx décentralise la couche applicative. Mais nous dépendons encore d'une chose :
+l'infrastructure physique d'internet, câbles en fibre et satellites contrôlés par des tiers.
+NODYX-ETHER décentralise la couche physique elle-même, via les CRDTs déjà en production dans
+NodyxCanvas : le même mécanisme qui synchronise un coup de pinceau peut synchroniser un post de
+forum sur un lien LoRa à 250 bits/s, même avec deux heures de délai.
 
 ```
-Couche 1 — Mesh local       LoRa / Wi-Fi ad-hoc   0–50 km      sans infrastructure
-Couche 2 — Radio régionale  HF / NVIS             500–3000 km   rebond ionosphérique
-Couche 3 — Ionosphère       HF ondes courtes      Mondial       sans câble, sans satellite
+Couche 1, Mesh local        LoRa / Wi-Fi ad-hoc     0-50 km       sans infrastructure
+Couche 2, Radio régionale   HF / NVIS               500-3000 km   rebond ionosphérique
+Couche 3, Ionosphère        HF ondes courtes        Mondial       sans câble, sans satellite
 ```
 
-```
-nodyx-p2p/
-└── nodyx-ether/          ← workspace futur
-    ├── nodyx-modem/      ← modem logiciel (encodage HF / LoRa en Rust)
-    ├── nodyx-mesh/       ← relais mesh LoRa / Wi-Fi ad-hoc
-    └── nodyx-sync/       ← sérialisation des deltas CRDT (Cap'n Proto / FlatBuffers)
-```
-
-**nodyx-relay devient un orchestrateur multi-chemins :**
-`ethernet → wifi-mesh → lora → hf-radio` — fallback automatique, les CRDTs gèrent la convergence.
-
-**Ce que ça signifie concrètement :**
-Une communauté dans une zone sinistrée. La fibre est coupée. La 4G est détruite.
-Un Raspberry Pi sur batterie. Un module LoRa sur le toit. 55€ au total.
-La communauté continue. Les annonces passent. Les gens savent qui est en vie.
-
-**C'est ça, la souveraineté.**
-
-Ce n'est pas une feature pour demain. C'est un **appel à contributeurs :**
-→ Radioamateurs, makers LoRa, contributeurs Meshtastic, développeurs Rust embarqué.
-→ L'architecture est là. La fondation CRDT est livrée.
-→ La couche radio attend les bonnes mains.
+Ce n'est pas une fonctionnalité pour demain, c'est un appel à contributeurs : radioamateurs,
+makers LoRa, contributeurs Meshtastic, développeurs Rust embarqué. L'architecture est là, la
+fondation CRDT est livrée, la couche radio attend les bonnes mains.
 
 → **[Spec complète : docs/ideas/NODYX-ETHER.md](../ideas/NODYX-ETHER.md)**
 
 ---
 
-## PHASE RADIO — NODYX-RADIO
+## PHASE RADIO, NODYX-RADIO
 ### La radio internet qui a enfin une raison d'exister.
 
 > *"50 000 opérateurs de radio internet qui émettent dans le vide. Nodyx est la réponse."*
 
-Le problème que personne n'a résolu : 100 000+ stations radio internet à leur apogée.
-Moins de 5% avaient plus de 10 auditeurs simultanés.
-Pas parce que les programmes étaient mauvais. Parce qu'il n'existait aucune structure
-pour transformer des auditeurs simultanés en communauté.
+Moins de 5 % des 100 000+ stations radio internet à leur apogée avaient plus de 10 auditeurs
+simultanés, pas faute de programme, faute de structure pour transformer des auditeurs en
+communauté. Une instance Nodyx EST cette couche communautaire : forum indexé, chat en direct
+pendant l'émission, salons vocaux comme studio ouvert, Jardin pour voter les prochains
+programmes.
 
-**Les stations qui ont survécu** avaient une couche communautaire structurellement attachée.
-**Les stations qui sont mortes** avaient des auditeurs, mais pas de communauté.
-
-L'inversion que Nodyx rend possible :
-```
-Stations mortes    :  broadcast → espoir de communauté
-Stations vivantes  :  communauté → broadcast comme expression
-```
-
-**Une instance Nodyx EST la couche communautaire.** Une station qui tourne Nodyx obtient :
-- Forum (archives, discussions, notes d'émission — indexées par tous les moteurs de recherche)
-- Chat en direct (les auditeurs réagissent en temps réel pendant les émissions)
-- Salons vocaux (studio ouvert, coulisses, questions/réponses en direct)
-- Garden (la communauté vote les prochains programmes)
-
-**La régie coopérative — le modèle économique manquant :**
-
-Une petite station avec 80 auditeurs ne peut pas négocier avec des annonceurs seule.
-Mais 200 stations Nodyx-Radio avec 80 auditeurs chacune = **16 000 auditeurs locaux**.
-Un artisan, un boulanger, un événement régional paie pour cette portée.
-
-```
-nodyx.org/radio
-  → régie publicitaire coopérative
-  → annonceurs locaux/régionaux déposent leurs spots audio
-  → spots distribués aux stations de la région ciblée
-  → revenus partagés : 80% station / 20% infrastructure nodyx.org
-```
-
-Pas de tracking. Pas de profils utilisateurs. Ciblage géographique uniquement.
-Le boulanger du village finance la radio du village qui tourne sur un Pi dans le village.
-**L'argent reste local. L'infrastructure reste libre.**
-
-De nouvelles stations vont voir le jour parce qu'elles ont enfin une communauté.
-Et parce qu'elles peuvent enfin se financer.
+La régie coopérative propose le modèle économique manquant : 200 stations Nodyx-Radio à 80
+auditeurs chacune, ça fait 16 000 auditeurs locaux qu'un artisan ou un événement régional peut
+financer. Ciblage géographique uniquement, zéro tracking, zéro profil utilisateur. L'argent
+reste local, l'infrastructure reste libre.
 
 → **[Vision complète : docs/ideas/NODYX-RADIO.md](../ideas/NODYX-RADIO.md)**
 
 ---
 
-*Version 2.1 — 8 mars 2026*
+*Version 2.12.0, 17 septembre 2026.*
 *"Le P2P est l'âme. Rust est le corps. La radio est la résilience. La communauté est la raison."*
