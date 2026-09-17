@@ -42,11 +42,18 @@ export default async function searchRoutes(app: FastifyInstance) {
     const [threadsRes, postsRes] = await Promise.all([
       doThreads && communityId
         ? db.query(
+            // regexp_replace sur t.title : ts_headline() n'échappe que le mot
+            // recherché (StartSel/StopSel), pas le reste du texte. Sans ce
+            // strip, un titre historique contenant du HTML brut (avant le
+            // nettoyage posé sur POST/PATCH /forums/threads) ressortirait tel
+            // quel dans le résultat, injecté ensuite via {@html} côté front.
             `SELECT t.id, t.title, t.created_at,
                     u.username AS author_username,
                     cat.id     AS category_id,
                     cat.name   AS category_name,
-                    ts_headline('french', t.title, plainto_tsquery('french', $1),
+                    ts_headline('french',
+                      regexp_replace(t.title, '<[^>]+>', ' ', 'g'),
+                      plainto_tsquery('french', $1),
                       'StartSel=<mark>, StopSel=</mark>, MaxWords=20, MinWords=10'
                     ) AS headline
              FROM threads t
