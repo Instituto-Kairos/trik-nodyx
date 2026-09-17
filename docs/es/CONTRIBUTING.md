@@ -157,7 +157,7 @@ ROADMAP.md      , hoja de ruta del desarrollo
 - Si un concepto no tiene equivalente en tu idioma, conserva el término en inglés
 - Los nombres propios (Nodyx, NodyxPoints, Guard Protocol, etc.) nunca se traducen
 
-Quien traduce recibe una estrella y su sitio en [CONTRIBUTORS.md](../../CONTRIBUTORS.md), como cualquier otro contribuidor.
+Quien traduce recibe una estrella y su sitio en [CONTRIBUTORS.md](https://github.com/Pokled/nodyx/blob/main/CONTRIBUTORS.md), como cualquier otro contribuidor.
 
 ---
 

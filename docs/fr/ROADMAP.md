@@ -5,7 +5,8 @@
 > parfaitement avant de passer à la suivante.
 
 > Ce document donne l'état actuel et la direction. Pour le détail complet de chaque
-> fonctionnalité livrée, ligne par ligne, c'est le [CHANGELOG](../../CHANGELOG.md) qui fait foi :
+> fonctionnalité livrée, ligne par ligne, c'est le
+> [CHANGELOG](https://github.com/Pokled/nodyx/blob/main/CHANGELOG.md) qui fait foi :
 > lui seul est mis à jour à chaque version.
 
 ---
@@ -344,7 +345,7 @@ Ce n'est pas une fonctionnalité pour demain, c'est un appel à contributeurs : 
 makers LoRa, contributeurs Meshtastic, développeurs Rust embarqué. L'architecture est là, la
 fondation CRDT est livrée, la couche radio attend les bonnes mains.
 
-→ **[Spec complète : docs/ideas/NODYX-ETHER.md](../ideas/NODYX-ETHER.md)**
+→ **[Spec complète : docs/ideas/NODYX-ETHER.md](https://github.com/Pokled/nodyx/blob/main/docs/ideas/NODYX-ETHER.md)**
 
 ---
 
@@ -364,7 +365,7 @@ auditeurs chacune, ça fait 16 000 auditeurs locaux qu'un artisan ou un événem
 financer. Ciblage géographique uniquement, zéro tracking, zéro profil utilisateur. L'argent
 reste local, l'infrastructure reste libre.
 
-→ **[Vision complète : docs/ideas/NODYX-RADIO.md](../ideas/NODYX-RADIO.md)**
+→ **[Vision complète : docs/ideas/NODYX-RADIO.md](https://github.com/Pokled/nodyx/blob/main/docs/ideas/NODYX-RADIO.md)**
 
 ---
 
