@@ -88,6 +88,21 @@ describe('GET /api/v1/search', () => {
     expect(body.posts).toBeInstanceOf(Array)
   })
 
+  it('strips HTML from thread titles before ts_headline (injection audit 17/09)', async () => {
+    // getCommunityId() est mise en cache au niveau module : selon l'ordre des
+    // tests dans ce fichier, la requête "FROM communities" peut ne pas être
+    // rejouée. On retourne la même forme de ligne dans tous les cas et on
+    // cherche la requête threads par son contenu, pas par sa position.
+    vi.mocked(db.query).mockResolvedValue({ rows: [FAKE_THREAD] } as any)
+
+    const app = await buildApp(app => searchRoutes(app))
+    await app.inject({ method: 'GET', url: '/?q=nodyx&type=threads' })
+
+    const calls = vi.mocked(db.query).mock.calls.map(c => String(c[0]))
+    const threadsSql = calls.find(sql => sql.includes('ts_headline'))
+    expect(threadsSql).toContain("regexp_replace(t.title, '<[^>]+>'")
+  })
+
   it('returns only threads for type=threads', async () => {
     vi.mocked(db.query)
       .mockResolvedValueOnce({ rows: [{ id: 'c1' }] } as any)

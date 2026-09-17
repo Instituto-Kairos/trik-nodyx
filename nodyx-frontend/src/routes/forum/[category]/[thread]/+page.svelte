@@ -8,6 +8,22 @@
 		return origin + url
 	}
 
+	// JSON.stringify() n'échappe pas < > & : une valeur comme le titre du fil
+	// contenant la séquence de fermeture d'un tag script romprait le JSON-LD
+	// injecté plus bas et ferait exécuter ce qui suit comme du HTML/JS. On
+	// échappe ces trois caractères en séquences unicode après coup, seule
+	// façon fiable d'embarquer du JSON dans un tag script sans risque (voir
+	// aussi le nettoyage posé côté API sur POST/PATCH /forums/threads).
+	// Note : le "<\/script>" ci-dessous a son slash échappé exprès, sinon le
+	// parseur Svelte lirait ce fichier .svelte comme fermant CE bloc script.
+	function jsonLdScript(data: unknown): string {
+		const json = JSON.stringify(data)
+			.replace(/</g, '\\u003c')
+			.replace(/>/g, '\\u003e')
+			.replace(/&/g, '\\u0026')
+		return `<script type="application/ld+json">${json}<\/script>`
+	}
+
 	import { enhance, applyAction } from '$app/forms';
 	import { untrack } from 'svelte';
 	import { invalidateAll, goto } from '$app/navigation';
@@ -142,7 +158,7 @@
 	<meta property="og:image"        content={shareImage} />
 	<meta name="twitter:image"       content={shareImage} />
 	<meta property="og:site_name"   content={page.data.communityName ?? 'Nodyx'} />
-	{@html `<script type="application/ld+json">${JSON.stringify({
+	{@html jsonLdScript({
 		"@context": "https://schema.org",
 		"@type": "DiscussionForumPosting",
 		"headline": thread.title,
@@ -161,7 +177,7 @@
 			"name": page.data.communityName ?? 'Nodyx',
 			"url": page.url.origin + '/forum'
 		}
-	})}</script>`}
+	})}
 </svelte:head>
 
 <!-- ── En-tête du thread avec avatar créateur ─────────────────────────────── -->

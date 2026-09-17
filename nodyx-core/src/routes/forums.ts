@@ -19,6 +19,15 @@ import { db, redis } from '../config/database'
 import { checkHtmlContent } from '../services/contentFilter'
 import { io } from '../socket/io'
 
+// Un titre de fil est du texte brut, jamais du HTML : checkHtmlContent() ne fait
+// que SCANNER (mots interdits) sans jamais retirer de balises. Sans ce nettoyage,
+// un titre contenant </script><script>... ressortait tel quel dans le JSON-LD de
+// la page du fil et dans l'extrait ts_headline() de la recherche, deux points
+// d'injection non authentifiés (trouvé en audit le 17/09).
+function stripTitleTags(title: string): string {
+  return title.replace(/<[^>]*>/g, '').trim()
+}
+
 // Check if userId is owner/admin/moderator in the community that owns a thread
 async function isMod(userId: string, threadId: string): Promise<boolean> {
   const { rows } = await db.query<{ role: string }>(
@@ -218,7 +227,11 @@ app.get('/threads', {
   app.post('/threads', {
     preHandler: [rateLimit, requireAuth, validate({ body: CreateThreadBody })],
   }, async (request, reply) => {
-    const { category_id: rawCatId, title, content, tag_ids } = request.body as z.infer<typeof CreateThreadBody>
+    const { category_id: rawCatId, title: rawTitle, content, tag_ids } = request.body as z.infer<typeof CreateThreadBody>
+    const title = stripTitleTags(rawTitle)
+    if (!title) {
+      return reply.code(400).send({ error: 'Title cannot be empty once markup is removed', code: 'INVALID_TITLE' })
+    }
 
     // Resolve slug → UUID if needed
     const isCatUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawCatId)
@@ -525,10 +538,11 @@ app.get('/threads', {
 
     // Authors without mod rights can only edit the title
     if (isAuthor && !modAccess) {
-      if (!body.title?.trim()) {
+      const cleanTitle = body.title ? stripTitleTags(body.title) : ''
+      if (!cleanTitle) {
         return reply.code(403).send({ error: 'Authors can only edit the title', code: 'FORBIDDEN' })
       }
-      const updated = await ThreadModel.update(threadId, { title: body.title.trim() })
+      const updated = await ThreadModel.update(threadId, { title: cleanTitle })
       bumpThreadsCache()
       return reply.send({ thread: updated })
     }
@@ -565,7 +579,7 @@ app.get('/threads', {
     }
 
     const updated = await ThreadModel.update(threadId, {
-      title:       body.title?.trim() || undefined,
+      title:       body.title ? (stripTitleTags(body.title) || undefined) : undefined,
       is_pinned:   body.is_pinned,
       is_locked:   body.is_locked,
       is_featured: body.is_featured,

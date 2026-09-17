@@ -185,6 +185,39 @@ describe('POST /api/v1/forums/threads', () => {
     expect(JSON.parse(res.body)).toHaveProperty('thread')
   })
 
+  it('strips HTML from the title before storing it (injection audit 17/09)', async () => {
+    vi.mocked(ThreadModel.create).mockResolvedValueOnce(FAKE_THREAD as any)
+    vi.mocked(PostModel.create).mockResolvedValueOnce(FAKE_POST as any)
+
+    const res = await app.inject({
+      method:  'POST',
+      url:     '/api/v1/forums/threads',
+      headers: { authorization: `Bearer ${makeToken()}` },
+      payload: {
+        category_id: CATEGORY_UUID,
+        title:       'Free stuff</script><script>alert(1)</script>',
+        content:     '<p>Test content</p>',
+      },
+    })
+
+    expect(res.statusCode).toBe(201)
+    expect(ThreadModel.create).toHaveBeenCalledWith(
+      expect.objectContaining({ title: expect.not.stringMatching(/[<>]/) })
+    )
+  })
+
+  it('rejects a title made entirely of markup', async () => {
+    const res = await app.inject({
+      method:  'POST',
+      url:     '/api/v1/forums/threads',
+      headers: { authorization: `Bearer ${makeToken()}` },
+      payload: { category_id: CATEGORY_UUID, title: '<script></script>', content: '<p>Test</p>' },
+    })
+
+    expect(res.statusCode).toBe(400)
+    expect(ThreadModel.create).not.toHaveBeenCalled()
+  })
+
   it('returns 400 when title is missing', async () => {
     const res = await app.inject({
       method:  'POST',
@@ -390,5 +423,49 @@ describe('PATCH /api/v1/forums/threads/:id — is_featured réservé aux admins'
 
     expect(res.statusCode).toBe(200)
     expect(ThreadModel.update).toHaveBeenCalledWith(THREAD_UUID, expect.objectContaining({ is_featured: true }))
+  })
+})
+
+describe('PATCH /api/v1/forums/threads/:id : nettoyage du titre (injection audit 17/09)', () => {
+  let app: Awaited<ReturnType<typeof buildApp>>
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    vi.mocked(redis.exists).mockImplementation((key: string) => Promise.resolve(key.startsWith('banned:') ? 0 : 1))
+    vi.mocked(redis.incr).mockResolvedValue(1 as any)
+    vi.mocked(redis.expire).mockResolvedValue(1 as any)
+    // isMod : aucune ligne -> l'auteur n'a pas de droit de modération, passe
+    // par la branche "Authors without mod rights can only edit the title".
+    vi.mocked(db.query).mockResolvedValue({ rows: [], rowCount: 0 } as any)
+    app = await buildApp(a => a.register(forumRoutes, { prefix: '/api/v1/forums' }))
+  })
+
+  it('un auteur sans droit de mod ne peut pas injecter de balises via le titre', async () => {
+    vi.mocked(ThreadModel.findById).mockResolvedValueOnce({ ...FAKE_THREAD } as any)
+    vi.mocked(ThreadModel.update).mockResolvedValueOnce({ ...FAKE_THREAD, title: 'alert(1)' } as any)
+
+    const res = await app.inject({
+      method:  'PATCH',
+      url:     `/api/v1/forums/threads/${THREAD_UUID}`,
+      headers: { authorization: `Bearer ${makeToken()}` },
+      payload: { title: '<script>alert(1)</script>' },
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(ThreadModel.update).toHaveBeenCalledWith(THREAD_UUID, { title: 'alert(1)' })
+  })
+
+  it('refuse un titre qui ne devient que du vide une fois les balises retirées', async () => {
+    vi.mocked(ThreadModel.findById).mockResolvedValueOnce({ ...FAKE_THREAD } as any)
+
+    const res = await app.inject({
+      method:  'PATCH',
+      url:     `/api/v1/forums/threads/${THREAD_UUID}`,
+      headers: { authorization: `Bearer ${makeToken()}` },
+      payload: { title: '<script></script>' },
+    })
+
+    expect(res.statusCode).toBe(403)
+    expect(ThreadModel.update).not.toHaveBeenCalled()
   })
 })
