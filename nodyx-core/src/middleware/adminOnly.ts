@@ -6,7 +6,14 @@ import { JwtPayload } from './auth'
 // Cache the instance community id — it never changes at runtime
 let _communityId: string | null = null
 
-async function getInstanceCommunityId(): Promise<string | null> {
+// Exporté : c'est LE résolveur canonique de "la communauté de cette instance"
+// (respecte NODYX_COMMUNITY_SLUG, sinon la plus ancienne). Plusieurs endroits
+// du code réimplémentaient leur propre "SELECT ... ORDER BY created_at ASC
+// LIMIT 1" ou pire, aucune restriction de communauté du tout, trouvé en
+// audit le 16/09 (POST /communities non gardé + 3 vérifications de rôle non
+// scopées à CETTE communauté, cf audit_securite_2026_09_15). Toujours passer
+// par cette fonction plutôt que de réinventer la résolution.
+export async function getInstanceCommunityId(): Promise<string | null> {
   if (_communityId) return _communityId
 
   const slug = process.env.NODYX_COMMUNITY_SLUG

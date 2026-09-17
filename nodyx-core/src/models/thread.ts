@@ -170,12 +170,18 @@ export async function incrementViews(id: string): Promise<void> {
   )
 }
 
-export async function getFeatured(limit = 5, categoryId?: string): Promise<FeaturedThread[]> {
+// `communityId` : scope obligatoire à LA communauté de l'instance (résolue par
+// l'appelant via getInstanceCommunityId). Avant l'audit du 16/09, ni la
+// branche par catégorie ni la branche globale ne vérifiaient qu'un contenu
+// "mis en avant" appartenait bien à cette communauté-là : un utilisateur qui
+// se serait fabriqué sa propre communauté (POST /communities, désormais
+// admin-only) et son propre rôle owner pouvait mettre en avant son propre
+// contenu et le voir remonter sur la vitrine publique de l'instance.
+export async function getFeatured(limit: number, communityId: string, categoryId?: string): Promise<FeaturedThread[]> {
   if (categoryId) {
     // Par catégorie : uniquement les fils explicitement mis en avant par un
-    // admin (showcased_at). Avant le durcissement du 2026-09, cette branche
-    // renvoyait « les fils récents de la catégorie », ce qui laissait
-    // n'importe quel membre atteindre la vitrine en postant dans 📣 Annonces.
+    // admin (showcased_at), ET dont la catégorie appartient à CETTE
+    // communauté (categoryId est un paramètre public, jamais validé sinon).
     const { rows } = await db.query<FeaturedThread>(
       `SELECT
          t.id,
@@ -191,10 +197,11 @@ export async function getFeatured(limit = 5, categoryId?: string): Promise<Featu
        JOIN categories c ON c.id = t.category_id
        JOIN users u      ON u.id = t.author_id
        WHERE (c.id::text = $2 OR c.slug = $2)
+         AND c.community_id = $3
          AND t.showcased_at IS NOT NULL
        ORDER BY t.showcased_at DESC
        LIMIT $1`,
-      [limit, categoryId]
+      [limit, categoryId, communityId]
     )
     return rows
   }
@@ -213,9 +220,10 @@ export async function getFeatured(limit = 5, categoryId?: string): Promise<Featu
      JOIN categories c ON c.id = t.category_id
      JOIN users u      ON u.id = t.author_id
      WHERE t.is_featured = true
+       AND c.community_id = $2
      ORDER BY COALESCE(t.showcased_at, t.created_at) DESC
      LIMIT $1`,
-    [limit]
+    [limit, communityId]
   )
   return rows
 }

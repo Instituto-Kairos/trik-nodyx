@@ -16,6 +16,7 @@ import { sendPushToUser } from '../routes/notifications'
 import { resolveServerLocale, pushStrings } from '../i18n/serverStrings'
 import { checkHtmlContent } from '../services/contentFilter'
 import { runPipeline, isOctoGuardEnabled, isUserMuted, tryHandleCommand } from '../services/octoguard'
+import { getInstanceCommunityId } from '../middleware/adminOnly'
 
 interface JwtPayload {
   userId:   string
@@ -359,9 +360,15 @@ export function registerSocketIO(server: Server): void {
     // happens once on join so subsequent emits don't need to re-verify.
     socket.on('streamer-hub:join', async () => {
       if (checkRateLimit(userId, 'streamer-hub:join')) return
+      // Scopé à LA communauté de l'instance (trouvé en audit le 16/09) : sans
+      // ce scope, un owner d'une communauté auto-créée par lui-même (avant que
+      // POST /communities passe admin-only) rejoignait cette room admin et
+      // recevait le flux EventSub admin.
+      const communityId = await getInstanceCommunityId()
+      if (!communityId) return
       const { rows } = await db.query<{ role: string }>(
-        `SELECT role FROM community_members WHERE user_id = $1 LIMIT 1`,
-        [userId],
+        `SELECT role FROM community_members WHERE community_id = $1 AND user_id = $2`,
+        [communityId, userId],
       ).catch(() => ({ rows: [] as { role: string }[] }))
       const role = rows[0]?.role
       if (role !== 'owner' && role !== 'admin') return

@@ -65,6 +65,39 @@ function mockModuleEnabled() {
   vi.mocked(redis.get).mockResolvedValue('1')
 }
 
+// getUserRole() résout d'abord communityId via getInstanceCommunityId() (FROM communities),
+// puis interroge community_members pour le rôle : router par contenu SQL, pas par ordre d'appel.
+function mockRole(role: string) {
+  vi.mocked(db.query).mockImplementation(async (sql: string) => {
+    const s = String(sql)
+    if (s.includes('FROM communities')) return { rows: [{ id: 'community-1' }], rowCount: 1 } as any
+    return { rows: [{ role }], rowCount: 1 } as any
+  })
+}
+
+// Comme mockRole, mais la requête suivant la résolution du rôle (INSERT/UPDATE/DELETE/
+// SELECT existing) renvoie `finalResult` au lieu du rôle générique.
+function mockRoleAnd(role: string, finalResult: any) {
+  vi.mocked(db.query).mockImplementation(async (sql: string) => {
+    const s = String(sql)
+    if (s.includes('FROM communities'))    return { rows: [{ id: 'community-1' }], rowCount: 1 } as any
+    if (s.includes('community_members'))   return { rows: [{ role }], rowCount: 1 } as any
+    return finalResult
+  })
+}
+
+// PATCH /:slug fait d'abord un SELECT existing (wiki_pages), puis getUserRole
+// (communities + community_members), puis l'UPDATE : router les trois par contenu SQL.
+function mockPatch(existingResult: any, role: string, updateResult?: any) {
+  vi.mocked(db.query).mockImplementation(async (sql: string) => {
+    const s = String(sql)
+    if (s.includes('FROM communities'))          return { rows: [{ id: 'community-1' }], rowCount: 1 } as any
+    if (s.includes('community_members'))         return { rows: [{ role }], rowCount: 1 } as any
+    if (s.includes('SELECT id, author_id FROM')) return existingResult
+    return updateResult
+  })
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /
 // ─────────────────────────────────────────────────────────────────────────────
@@ -238,8 +271,7 @@ describe('POST /api/v1/wiki', () => {
 
   it('rejects member role with 403', async () => {
     mockModuleEnabled()
-    // getUserRole returns 'member'
-    vi.mocked(db.query).mockResolvedValueOnce({ rows: [{ role: 'member' }], rowCount: 1 } as any)
+    mockRole('member')
 
     const app = await buildApp(app => wikiRoutes(app))
     const res = await app.inject({
@@ -255,9 +287,7 @@ describe('POST /api/v1/wiki', () => {
 
   it('allows admin to create a page', async () => {
     mockModuleEnabled()
-    vi.mocked(db.query)
-      .mockResolvedValueOnce({ rows: [{ role: 'admin' }], rowCount: 1 } as any) // getUserRole
-      .mockResolvedValueOnce({ rows: [{ id: 'new-page-uuid', slug: 'architecture-nodyx-ab12cd34' }], rowCount: 1 } as any) // INSERT
+    mockRoleAnd('admin', { rows: [{ id: 'new-page-uuid', slug: 'architecture-nodyx-ab12cd34' }], rowCount: 1 })
 
     const app = await buildApp(app => wikiRoutes(app))
     const res = await app.inject({
@@ -274,9 +304,7 @@ describe('POST /api/v1/wiki', () => {
 
   it('allows moderator to create a page', async () => {
     mockModuleEnabled()
-    vi.mocked(db.query)
-      .mockResolvedValueOnce({ rows: [{ role: 'moderator' }], rowCount: 1 } as any)
-      .mockResolvedValueOnce({ rows: [{ id: 'new-page-uuid', slug: 'architecture-nodyx-cd56ef78' }], rowCount: 1 } as any)
+    mockRoleAnd('moderator', { rows: [{ id: 'new-page-uuid', slug: 'architecture-nodyx-cd56ef78' }], rowCount: 1 })
 
     const app = await buildApp(app => wikiRoutes(app))
     const res = await app.inject({
@@ -292,9 +320,7 @@ describe('POST /api/v1/wiki', () => {
 
   it('allows owner to create a page', async () => {
     mockModuleEnabled()
-    vi.mocked(db.query)
-      .mockResolvedValueOnce({ rows: [{ role: 'owner' }], rowCount: 1 } as any)
-      .mockResolvedValueOnce({ rows: [{ id: 'new-page-uuid', slug: 'architecture-nodyx-gh90ij01' }], rowCount: 1 } as any)
+    mockRoleAnd('owner', { rows: [{ id: 'new-page-uuid', slug: 'architecture-nodyx-gh90ij01' }], rowCount: 1 })
 
     const app = await buildApp(app => wikiRoutes(app))
     const res = await app.inject({
@@ -310,7 +336,7 @@ describe('POST /api/v1/wiki', () => {
 
   it('rejects empty title with 400', async () => {
     mockModuleEnabled()
-    vi.mocked(db.query).mockResolvedValueOnce({ rows: [{ role: 'admin' }], rowCount: 1 } as any)
+    mockRole('admin')
 
     const app = await buildApp(app => wikiRoutes(app))
     const res = await app.inject({
@@ -360,9 +386,7 @@ describe('PATCH /api/v1/wiki/:slug', () => {
 
   it('blocks member who is not the author', async () => {
     mockModuleEnabled()
-    vi.mocked(db.query)
-      .mockResolvedValueOnce({ rows: [{ id: 'page-uuid-1', author_id: 'other-user-uuid' }], rowCount: 1 } as any) // SELECT existing
-      .mockResolvedValueOnce({ rows: [{ role: 'member' }], rowCount: 1 } as any) // getUserRole
+    mockPatch({ rows: [{ id: 'page-uuid-1', author_id: 'other-user-uuid' }], rowCount: 1 }, 'member')
 
     const app = await buildApp(app => wikiRoutes(app))
     const res = await app.inject({
@@ -378,10 +402,11 @@ describe('PATCH /api/v1/wiki/:slug', () => {
 
   it('allows author (member) to edit their own page', async () => {
     mockModuleEnabled()
-    vi.mocked(db.query)
-      .mockResolvedValueOnce({ rows: [{ id: 'page-uuid-1', author_id: 'member-uuid' }], rowCount: 1 } as any) // SELECT existing (author = member)
-      .mockResolvedValueOnce({ rows: [{ role: 'member' }], rowCount: 1 } as any)   // getUserRole
-      .mockResolvedValueOnce({ rows: [{ slug: FAKE_PAGE.slug }], rowCount: 1 } as any) // UPDATE
+    mockPatch(
+      { rows: [{ id: 'page-uuid-1', author_id: 'member-uuid' }], rowCount: 1 },
+      'member',
+      { rows: [{ slug: FAKE_PAGE.slug }], rowCount: 1 },
+    )
 
     const app = await buildApp(app => wikiRoutes(app))
     const res = await app.inject({
@@ -397,10 +422,11 @@ describe('PATCH /api/v1/wiki/:slug', () => {
 
   it('allows admin to edit any page', async () => {
     mockModuleEnabled()
-    vi.mocked(db.query)
-      .mockResolvedValueOnce({ rows: [{ id: 'page-uuid-1', author_id: 'other-uuid' }], rowCount: 1 } as any)
-      .mockResolvedValueOnce({ rows: [{ role: 'admin' }], rowCount: 1 } as any)
-      .mockResolvedValueOnce({ rows: [{ slug: FAKE_PAGE.slug }], rowCount: 1 } as any)
+    mockPatch(
+      { rows: [{ id: 'page-uuid-1', author_id: 'other-uuid' }], rowCount: 1 },
+      'admin',
+      { rows: [{ slug: FAKE_PAGE.slug }], rowCount: 1 },
+    )
 
     const app = await buildApp(app => wikiRoutes(app))
     const res = await app.inject({
@@ -432,7 +458,7 @@ describe('DELETE /api/v1/wiki/:slug', () => {
 
   it('blocks member with 403', async () => {
     mockModuleEnabled()
-    vi.mocked(db.query).mockResolvedValueOnce({ rows: [{ role: 'member' }], rowCount: 1 } as any)
+    mockRole('member')
     const app = await buildApp(app => wikiRoutes(app))
     const res = await app.inject({
       method: 'DELETE', url: `/${FAKE_PAGE.slug}`,
@@ -444,9 +470,7 @@ describe('DELETE /api/v1/wiki/:slug', () => {
   it('blocks owner if role check fails (owner IS allowed)', async () => {
     // owner SHOULD be allowed — verify the fix works
     mockModuleEnabled()
-    vi.mocked(db.query)
-      .mockResolvedValueOnce({ rows: [{ role: 'owner' }], rowCount: 1 } as any)
-      .mockResolvedValueOnce({ rows: [], rowCount: 1 } as any) // DELETE returns rowCount 1
+    mockRoleAnd('owner', { rows: [], rowCount: 1 })
 
     const app = await buildApp(app => wikiRoutes(app))
     const res = await app.inject({
@@ -459,9 +483,7 @@ describe('DELETE /api/v1/wiki/:slug', () => {
 
   it('allows admin to delete', async () => {
     mockModuleEnabled()
-    vi.mocked(db.query)
-      .mockResolvedValueOnce({ rows: [{ role: 'admin' }], rowCount: 1 } as any)
-      .mockResolvedValueOnce({ rows: [], rowCount: 1 } as any)
+    mockRoleAnd('admin', { rows: [], rowCount: 1 })
 
     const app = await buildApp(app => wikiRoutes(app))
     const res = await app.inject({
@@ -473,9 +495,7 @@ describe('DELETE /api/v1/wiki/:slug', () => {
 
   it('allows moderator to delete', async () => {
     mockModuleEnabled()
-    vi.mocked(db.query)
-      .mockResolvedValueOnce({ rows: [{ role: 'moderator' }], rowCount: 1 } as any)
-      .mockResolvedValueOnce({ rows: [], rowCount: 1 } as any)
+    mockRoleAnd('moderator', { rows: [], rowCount: 1 })
 
     const app = await buildApp(app => wikiRoutes(app))
     const res = await app.inject({
@@ -487,9 +507,7 @@ describe('DELETE /api/v1/wiki/:slug', () => {
 
   it('returns 404 when page does not exist', async () => {
     mockModuleEnabled()
-    vi.mocked(db.query)
-      .mockResolvedValueOnce({ rows: [{ role: 'admin' }], rowCount: 1 } as any)
-      .mockResolvedValueOnce({ rows: [], rowCount: 0 } as any) // DELETE found nothing
+    mockRoleAnd('admin', { rows: [], rowCount: 0 })
 
     const app = await buildApp(app => wikiRoutes(app))
     const res = await app.inject({

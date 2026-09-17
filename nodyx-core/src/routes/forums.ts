@@ -4,6 +4,7 @@ import { rehostExternalImages } from '../services/inlineImageRehost'
 import { validate } from '../middleware/validate'
 import { rateLimit } from '../middleware/rateLimit'
 import { requireAuth, optionalAuth } from '../middleware/auth'
+import { getInstanceCommunityId } from '../middleware/adminOnly'
 import * as CommunityModel from '../models/community'
 import * as ThreadModel from '../models/thread'
 import * as PostModel from '../models/post'
@@ -44,6 +45,25 @@ async function isAdmin(userId: string, threadId: string): Promise<boolean> {
      WHERE t.id = $1 AND cm.user_id = $2
      LIMIT 1`,
     [threadId, userId]
+  )
+  const role = rows[0]?.role
+  return role === 'owner' || role === 'admin'
+}
+
+// `is_featured` pilote la vitrine PUBLIQUE de l'instance (GET
+// /instance/threads/featured, sans filtre de communauté) et l'annonce à
+// l'annuaire fédéré : une portée strictement plus large que "admin de la
+// communauté de ce fil". Sur une architecture "one instance = one community"
+// les deux devraient toujours coïncider, mais POST /communities permettait
+// jusqu'ici à n'importe qui de se créer sa propre communauté et d'y être
+// owner : isAdmin() ci-dessus l'aurait alors laissé passer (trouvé en audit
+// le 16/09). Vérification indépendante, scopée à LA communauté de l'instance.
+async function isInstanceAdmin(userId: string): Promise<boolean> {
+  const communityId = await getInstanceCommunityId()
+  if (!communityId) return false
+  const { rows } = await db.query<{ role: string }>(
+    `SELECT role FROM community_members WHERE community_id = $1 AND user_id = $2`,
+    [communityId, userId]
   )
   const role = rows[0]?.role
   return role === 'owner' || role === 'admin'
@@ -513,13 +533,21 @@ app.get('/threads', {
       return reply.send({ thread: updated })
     }
 
-    // Pin / lock / feature are restricted to owner or admin (not moderator).
-    // is_featured décide de l'apparition en vitrine publique et de l'annonce à
-    // l'annuaire fédéré : même exigence que pin/lock.
-    if (body.is_pinned !== undefined || body.is_locked !== undefined || body.is_featured !== undefined) {
+    // Pin / lock : restreint à owner/admin DE LA COMMUNAUTÉ DU FIL (une action
+    // de modération locale a du sens dans n'importe quelle communauté).
+    if (body.is_pinned !== undefined || body.is_locked !== undefined) {
       const adminAccess = await isAdmin(userId, threadId)
       if (!adminAccess) {
-        return reply.code(403).send({ error: 'Only admins and owners can pin, lock or feature threads', code: 'FORBIDDEN' })
+        return reply.code(403).send({ error: 'Only admins and owners can pin or lock threads', code: 'FORBIDDEN' })
+      }
+    }
+
+    // Feature : restreint à owner/admin DE L'INSTANCE, jamais "de n'importe
+    // quelle communauté", cf isInstanceAdmin ci-dessus.
+    if (body.is_featured !== undefined) {
+      const instanceAdmin = await isInstanceAdmin(userId)
+      if (!instanceAdmin) {
+        return reply.code(403).send({ error: 'Only the instance admin can feature threads', code: 'FORBIDDEN' })
       }
     }
 

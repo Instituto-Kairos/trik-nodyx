@@ -8,6 +8,7 @@ import { db, redis } from './config/database'
 import { Server } from 'socket.io'
 import { NODYX_VERSION } from './utils/version'
 import * as NotificationModel from './models/notification'
+import { getInstanceCommunityId } from './middleware/adminOnly'
 
 const PING_INTERVAL_MS         = 5  * 60 * 1000        // 5 minutes
 const ASSET_PUSH_INTERVAL_MS   = 60 * 60 * 1000        // 1 heure
@@ -143,6 +144,14 @@ export async function announceThreadsToDirectory() {
   if (!token) return
 
   try {
+    // Scope à LA communauté de l'instance : sans lui, un fil "featured" d'une
+    // communauté qu'un utilisateur se serait fabriquée (POST /communities,
+    // désormais admin-only) aurait pu partir en fédération. is_featured est
+    // désormais lui-même gardé au niveau instance (routes/forums.ts), ceci est
+    // une deuxième barrière, pas la seule (trouvé en audit le 16/09).
+    const communityId = await getInstanceCommunityId()
+    if (!communityId) return
+
     const { rows } = await db.query<{
       id: string; slug: string | null; title: string; category_id: string; category_slug: string | null;
       excerpt: string | null; reply_count: number; tags: string[]
@@ -162,8 +171,10 @@ export async function announceThreadsToDirectory() {
        LEFT JOIN categories c ON c.id = t.category_id
        WHERE t.is_indexed = true
          AND t.is_featured = true
+         AND c.community_id = $1
          AND (t.last_indexed_at IS NULL OR t.updated_at > t.last_indexed_at)
-       LIMIT 100`
+       LIMIT 100`,
+      [communityId]
     )
 
     if (rows.length === 0) return

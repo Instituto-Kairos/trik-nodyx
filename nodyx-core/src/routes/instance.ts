@@ -453,7 +453,10 @@ export default async function instanceRoutes(app: FastifyInstance) {
     const limit = Math.min(10, Math.max(1, parseInt(q.limit ?? '5') || 5))
     const categoryId = q.category_id?.trim() || undefined
 
-    const rows = await ThreadModel.getFeatured(limit, categoryId)
+    const communityId = await getCommunityId()
+    if (!communityId) return reply.send({ articles: [] })
+
+    const rows = await ThreadModel.getFeatured(limit, communityId, categoryId)
 
     const articles = rows.map(t => ({
       id:             t.id,
