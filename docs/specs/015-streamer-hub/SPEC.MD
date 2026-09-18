@@ -53,7 +53,7 @@ Twitch peut deprecate des endpoints / events sans grand préavis. On accepte une
 
 ### 2.1 Module Nodyx activable
 
-Le Streamer Hub s'inscrit dans le système de modules de Nodyx (cf [`docs/specs/MODULE_SYSTEM`](../MODULE_SYSTEM.md) / `.claude/ideas/MODULE_SYSTEM.md`). L'admin de l'instance l'active depuis `/admin/modules`. Une fois actif :
+Le Streamer Hub s'inscrit dans le système de modules de Nodyx (cf [Module System](https://nodyx.dev/module-system)). L'admin de l'instance l'active depuis `/admin/modules`. Une fois actif :
 - L'onglet **Streamer Hub** apparaît dans la sidebar admin
 - Le menu utilisateur expose une option "Connecter mon compte Twitch" (pour les viewers)
 - L'extension Twitch peut être générée depuis `/admin/streamer-hub/extension`

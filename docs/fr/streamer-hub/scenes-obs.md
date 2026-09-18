@@ -41,7 +41,7 @@ Le nom doit être unique pour ton compte. Pour repartir d'une scène existante, 
    - **📹 Source vidéo** : webcam, capture jeu ou image. Placeholder en Phase A ; la vraie source OBS sera liée en Phase B.
    - **🔔 Alert Box** : notifications follow / sub / raid / cheer.
    - **📰 Event Ticker** : bandeau d'events qui défile.
-   - **🎵 Playlist** : musique d'ambiance en autoplay loop (voir [Soundboard & Playlists](soundboard.md)).
+   - **🎵 Playlist** : musique d'ambiance en autoplay loop (voir [Soundboard & Playlists](https://nodyx.dev/streamer-hub#soundboard)).
    - **🔊 Soundboard OSD** : carte affichée quand un son du Stream Deck joue.
    - **🎯 Goal Bar** : barre d'objectif (followers, subs…).
    - **🏆 Leaderboard** : top viewers, chat ou donateurs.

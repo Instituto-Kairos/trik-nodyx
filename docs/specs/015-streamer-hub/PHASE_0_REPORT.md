@@ -63,7 +63,6 @@ Le spike a validé bout-en-bout tout ce qui était testable côté code et infra
 ## Liens
 
 - Spec : [SPEC.MD](SPEC.MD)
-- Guide de déploiement spike : [PHASE_0_SPIKE.md](PHASE_0_SPIKE.md)
 - Branche : <https://github.com/Pokled/nodyx/tree/feat/streamer-hub-spike>
 - Commits clés du spike :
   - `c94baa0` scaffold initial
