@@ -103,6 +103,15 @@
 			{/each}
 		</div>
 	{/if}
+
+	<a href="/musique/playlists/rock-alternatif-2000s" class="mus-playlist-link">
+		<span class="mus-playlist-icon">🎧</span>
+		<span class="mus-playlist-text">
+			<span class="mus-playlist-title">Rock / Alternative — 2000s</span>
+			<span class="mus-playlist-sub">{tFn('music.playlist.track_count').replace('{{n}}', '50')}</span>
+		</span>
+		<span class="mus-playlist-arrow">→</span>
+	</a>
 </div>
 
 <style>
@@ -259,4 +268,25 @@
 		font-size: 0.6875rem;
 		color: rgba(255, 255, 255, 0.3);
 	}
+
+	.mus-playlist-link {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		margin-top: 24px;
+		padding: 14px 16px;
+		background: rgba(255, 255, 255, 0.03);
+		border: 1px solid rgba(255, 255, 255, 0.06);
+		text-decoration: none;
+		transition: background 0.15s, border-color 0.15s;
+	}
+	.mus-playlist-link:hover {
+		background: rgba(139, 92, 246, 0.08);
+		border-color: rgba(139, 92, 246, 0.25);
+	}
+	.mus-playlist-icon { font-size: 1.25rem; flex: none; }
+	.mus-playlist-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+	.mus-playlist-title { font-size: 0.8125rem; font-weight: 600; color: #fff; }
+	.mus-playlist-sub { font-size: 0.6875rem; color: rgba(255, 255, 255, 0.4); }
+	.mus-playlist-arrow { color: rgba(255, 255, 255, 0.3); flex: none; }
 </style>
