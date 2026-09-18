@@ -25,6 +25,7 @@ Forum + Chat + Voice + P2P + Canvas + Homepage Builder + Streamer Hub, one serve
      du jour où quelqu'un a pensé à le mettre à jour. -->
 [![Translated live](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fnodyx.org%2Ftranslate%2Fprogress.json&query=%24.overallPct&suffix=%25&label=translated%20live&color=6d76f5)](https://nodyx.org/translate)
 [![Federated instances](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fnodyx.org%2Fapi%2Fdirectory&query=%24.instances.length&label=federated%20instances%20live&color=2ece93)](https://nodyx.org/discover)
+[![Voice benchmark](https://img.shields.io/badge/voice%20benchmark-~600%20people%20%2F%20server-e6a13c)](https://nodyx.org/benchmark/pire-cas.html)
 
 <sub>If Nodyx resonates with you, a star helps others find it, and keeps us going.</sub>
 
