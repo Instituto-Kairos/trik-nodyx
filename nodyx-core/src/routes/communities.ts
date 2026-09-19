@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { validate } from '../middleware/validate'
 import { rateLimit } from '../middleware/rateLimit'
 import { requireAuth } from '../middleware/auth'
+import { adminOnly } from '../middleware/adminOnly'
 import * as CommunityModel from '../models/community'
 import * as GradeModel from '../models/grade'
 import { db } from '../config/database'
@@ -44,8 +45,15 @@ export default async function communityRoutes(app: FastifyInstance) {
   })
 
   // POST /api/v1/communities
+  // Réservé à l'admin de l'instance : Nodyx est "une instance = une
+  // communauté, sans exception" (CLAUDE.md), et TOUT le reste du code
+  // résout "la" communauté comme la plus ancienne (cf getInstanceCommunityId).
+  // Ouvert à tout utilisateur authentifié jusqu'ici, ça ne servait aucun usage
+  // légitime (la vraie création d'instance passe par scripts/seed.ts) et
+  // permettait de se fabriquer un rôle 'owner' exploitable ailleurs (fils mis
+  // en avant, wiki, trouvé en audit le 16/09).
   app.post('/', {
-    preHandler: [rateLimit, requireAuth, validate({ body: CreateBody })],
+    preHandler: [rateLimit, adminOnly, validate({ body: CreateBody })],
   }, async (request, reply) => {
     const data = request.body as z.infer<typeof CreateBody>
 

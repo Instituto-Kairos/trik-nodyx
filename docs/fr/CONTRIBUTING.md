@@ -152,7 +152,7 @@ CONTRIBUTING.md , ce guide
 - Si un concept n a pas d equivalent dans ta langue, garde le terme anglais
 - Les noms propres (Nodyx, NodyxPoints, etc.) ne se traduisent pas
 
-Les traducteurs reçoivent une étoile et leur place dans [CONTRIBUTORS.md](../../CONTRIBUTORS.md), comme tous les autres contributeurs.
+Les traducteurs reçoivent une étoile et leur place dans [CONTRIBUTORS.md](https://github.com/Pokled/nodyx/blob/main/CONTRIBUTORS.md), comme tous les autres contributeurs.
 
 ---
 

@@ -176,13 +176,13 @@ brew install caddy        # macOS
 caddy run --config nodyx-core/scripts/Caddyfile.example
 ```
 
-An annotated example is available in [`nodyx-core/scripts/Caddyfile.example`](../../nodyx-core/scripts/Caddyfile.example).
+An annotated example is available in [`nodyx-core/scripts/Caddyfile.example`](https://github.com/Pokled/nodyx/blob/main/nodyx-core/scripts/Caddyfile.example).
 
 ---
 
 ## Environment variables
 
-See [`nodyx-core/.env.example`](../../nodyx-core/.env.example) for the full annotated list.
+See [`nodyx-core/.env.example`](https://github.com/Pokled/nodyx/blob/main/nodyx-core/.env.example) for the full annotated list.
 
 | Variable | Required | Description |
 |---|---|---|

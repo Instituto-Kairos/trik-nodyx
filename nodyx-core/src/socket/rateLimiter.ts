@@ -35,6 +35,7 @@ export const RATE_RULES: Record<string, RuleConfig[]> = {
   'presence:set_status':  [{ limit: 2,  windowMs: 5_000  }],
   'whisper:message':      [{ limit: 5,  windowMs: 1_000  }],
   'whisper:typing':       [{ limit: 3,  windowMs: 1_000  }],
+  'whisper:join':         [{ limit: 10, windowMs: 5_000  }],
   'voice:speaking':       [{ limit: 10, windowMs: 1_000  }],
   // muet/sourd/partage : gestes humains, rares. Borné car chaque envoi rediffuse
   // le roster du canal (fetchSockets), donc on ne veut pas que ça puisse spammer.
@@ -57,6 +58,43 @@ export const RATE_RULES: Record<string, RuleConfig[]> = {
   'voice:sfu_publications': [{ limit: 10, windowMs: 10_000 }],
   'voice:sfu_audit':        [{ limit: 20, windowMs: 10_000 }],
   'voice:sfu_heartbeat':    [{ limit: 6,  windowMs: 10_000 }],
+  'voice:sfu_unpublish':    [{ limit: 10, windowMs: 10_000 }],
+  'voice:sfu_resume':       [{ limit: 20, windowMs: 10_000 }],
+  'voice:sfu_leave':        [{ limit: 10, windowMs: 10_000 }],
+
+  // Trouvailles de l'audit couche temps réel du 16/09 : ces events appelaient
+  // déjà checkRateLimit (ou auraient dû), mais leur clé n'existait pas ici,
+  // checkRateLimit(userId, clé_absente) renvoie 0 (toujours autorisé) sans
+  // jamais le signaler, donc l'appel donnait une fausse impression de
+  // protection. Voir le test rateLimiter-coverage.test.ts qui vérifie
+  // désormais que toute clé appelée dans src/socket/ est enregistrée ici.
+  'dm:edit':                 [{ limit: 5,  windowMs: 2_000  }],
+  'dm:react':                [{ limit: 10, windowMs: 1_000  }],
+  'dm:read':                 [{ limit: 10, windowMs: 2_000  }],
+  'voice:kick':              [{ limit: 5,  windowMs: 5_000  }],
+  'voice:leave':             [{ limit: 10, windowMs: 5_000  }],
+  'voice:request_snapshot':  [{ limit: 5,  windowMs: 5_000  }],
+  'voice:screenshare_intent': [{ limit: 5, windowMs: 5_000  }],
+  // Signalisation WebRTC point-à-point : offer/answer rares (une négociation
+  // par connexion), ice trickle plus fréquent (plusieurs candidats).
+  'voice:offer':  [{ limit: 10, windowMs: 5_000 }],
+  'voice:answer': [{ limit: 10, windowMs: 5_000 }],
+  'voice:ice':    [{ limit: 40, windowMs: 5_000 }],
+  'p2p:offer':    [{ limit: 10, windowMs: 5_000 }],
+  'p2p:answer':   [{ limit: 10, windowMs: 5_000 }],
+  'p2p:ice':      [{ limit: 40, windowMs: 5_000 }],
+  // Tableau blanc collaboratif : op est la frappe humaine la plus fréquente
+  // (tracé au trait), cursor rediffuse à ~30-60 Hz côté client donc large.
+  'canvas:op':     [{ limit: 40, windowMs: 1_000  }],
+  'canvas:clear':  [{ limit: 3,  windowMs: 5_000  }],
+  'canvas:cursor': [{ limit: 30, windowMs: 1_000  }],
+  'streamer-hub:join': [{ limit: 5,  windowMs: 5_000  }],
+  'chat:watch':        [{ limit: 10, windowMs: 5_000  }],
+  'chat:delete':       [{ limit: 10, windowMs: 5_000  }],
+  'chat:pin':          [{ limit: 5,  windowMs: 5_000  }],
+  // Namespace /overlay : authentifié par token d'URL (page OBS publique),
+  // pas par JWT, plus exposé qu'un socket utilisateur classique.
+  'overlay:audio_ended': [{ limit: 5, windowMs: 5_000 }],
 }
 
 // Clé composite : `${userId}::${eventKey}`

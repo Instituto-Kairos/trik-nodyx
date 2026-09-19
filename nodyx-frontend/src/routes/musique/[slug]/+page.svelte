@@ -1,0 +1,628 @@
+<script lang="ts">
+	import { page } from '$app/state';
+	import { t } from '$lib/i18n';
+	import type { PageData } from './$types';
+
+	const tFn = $derived($t);
+
+	let { data }: { data: PageData } = $props();
+
+	interface Comment { id: string; author_name: string; body: string; created_at: string }
+	interface Category { id: string; slug: string; title: string; description: string | null; license_note: string | null; image_url: string | null; views: number }
+	interface Track { id: string; title: string; description: string | null; audio_url: string; image_url: string | null; likes: number; duration_seconds: number | null; comments: Comment[] }
+
+	function formatDuration(seconds: number | null): string {
+		if (!seconds || seconds <= 0) return '';
+		const m = Math.floor(seconds / 60);
+		const s = Math.round(seconds % 60).toString().padStart(2, '0');
+		return `${m}:${s}`;
+	}
+	interface Settings { title: string | null; subtitle: string | null; banner_url: string | null; }
+
+	const category = $derived(data.category as Category);
+	const tracks   = $derived(data.tracks as Track[]);
+	const settings = $derived(data.settings as Settings | null);
+	const totalComments = $derived(tracks.reduce((sum, t) => sum + (commentsByTrack[t.id] ?? t.comments).length, 0));
+
+	// ?t=<id> (voir +page.server.ts) : le lien de partage d'un morceau precis
+	// porte son propre id, pour que l'apercu Discord montre CE morceau (titre,
+	// image) plutot que celui de la categorie entiere. Contenu affiche au
+	// visiteur humain inchange, seules les balises og: en dependent.
+	const featuredTrack = $derived(tracks.find(t => t.id === data.featuredTrackId) ?? null);
+
+	// Discord/Twitter/Facebook exigent une URL absolue et n'exécutent aucun JS :
+	// on résout ici, côté SSR, jamais via window.
+	function absolutize(url: string | null | undefined, origin: string): string | null {
+		if (!url) return null;
+		if (/^https?:\/\//.test(url)) return url;
+		return origin + url;
+	}
+
+	// Couverture du morceau partagé (si un lien de morceau précis) → couverture
+	// de la catégorie → image du 1er morceau → bannière de page → bannière/logo
+	// de communauté → image par défaut du site.
+	const shareImage = $derived(
+		absolutize(
+			featuredTrack?.image_url ?? category.image_url ?? tracks[0]?.image_url ?? settings?.banner_url ?? (page.data as any).communityBannerUrl ?? (page.data as any).communityLogoUrl,
+			page.url.origin,
+		) ?? `${page.url.origin}/og-image.jpg`,
+	);
+
+	const shareTitle = $derived(featuredTrack ? `${featuredTrack.title} · ${category.title}` : category.title);
+
+	const richDescription = $derived(
+		featuredTrack
+			? [
+				featuredTrack.description,
+				formatDuration(featuredTrack.duration_seconds),
+				tFn('music.from_category').replace('{{category}}', category.title),
+			].filter(Boolean).join(' · ')
+			: [
+				category.description,
+				`${tFn(tracks.length === 1 ? 'music.track_count_one' : 'music.track_count_plural').replace('{{n}}', String(tracks.length))}${category.views > 0 ? ' · ' + tFn(category.views === 1 ? 'music.views_one' : 'music.views_plural').replace('{{n}}', String(category.views)) : ''}`,
+			].filter(Boolean).join(' · ')
+	);
+
+	let copiedId = $state<string | null>(null);
+
+	// Commentaires publics par morceau : sert le vrai usage (un développeur
+	// destinataire laisse un avis), aucun compte requis. Affichés d'emblée,
+	// deja fournis avec la categorie (pas de clic pour les revéler, pas
+	// d'aller-retour supplementaire au chargement).
+	const COMMENT_NAME_KEY = 'nodyx-music-comment-name';
+	let commentsByTrack = $state<Record<string, Comment[]>>({});
+	let commentName    = $state('');
+	let commentBodies  = $state<Record<string, string>>({});
+	let commentBusy    = $state<string | null>(null);
+	let commentError   = $state<string | null>(null);
+
+	$effect(() => {
+		try {
+			commentName = localStorage.getItem(COMMENT_NAME_KEY) ?? '';
+		} catch { /* localStorage indisponible : le champ reste simplement vide */ }
+	});
+
+	function commentsFor(track: Track): Comment[] {
+		return commentsByTrack[track.id] ?? track.comments;
+	}
+
+	async function submitComment(track: Track) {
+		const name = commentName.trim();
+		const body = (commentBodies[track.id] ?? '').trim();
+		if (!name || !body) return;
+		commentBusy = track.id;
+		commentError = null;
+		try {
+			const res = await fetch(`/api/v1/music/tracks/${track.id}/comments`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ author_name: name, body }),
+			});
+			if (!res.ok) {
+				const err = await res.json().catch(() => ({}));
+				throw new Error(err.error ?? tFn('music.comment_error'));
+			}
+			const { comment } = await res.json();
+			commentsByTrack = { ...commentsByTrack, [track.id]: [comment, ...commentsFor(track)] };
+			commentBodies = { ...commentBodies, [track.id]: '' };
+			try { localStorage.setItem(COMMENT_NAME_KEY, name); } catch { /* pas bloquant */ }
+		} catch (e) {
+			commentError = (e as Error).message;
+		} finally {
+			commentBusy = null;
+		}
+	}
+
+	function formatCommentDate(iso: string): string {
+		return new Date(iso).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+	}
+
+	// "J'aime" public et anonyme : aucun compte requis (page pensee pour des
+	// visiteurs venus de Discord). La garde "un like par appareil" vit dans
+	// le localStorage du navigateur, jamais cote serveur : rien qui identifie
+	// qui a aime quoi.
+	const LIKED_KEY = 'nodyx-music-liked';
+	let likedTracks = $state<Set<string>>(new Set());
+	let likeCounts  = $state<Record<string, number>>({});
+
+	$effect(() => {
+		try {
+			const raw = localStorage.getItem(LIKED_KEY);
+			if (raw) likedTracks = new Set(JSON.parse(raw));
+		} catch { /* localStorage indisponible : le bouton reste simplement cliquable */ }
+	});
+
+	function likesFor(track: Track): number {
+		return likeCounts[track.id] ?? track.likes;
+	}
+
+	async function likeTrack(track: Track) {
+		if (likedTracks.has(track.id)) return;
+		likeCounts = { ...likeCounts, [track.id]: likesFor(track) + 1 };
+		likedTracks = new Set(likedTracks).add(track.id);
+		try { localStorage.setItem(LIKED_KEY, JSON.stringify([...likedTracks])); } catch { /* tant pis, pas bloquant */ }
+		try {
+			const res = await fetch(`/api/v1/music/tracks/${track.id}/like`, { method: 'POST' });
+			if (res.ok) {
+				const json = await res.json();
+				likeCounts = { ...likeCounts, [track.id]: json.likes };
+			}
+		} catch { /* le compte optimiste reste affiche */ }
+	}
+
+	async function copyTrackLink(id: string) {
+		// ?t=<id> donne son propre apercu Discord au morceau (voir shareTitle/
+		// shareImage plus haut) ; #<id> fait defiler jusqu'a lui a l'ouverture.
+		const url = `${location.origin}${location.pathname}?t=${id}#${id}`;
+		try {
+			await navigator.clipboard.writeText(url);
+			copiedId = id;
+			setTimeout(() => { if (copiedId === id) copiedId = null; }, 1800);
+		} catch { /* clipboard indisponible : rien d'affiché */ }
+	}
+</script>
+
+<svelte:head>
+	<title>{shareTitle} · {tFn('music.title')}</title>
+	<meta name="description" content={richDescription} />
+	<meta property="og:title" content={shareTitle} />
+	<meta property="og:description" content={richDescription} />
+	<meta property="og:type" content="website" />
+	<meta property="og:url" content={page.url.href} />
+	<meta property="og:image" content={shareImage} />
+	<meta name="twitter:image" content={shareImage} />
+	<meta property="og:site_name" content={(page.data as any).communityName ?? 'Nodyx'} />
+</svelte:head>
+
+<div class="mus-header">
+	<a class="mus-back" href="/musique">← {tFn('music.title')}</a>
+</div>
+
+<div class="mus-body">
+	<div class="mus-banner">
+		{#if category.image_url}
+			<img src={category.image_url} alt="" class="mus-banner-img" />
+		{:else}
+			<div class="mus-banner-fallback">
+				<svg class="mus-banner-icon" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z" />
+				</svg>
+			</div>
+		{/if}
+		<div class="mus-banner-text">
+			<h1 class="mus-title">{category.title}</h1>
+			{#if category.description}
+				<p class="mus-desc">{category.description}</p>
+			{/if}
+			<span class="mus-badge">
+				{tFn(tracks.length === 1 ? 'music.track_count_one' : 'music.track_count_plural').replace('{{n}}', String(tracks.length))}
+			</span>
+			{#if category.views > 0}
+				<span class="mus-views">{tFn(category.views === 1 ? 'music.views_one' : 'music.views_plural').replace('{{n}}', String(category.views))}</span>
+			{/if}
+			{#if totalComments > 0}
+				<span class="mus-views">{tFn(totalComments === 1 ? 'music.comment_count_one' : 'music.comment_count_plural').replace('{{n}}', String(totalComments))}</span>
+			{/if}
+		</div>
+	</div>
+
+	{#if tracks.length === 0}
+		<p class="mus-empty">{tFn('music.empty_category')}</p>
+	{:else}
+		<div class="mus-tracklist">
+			{#each tracks as track, i (track.id)}
+				<article class="mus-track" id={track.id}>
+					<span class="mus-track-num">{i + 1}</span>
+					{#if track.image_url ?? category.image_url}
+						<img src={track.image_url ?? category.image_url} alt="" class="mus-track-thumb" />
+					{/if}
+					<div class="mus-track-main">
+						<div class="mus-track-head">
+							<p class="mus-track-title">
+								{track.title}
+								{#if formatDuration(track.duration_seconds)}
+									<span class="mus-track-duration">{formatDuration(track.duration_seconds)}</span>
+								{/if}
+							</p>
+							<span class="mus-track-actions">
+								<button type="button" class="mus-share-btn mus-like-btn" class:mus-like-btn--active={likedTracks.has(track.id)}
+									onclick={() => likeTrack(track)} disabled={likedTracks.has(track.id)}
+									aria-label={tFn('music.like_track')} title={tFn('music.like_track')}>
+									<svg class="mus-icon" fill={likedTracks.has(track.id) ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+										<path stroke-linecap="round" stroke-linejoin="round" d="M4.318 6.318a4.5 4.5 0 016.364 0L12 7.636l1.318-1.318a4.5 4.5 0 116.364 6.364L12 21l-7.682-8.318a4.5 4.5 0 010-6.364z" />
+									</svg>
+									{#if likesFor(track) > 0}{likesFor(track)}{/if}
+								</button>
+								{#if category.license_note}
+									<a class="mus-share-btn" href={`/api/v1/music/categories/${category.id}/license.pdf`}>
+										<svg class="mus-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+											<path stroke-linecap="round" stroke-linejoin="round" d="M12 4v12m0 0l-4-4m4 4l4-4M4 20h16" />
+										</svg>
+										{tFn('music.download_license')}
+									</a>
+								{/if}
+								<button type="button" class="mus-share-btn" onclick={() => copyTrackLink(track.id)}>
+									<svg class="mus-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+										{#if copiedId === track.id}
+											<path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+										{:else}
+											<path stroke-linecap="round" stroke-linejoin="round" d="M8.684 13.342a4 4 0 000-2.684m0 2.684a4 4 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a4 4 0 105.368-5.368 4 4 0 00-5.368 5.368zm0 6.684a4 4 0 105.368 5.368 4 4 0 00-5.368-5.368z" />
+										{/if}
+									</svg>
+									{copiedId === track.id ? tFn('music.link_copied') : tFn('music.share_track')}
+								</button>
+							</span>
+						</div>
+						{#if track.description}
+							<p class="mus-track-desc">{track.description}</p>
+						{/if}
+						<nodyx-audio-player
+							src={track.audio_url}
+							track-title={track.title}
+							cover={track.image_url ?? category.image_url ?? undefined}
+							download="1"
+						></nodyx-audio-player>
+
+						<div class="mus-comments">
+							{#if commentError}
+								<p class="mus-comment-error">{commentError}</p>
+							{/if}
+							{#each commentsFor(track) as comment (comment.id)}
+								<div class="mus-comment">
+									<div class="mus-comment-head">
+										<span class="mus-comment-author">{comment.author_name}</span>
+										<span class="mus-comment-date">{formatCommentDate(comment.created_at)}</span>
+									</div>
+									<p class="mus-comment-body">{comment.body}</p>
+								</div>
+							{:else}
+								<p class="mus-comment-empty">{tFn('music.no_comments')}</p>
+							{/each}
+
+							<div class="mus-comment-form">
+								<input type="text" bind:value={commentName} maxlength="60"
+									placeholder={tFn('music.comment_name_ph')}
+									class="mus-comment-input mus-comment-input--name" />
+								<textarea rows="2" maxlength="1000"
+									value={commentBodies[track.id] ?? ''}
+									oninput={(e) => { commentBodies = { ...commentBodies, [track.id]: (e.target as HTMLTextAreaElement).value }; }}
+									placeholder={tFn('music.comment_body_ph')}
+									class="mus-comment-input"></textarea>
+								<button type="button" class="mus-comment-submit"
+									disabled={commentBusy === track.id || !commentName.trim() || !(commentBodies[track.id] ?? '').trim()}
+									onclick={() => submitComment(track)}>
+									{commentBusy === track.id ? tFn('common.loading') : tFn('music.comment_send')}
+								</button>
+							</div>
+						</div>
+					</div>
+				</article>
+			{/each}
+		</div>
+	{/if}
+</div>
+
+<style>
+	.mus-header {
+		position: sticky;
+		top: 0;
+		z-index: 20;
+		background: rgba(9, 9, 15, 0.92);
+		backdrop-filter: blur(16px);
+		border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+		padding: 16px 28px;
+	}
+
+	.mus-back {
+		font-size: 0.75rem;
+		color: rgba(255, 255, 255, 0.45);
+		text-decoration: none;
+		transition: color 0.15s;
+	}
+	.mus-back:hover { color: var(--nx-accent-2-soft2); }
+
+	.mus-body {
+		padding: 24px 28px 48px;
+	}
+
+	/* ── Banner ───────────────────────────────────────────────────────────── */
+	.mus-banner {
+		display: flex;
+		align-items: flex-end;
+		gap: 24px;
+		padding-bottom: 28px;
+		margin-bottom: 8px;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+	}
+
+	.mus-banner-img {
+		flex: none;
+		width: 132px;
+		height: 132px;
+		border-radius: 8px;
+		object-fit: cover;
+		box-shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.6);
+	}
+
+	.mus-banner-fallback {
+		flex: none;
+		width: 132px;
+		height: 132px;
+		border-radius: 8px;
+		background: rgba(255, 255, 255, 0.03);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.mus-banner-icon {
+		width: 40px;
+		height: 40px;
+		color: rgba(255, 255, 255, 0.15);
+	}
+
+	.mus-banner-text {
+		min-width: 0;
+	}
+
+	.mus-title {
+		font-size: 1.75rem;
+		font-weight: 800;
+		color: #fff;
+		margin: 0 0 8px;
+		letter-spacing: -0.01em;
+	}
+
+	.mus-desc {
+		font-size: 0.8125rem;
+		color: rgba(255, 255, 255, 0.4);
+		max-width: 60ch;
+		margin: 0 0 8px;
+	}
+
+	.mus-badge {
+		display: inline-flex;
+		align-items: center;
+		padding: 2px 7px;
+		font-size: 0.6875rem;
+		font-weight: 500;
+		border: 1px solid rgba(139, 92, 246, 0.25);
+		background: rgba(139, 92, 246, 0.1);
+		color: var(--nx-accent-2-soft2);
+	}
+
+	.mus-views {
+		font-size: 0.6875rem;
+		color: rgba(255, 255, 255, 0.3);
+	}
+
+	.mus-empty {
+		color: rgba(255, 255, 255, 0.4);
+		font-size: 0.8125rem;
+		font-style: italic;
+	}
+
+	/* ── Tracklist ────────────────────────────────────────────────────────── */
+	.mus-tracklist {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.mus-track {
+		display: flex;
+		align-items: flex-start;
+		gap: 14px;
+		padding: 14px 12px;
+		margin: 0 -12px;
+		border-radius: 10px;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+		transition: background 0.15s;
+	}
+	.mus-track:hover {
+		background: rgba(255, 255, 255, 0.025);
+	}
+
+	.mus-track-num {
+		flex: none;
+		width: 2ch;
+		padding-top: 2px;
+		font-size: 0.75rem;
+		color: rgba(255, 255, 255, 0.3);
+		text-align: right;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.mus-track-thumb {
+		flex: none;
+		width: 52px;
+		height: 52px;
+		border-radius: 6px;
+		object-fit: cover;
+	}
+
+	.mus-track-main {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+
+	.mus-track-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+	}
+
+	.mus-track-title {
+		font-size: 1rem;
+		font-weight: 700;
+		color: #fff;
+		margin: 0;
+	}
+
+	.mus-track-duration {
+		font-family: ui-monospace, 'JetBrains Mono', SFMono-Regular, Menlo, Consolas, monospace;
+		font-size: 0.75rem;
+		font-weight: 400;
+		color: rgba(255, 255, 255, 0.35);
+		margin-left: 8px;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.mus-track-actions {
+		flex: none;
+		display: flex;
+		align-items: center;
+		gap: 12px;
+	}
+
+	.mus-share-btn {
+		flex: none;
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		background: rgba(255, 255, 255, 0.03);
+		border: 1px solid rgba(255, 255, 255, 0.08);
+		border-radius: 20px;
+		padding: 4px 10px 4px 8px;
+		text-decoration: none;
+		font-size: 0.6875rem;
+		color: rgba(255, 255, 255, 0.45);
+		cursor: pointer;
+		transition: color 0.15s, border-color 0.15s, background 0.15s;
+	}
+	.mus-share-btn:hover {
+		color: var(--nx-accent-2-soft2);
+		border-color: rgba(139, 92, 246, 0.4);
+		background: rgba(139, 92, 246, 0.08);
+	}
+
+	.mus-icon {
+		width: 12px;
+		height: 12px;
+		flex: none;
+	}
+
+	.mus-like-btn--active {
+		color: #fb7185;
+		border-color: rgba(251, 113, 133, 0.4);
+		background: rgba(251, 113, 133, 0.08);
+		cursor: default;
+	}
+	.mus-like-btn:not(.mus-like-btn--active):hover {
+		color: #fb7185;
+		border-color: rgba(251, 113, 133, 0.4);
+		background: rgba(251, 113, 133, 0.08);
+	}
+	.mus-like-btn--active .mus-icon {
+		animation: mus-like-pulse 0.35s ease-out;
+	}
+	@keyframes mus-like-pulse {
+		0%   { transform: scale(1); }
+		40%  { transform: scale(1.35); }
+		100% { transform: scale(1); }
+	}
+
+	.mus-track-desc {
+		font-size: 0.8125rem;
+		color: rgba(255, 255, 255, 0.4);
+		margin: 0;
+	}
+
+	/* ── Commentaires ─────────────────────────────────────────────────────── */
+	.mus-comments {
+		margin-top: 12px;
+		padding-top: 12px;
+		border-top: 1px solid rgba(255, 255, 255, 0.05);
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+	}
+
+	.mus-comment-error {
+		font-size: 0.75rem;
+		color: #f87171;
+		margin: 0;
+	}
+
+	.mus-comment {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+
+	.mus-comment-head {
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
+	}
+
+	.mus-comment-author {
+		font-size: 0.8125rem;
+		font-weight: 600;
+		color: #fff;
+	}
+
+	.mus-comment-date {
+		font-size: 0.6875rem;
+		color: rgba(255, 255, 255, 0.3);
+	}
+
+	.mus-comment-body {
+		font-size: 0.8125rem;
+		color: rgba(255, 255, 255, 0.55);
+		margin: 0;
+		white-space: pre-wrap;
+	}
+
+	.mus-comment-empty {
+		font-size: 0.8125rem;
+		color: rgba(255, 255, 255, 0.3);
+		font-style: italic;
+		margin: 0;
+	}
+
+	.mus-comment-form {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		max-width: 420px;
+	}
+
+	.mus-comment-input {
+		background: rgba(255, 255, 255, 0.03);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		border-radius: 6px;
+		padding: 6px 10px;
+		font-size: 0.8125rem;
+		color: #fff;
+		font-family: inherit;
+		resize: vertical;
+	}
+	.mus-comment-input::placeholder { color: rgba(255, 255, 255, 0.25); }
+	.mus-comment-input:focus { outline: none; border-color: rgba(139, 92, 246, 0.5); }
+	.mus-comment-input--name { max-width: 220px; }
+
+	.mus-comment-submit {
+		align-self: flex-start;
+		background: rgba(139, 92, 246, 0.85);
+		border: none;
+		border-radius: 6px;
+		padding: 6px 14px;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		color: #fff;
+		cursor: pointer;
+		transition: background 0.15s;
+	}
+	.mus-comment-submit:hover:not(:disabled) { background: rgba(139, 92, 246, 1); }
+	.mus-comment-submit:disabled { opacity: 0.5; cursor: default; }
+
+	@media (max-width: 560px) {
+		.mus-banner { flex-direction: column; align-items: flex-start; }
+		.mus-banner-img, .mus-banner-fallback { width: 100px; height: 100px; }
+		.mus-track-thumb { display: none; }
+	}
+</style>

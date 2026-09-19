@@ -11,6 +11,7 @@ import { validate } from '../middleware/validate'
 import { sanitize } from '../utils/sanitize'
 import { awardPoints, REPUTATION } from '../models/reputation'
 import { fetchLinkPreview } from '../services/linkPreview'
+import { scanBuffer } from '../services/fileScanner'
 
 // Premier lien http(s) dans le contenu HTML (pour l'aperçu de lien).
 function firstLink(html: string): string | null {
@@ -552,6 +553,13 @@ export default async function socialRoutes(app: FastifyInstance) {
 
     const buf = await data.toBuffer()
     if (buf.length > 8 * 1024 * 1024) return reply.code(400).send({ error: 'Fichier trop lourd (max 8 Mo)' })
+
+    // Seul upload de ce fichier à écrire un buffer tel quel sur disque sans
+    // passer par scanBuffer (l'audio n'est pas transcodé, cf plus bas) : sans
+    // ce contrôle, le seul garde-fou était le Content-Type déclaré par le
+    // client, trivialement falsifiable.
+    const scan = scanBuffer(buf, data.mimetype)
+    if (!scan.ok) return reply.code(400).send({ error: `Fichier rejeté : ${scan.reason}` })
 
     const isAudio = data.mimetype.startsWith(AUDIO_MIME_PREFIX)
     const isGif   = data.mimetype === 'image/gif'

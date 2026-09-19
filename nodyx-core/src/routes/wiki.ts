@@ -13,6 +13,7 @@ import { FastifyInstance } from 'fastify'
 import { z }               from 'zod'
 import { db }              from '../config/database.js'
 import { requireAuth }     from '../middleware/auth.js'
+import { getInstanceCommunityId } from '../middleware/adminOnly.js'
 import { rateLimit }       from '../middleware/rateLimit.js'
 import { validate }        from '../middleware/validate.js'
 import { requireModule }   from '../middleware/requireModule.js'
@@ -35,14 +36,18 @@ function generateWikiSlug(title: string): string {
 
 // ── Role helper ───────────────────────────────────────────────────────────────
 
+// Scopé à LA communauté de l'instance : sans ce scope, un utilisateur membre
+// de PLUSIEURS communautés (ex: après s'être fabriqué la sienne via
+// POST /communities, désormais admin-only) voyait son rôle résolu sur
+// l'adhésion la plus ancienne, N'IMPORTE LAQUELLE, y compris son propre rôle
+// owner auto-attribué ailleurs, ou son rôle d'origine après avoir quitté la
+// vraie communauté (trouvé en audit le 16/09).
 async function getUserRole(userId: string): Promise<string> {
+  const communityId = await getInstanceCommunityId()
+  if (!communityId) return 'member'
   const { rows } = await db.query(
-    `SELECT cm.role
-     FROM community_members cm
-     JOIN communities c ON c.id = cm.community_id
-     WHERE cm.user_id = $1
-     ORDER BY cm.joined_at ASC LIMIT 1`,
-    [userId]
+    `SELECT role FROM community_members WHERE community_id = $1 AND user_id = $2`,
+    [communityId, userId]
   )
   return rows[0]?.role ?? 'member'
 }

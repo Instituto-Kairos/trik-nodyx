@@ -215,8 +215,10 @@ export function registerVoiceHandlers(socket: Socket, server: Server): void {
 
   // ── voice:leave ───────────────────────────────────────────────────────────
   socket.on('voice:leave', async (channelId: string) => {
+    if (checkRateLimit(userId, 'voice:leave')) return
     if (!isUuid(channelId)) return
     const room = voiceRoom(channelId)
+    if (!socket.rooms.has(room)) return
     socket.leave(room)
     freeSeat(channelId, socket.id)
     server.to(room).emit('voice:peer_left', { channelId, socketId: socket.id })
@@ -241,7 +243,11 @@ export function registerVoiceHandlers(socket: Socket, server: Server): void {
   // l'écran à l'utilisateur. No-op si le canal est déjà en bascule ou en SFU, ou si
   // le flag est off (mesh strictement inchangé).
   socket.on('voice:screenshare_intent', ({ channelId }: { channelId: string }) => {
+    if (checkRateLimit(userId, 'voice:screenshare_intent')) return
     if (!isUuid(channelId)) return
+    // Sans ce garde, n'importe quel socket connu pouvait forcer la bascule
+    // SFU d'un canal vocal étranger en boucle (trouvé en audit le 16/09).
+    if (!socket.rooms.has(voiceRoom(channelId))) return
     bascule.onScreenShare(server, channelId)
   })
 
@@ -304,16 +310,19 @@ export function registerVoiceHandlers(socket: Socket, server: Server): void {
   }
 
   socket.on('voice:offer', async ({ to, sdp, channelId }: { to: string; sdp: unknown; channelId: string }) => {
+    if (checkRateLimit(userId, 'voice:offer')) return
     if (!await inSameVoiceRoom(channelId, to)) return
     server.to(to).emit('voice:offer', { from: socket.id, sdp, channelId })
   })
 
   socket.on('voice:answer', async ({ to, sdp, channelId }: { to: string; sdp: unknown; channelId: string }) => {
+    if (checkRateLimit(userId, 'voice:answer')) return
     if (!await inSameVoiceRoom(channelId, to)) return
     server.to(to).emit('voice:answer', { from: socket.id, sdp, channelId })
   })
 
   socket.on('voice:ice', async ({ to, candidate, channelId }: { to: string; candidate: unknown; channelId: string }) => {
+    if (checkRateLimit(userId, 'voice:ice')) return
     if (!await inSameVoiceRoom(channelId, to)) return
     server.to(to).emit('voice:ice', { from: socket.id, candidate, channelId })
   })
@@ -415,18 +424,21 @@ export function registerVoiceHandlers(socket: Socket, server: Server): void {
 
   // Signaling — forwarded to target socket only (same pattern as voice:offer/answer/ice)
   socket.on('p2p:offer',  ({ to, sdp, channelId }: { to: string; sdp: unknown; channelId: string }) => {
+    if (checkRateLimit(userId, 'p2p:offer')) return
     if (!isUuid(channelId)) return
     const pool = _p2pChannels.get(channelId)
     if (!pool || !pool.has(socket.id) || !pool.has(to)) return  // sender et target doivent être dans le pool
     server.to(to).emit('p2p:offer',  { from: socket.id, sdp, channelId })
   })
   socket.on('p2p:answer', ({ to, sdp, channelId }: { to: string; sdp: unknown; channelId: string }) => {
+    if (checkRateLimit(userId, 'p2p:answer')) return
     if (!isUuid(channelId)) return
     const pool = _p2pChannels.get(channelId)
     if (!pool || !pool.has(socket.id) || !pool.has(to)) return
     server.to(to).emit('p2p:answer', { from: socket.id, sdp, channelId })
   })
   socket.on('p2p:ice',    ({ to, candidate, channelId }: { to: string; candidate: unknown; channelId: string }) => {
+    if (checkRateLimit(userId, 'p2p:ice')) return
     if (!isUuid(channelId)) return
     const pool = _p2pChannels.get(channelId)
     if (!pool || !pool.has(socket.id) || !pool.has(to)) return

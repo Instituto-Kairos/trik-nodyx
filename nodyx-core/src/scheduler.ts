@@ -7,6 +7,8 @@
 import { db, redis } from './config/database'
 import { Server } from 'socket.io'
 import { NODYX_VERSION } from './utils/version'
+import * as NotificationModel from './models/notification'
+import { getInstanceCommunityId } from './middleware/adminOnly'
 
 const PING_INTERVAL_MS         = 5  * 60 * 1000        // 5 minutes
 const ASSET_PUSH_INTERVAL_MS   = 60 * 60 * 1000        // 1 heure
@@ -128,6 +130,11 @@ async function pushAssetsToDirectory() {
 }
 
 // ── Global Search announce (SPEC 010) ─────────────────────────────────────────
+//
+// Ne pousse à l'annuaire fédéré que les fils EXPLICITEMENT mis en avant
+// (is_featured, posé par un admin). Avant le durcissement du 2026-09, le seul
+// critère était is_indexed (défaut = true), donc n'importe quel fil d'un membre
+// partait dans la fédération. Incident « nerti » du 2026-09-01.
 
 export async function announceThreadsToDirectory() {
   if (!process.env.NODYX_GLOBAL_INDEXING || process.env.NODYX_GLOBAL_INDEXING !== 'true') return
@@ -137,6 +144,14 @@ export async function announceThreadsToDirectory() {
   if (!token) return
 
   try {
+    // Scope à LA communauté de l'instance : sans lui, un fil "featured" d'une
+    // communauté qu'un utilisateur se serait fabriquée (POST /communities,
+    // désormais admin-only) aurait pu partir en fédération. is_featured est
+    // désormais lui-même gardé au niveau instance (routes/forums.ts), ceci est
+    // une deuxième barrière, pas la seule (trouvé en audit le 16/09).
+    const communityId = await getInstanceCommunityId()
+    if (!communityId) return
+
     const { rows } = await db.query<{
       id: string; slug: string | null; title: string; category_id: string; category_slug: string | null;
       excerpt: string | null; reply_count: number; tags: string[]
@@ -155,8 +170,11 @@ export async function announceThreadsToDirectory() {
        FROM threads t
        LEFT JOIN categories c ON c.id = t.category_id
        WHERE t.is_indexed = true
+         AND t.is_featured = true
+         AND c.community_id = $1
          AND (t.last_indexed_at IS NULL OR t.updated_at > t.last_indexed_at)
-       LIMIT 100`
+       LIMIT 100`,
+      [communityId]
     )
 
     if (rows.length === 0) return
@@ -319,8 +337,17 @@ async function gossipToPeers(payload: {
 }
 
 // ── Pull blocklist distribuée ─────────────────────────────────────────────────
+//
+// Seule tâche fédérée à ne PAS avoir eu ce garde (trouvé en audit de
+// stabilité, F-039, 2026-09-11) : une instance qui a explicitement choisi de
+// ne pas fédérer (pas de DIRECTORY_TOKEN dans .env) appelait quand même
+// nodyx.org toutes les 30 min via le repli par défaut de DIRECTORY_API_URL.
+// Même garde que pingDirectory/pushAssetsToDirectory/announceThreadsToDirectory.
 
-async function pullBlocklist() {
+export async function pullBlocklist() {
+  const token = process.env.DIRECTORY_TOKEN
+  if (!token) return
+
   const directoryUrl = (process.env.DIRECTORY_API_URL ?? 'https://nodyx.org').replace(/\/$/, '')
   try {
     const res = await fetch(`${directoryUrl}/api/directory/blocklist`, {
@@ -390,10 +417,14 @@ async function purgeInactivePushSubscriptions() {
 
 async function purgeOldNotifications() {
   try {
-    const { rowCount } = await db.query(
-      `DELETE FROM notifications WHERE is_read = true AND created_at < NOW() - INTERVAL '30 days'`
-    )
-    if (rowCount && rowCount > 0) {
+    // Même requête que `NotificationModel.purgeOldRead()`, qui existait déjà
+    // mais n'avait aucun appelant (trouvé en audit de stabilité, F-050,
+    // 2026-09-11 : le grep sur le nom de la fonction concluait à tort que la
+    // purge n'avait jamais lieu du tout, sans voir cette copie inline
+    // équivalente déjà planifiée ici depuis le début). Consolidé sur une
+    // seule implémentation plutôt que deux DELETE identiques à maintenir.
+    const rowCount = await NotificationModel.purgeOldRead(30)
+    if (rowCount > 0) {
       console.log(`[Scheduler] Notifications — ${rowCount} notification(s) lue(s) de plus de 30j supprimée(s)`)
     }
   } catch (err) {

@@ -4,6 +4,7 @@ import { rehostExternalImages } from '../services/inlineImageRehost'
 import { validate } from '../middleware/validate'
 import { rateLimit } from '../middleware/rateLimit'
 import { requireAuth, optionalAuth } from '../middleware/auth'
+import { getInstanceCommunityId } from '../middleware/adminOnly'
 import * as CommunityModel from '../models/community'
 import * as ThreadModel from '../models/thread'
 import * as PostModel from '../models/post'
@@ -17,6 +18,15 @@ import { resolveMentions } from '../utils/mentions'
 import { db, redis } from '../config/database'
 import { checkHtmlContent } from '../services/contentFilter'
 import { io } from '../socket/io'
+
+// Un titre de fil est du texte brut, jamais du HTML : checkHtmlContent() ne fait
+// que SCANNER (mots interdits) sans jamais retirer de balises. Sans ce nettoyage,
+// un titre contenant </script><script>... ressortait tel quel dans le JSON-LD de
+// la page du fil et dans l'extrait ts_headline() de la recherche, deux points
+// d'injection non authentifiés (trouvé en audit le 17/09).
+function stripTitleTags(title: string): string {
+  return title.replace(/<[^>]*>/g, '').trim()
+}
 
 // Check if userId is owner/admin/moderator in the community that owns a thread
 async function isMod(userId: string, threadId: string): Promise<boolean> {
@@ -47,6 +57,32 @@ async function isAdmin(userId: string, threadId: string): Promise<boolean> {
   )
   const role = rows[0]?.role
   return role === 'owner' || role === 'admin'
+}
+
+// `is_featured` pilote la vitrine PUBLIQUE de l'instance (GET
+// /instance/threads/featured, sans filtre de communauté) et l'annonce à
+// l'annuaire fédéré : une portée strictement plus large que "admin de la
+// communauté de ce fil". Sur une architecture "one instance = one community"
+// les deux devraient toujours coïncider, mais POST /communities permettait
+// jusqu'ici à n'importe qui de se créer sa propre communauté et d'y être
+// owner : isAdmin() ci-dessus l'aurait alors laissé passer (trouvé en audit
+// le 16/09). Vérification indépendante, scopée à LA communauté de l'instance.
+async function isInstanceAdmin(userId: string): Promise<boolean> {
+  const communityId = await getInstanceCommunityId()
+  if (!communityId) return false
+  const { rows } = await db.query<{ role: string }>(
+    `SELECT role FROM community_members WHERE community_id = $1 AND user_id = $2`,
+    [communityId, userId]
+  )
+  const role = rows[0]?.role
+  return role === 'owner' || role === 'admin'
+}
+
+// Ordre des rôles communautaires. Un rôle inconnu (non membre) vaut -1, donc
+// strictement inférieur à 'member' : il ne passe aucune catégorie restreinte.
+const ROLE_RANK: Record<string, number> = { member: 0, moderator: 1, admin: 2, owner: 3 }
+function roleRank(role: string | undefined | null): number {
+  return role && role in ROLE_RANK ? ROLE_RANK[role] : -1
 }
 
 // Get author_id of a post (used for thanks)
@@ -191,7 +227,11 @@ app.get('/threads', {
   app.post('/threads', {
     preHandler: [rateLimit, requireAuth, validate({ body: CreateThreadBody })],
   }, async (request, reply) => {
-    const { category_id: rawCatId, title, content, tag_ids } = request.body as z.infer<typeof CreateThreadBody>
+    const { category_id: rawCatId, title: rawTitle, content, tag_ids } = request.body as z.infer<typeof CreateThreadBody>
+    const title = stripTitleTags(rawTitle)
+    if (!title) {
+      return reply.code(400).send({ error: 'Title cannot be empty once markup is removed', code: 'INVALID_TITLE' })
+    }
 
     // Resolve slug → UUID if needed
     const isCatUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawCatId)
@@ -205,8 +245,8 @@ app.get('/threads', {
     }
 
     // Check if user is banned from this community
-    const { rows: catRows } = await db.query<{ community_id: string }>(
-      `SELECT community_id FROM categories WHERE id = $1 LIMIT 1`, [category_id]
+    const { rows: catRows } = await db.query<{ community_id: string; post_min_role: string }>(
+      `SELECT community_id, post_min_role FROM categories WHERE id = $1 LIMIT 1`, [category_id]
     )
     if (catRows[0]) {
       const { rows: banRows } = await db.query(
@@ -215,6 +255,22 @@ app.get('/threads', {
       )
       if (banRows.length > 0) {
         return reply.code(403).send({ error: 'You are banned from this community', code: 'BANNED' })
+      }
+
+      // Catégorie restreinte : vérifier que le rôle de l'auteur est suffisant.
+      // 'member' (défaut) laisse tout le monde poster — aucun coût si la
+      // catégorie n'est pas restreinte.
+      if (catRows[0].post_min_role !== 'member') {
+        const { rows: roleRows } = await db.query<{ role: string }>(
+          `SELECT role FROM community_members WHERE community_id = $1 AND user_id = $2 LIMIT 1`,
+          [catRows[0].community_id, request.user!.userId]
+        )
+        if (roleRank(roleRows[0]?.role) < roleRank(catRows[0].post_min_role)) {
+          return reply.code(403).send({
+            error: 'Cette catégorie est réservée à l’équipe.',
+            code:  'CATEGORY_RESTRICTED',
+          })
+        }
       }
     }
 
@@ -355,8 +411,11 @@ app.get('/threads', {
             io.to(`user:${thread.author_id}`).emit('notification:new', { unreadCount: count })
           }
         }
-        // Notify mentioned users
-        const mentionedIds = await resolveMentions(sanitized)
+        // Notify mentioned users (scopé à la communauté du fil : cf resolveMentions)
+        const { rows: catRows2 } = await db.query<{ community_id: string }>(
+          `SELECT community_id FROM categories WHERE id = $1`, [thread.category_id]
+        )
+        const mentionedIds = catRows2[0] ? await resolveMentions(sanitized, catRows2[0].community_id) : []
         for (const mentionedId of mentionedIds) {
           if (mentionedId !== userId) {
             await NotificationModel.create({
@@ -479,19 +538,30 @@ app.get('/threads', {
 
     // Authors without mod rights can only edit the title
     if (isAuthor && !modAccess) {
-      if (!body.title?.trim()) {
+      const cleanTitle = body.title ? stripTitleTags(body.title) : ''
+      if (!cleanTitle) {
         return reply.code(403).send({ error: 'Authors can only edit the title', code: 'FORBIDDEN' })
       }
-      const updated = await ThreadModel.update(threadId, { title: body.title.trim() })
+      const updated = await ThreadModel.update(threadId, { title: cleanTitle })
       bumpThreadsCache()
       return reply.send({ thread: updated })
     }
 
-    // Pin / lock are restricted to owner or admin (not moderator)
-    if ((body.is_pinned !== undefined || body.is_locked !== undefined)) {
+    // Pin / lock : restreint à owner/admin DE LA COMMUNAUTÉ DU FIL (une action
+    // de modération locale a du sens dans n'importe quelle communauté).
+    if (body.is_pinned !== undefined || body.is_locked !== undefined) {
       const adminAccess = await isAdmin(userId, threadId)
       if (!adminAccess) {
         return reply.code(403).send({ error: 'Only admins and owners can pin or lock threads', code: 'FORBIDDEN' })
+      }
+    }
+
+    // Feature : restreint à owner/admin DE L'INSTANCE, jamais "de n'importe
+    // quelle communauté", cf isInstanceAdmin ci-dessus.
+    if (body.is_featured !== undefined) {
+      const instanceAdmin = await isInstanceAdmin(userId)
+      if (!instanceAdmin) {
+        return reply.code(403).send({ error: 'Only the instance admin can feature threads', code: 'FORBIDDEN' })
       }
     }
 
@@ -509,7 +579,7 @@ app.get('/threads', {
     }
 
     const updated = await ThreadModel.update(threadId, {
-      title:       body.title?.trim() || undefined,
+      title:       body.title ? (stripTitleTags(body.title) || undefined) : undefined,
       is_pinned:   body.is_pinned,
       is_locked:   body.is_locked,
       is_featured: body.is_featured,
