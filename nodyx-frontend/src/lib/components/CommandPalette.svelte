@@ -100,7 +100,6 @@
       { id: 'home',   group: 'GO TO',  label: tFn('nav.home'),        sub: '/',                paths: ICONS.home,    action: () => navigate('/'),               keywords: ['home', 'accueil', 'index'] },
       { id: 'forum',  group: 'GO TO',  label: tFn('nav.forum'),          sub: '/forum',           paths: ICONS.forum,   action: () => navigate('/forum'),          keywords: ['forum', 'discussion', 'threads'] },
       { id: 'chat',   group: 'GO TO',  label: tFn('nav.chat'), sub: '/chat',            paths: ICONS.chat,    action: () => navigate('/chat'),           keywords: ['chat', 'live', 'messages', 'channel'] },
-      { id: 'discover', group: 'GO TO', label: tFn('nav.discover'),     sub: '/discover',        paths: ICONS.discover, action: () => navigate('/discover'),      keywords: ['discover', 'instances', 'réseau', 'network'] },
     ]
 
     if (user) {
