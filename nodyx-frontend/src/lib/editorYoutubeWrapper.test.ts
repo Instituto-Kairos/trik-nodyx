@@ -14,11 +14,12 @@
 
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
-const COMPOSANT = new URL('./components/editor/NodyxEditor.svelte', import.meta.url).pathname
+const COMPOSANT = fileURLToPath(new URL('./components/editor/NodyxEditor.svelte', import.meta.url))
 const src = readFileSync(COMPOSANT, 'utf-8')
 
-const CSS = new URL('../app.css', import.meta.url).pathname
+const CSS = fileURLToPath(new URL('../app.css', import.meta.url))
 const css = readFileSync(CSS, 'utf-8')
 
 describe("l'enveloppe de la vidéo porte la classe attendue", () => {
@@ -52,7 +53,7 @@ describe("ce que l'assainisseur laisse passer", () => {
     // La raison du choix : `class` traverse l'assainissement, l'attribut de
     // l'extension non. Vérifié dans la liste du cœur.
     const sanit = readFileSync(
-      new URL('../../../nodyx-core/src/utils/sanitize.ts', import.meta.url).pathname,
+      fileURLToPath(new URL('../../../nodyx-core/src/utils/sanitize.ts', import.meta.url)),
       'utf-8',
     )
     expect(sanit).toMatch(/'\*':\s*\[[^\]]*'class'/)

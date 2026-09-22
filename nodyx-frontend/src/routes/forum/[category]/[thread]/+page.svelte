@@ -59,6 +59,7 @@
 	const isMod   = $derived(user?.role === 'owner' || user?.role === 'admin' || user?.role === 'moderator');
 	// Épingler / verrouiller / mettre en avant : réservé owner + admin côté back
 	// (routes/forums.ts). Les modérateurs voient le reste du panneau, pas ça.
+	// Módulo RPG (trik) : o toggle de XP por tópico usa o mesmo guard.
 	const canAdmin = $derived(user?.role === 'owner' || user?.role === 'admin');
 
 	// ── État local ────────────────────────────────────────────────────────
@@ -236,6 +237,11 @@
 					{#if thread.is_featured}
 						<span class="inline-flex items-center gap-1 text-xs font-medium text-yellow-400 bg-yellow-900/30 border border-yellow-800/50 px-2 py-0.5">
 							⭐ {tFn('common.featured')}
+						</span>
+					{/if}
+					{#if data.xpEnabled}
+						<span class="inline-flex items-center gap-1 text-xs font-medium text-emerald-400 bg-emerald-900/30 border border-emerald-800/50 px-2 py-0.5">
+							⚔️ XP ativo
 						</span>
 					{/if}
 					{#each (thread.tags ?? []) as tag}
@@ -447,6 +453,24 @@
 							{thread.is_featured ? tFn('forum.unfeature') : tFn('forum.feature')}
 						</button>
 					</form>
+					{/if}
+
+					<!-- Módulo RPG (trik) : elegibilidade de XP — admin-only, mesmo
+					     guard do servidor (isAdmin em routes/forums.ts, exposto aqui como canAdmin), por isso o
+					     if aninhado em vez de reusar o isMod do bloco inteiro. -->
+					{#if canAdmin}
+						<form method="POST" action="?/toggleXp" use:enhance={() => {
+							return async ({ update }) => { await update({ reset: false }) }
+						}}>
+							<input type="hidden" name="is_xp_enabled" value={!data.xpEnabled} />
+							<button type="submit"
+								class="px-3 py-1.5 border text-xs font-medium transition-colors
+								{data.xpEnabled
+									? 'border-emerald-700 text-emerald-400 bg-emerald-900/20 hover:bg-emerald-900/40'
+									: 'border-gray-700 text-gray-400 hover:text-emerald-400 hover:border-emerald-700'}">
+								{data.xpEnabled ? 'Desativar XP' : 'Ativar XP'}
+							</button>
+						</form>
 					{/if}
 
 					<!-- Supprimer le thread -->

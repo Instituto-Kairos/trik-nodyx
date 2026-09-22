@@ -24,6 +24,7 @@ import { createWriteStream, mkdirSync } from 'fs'
 import { pipeline } from 'stream/promises'
 import path from 'path'
 import { getClientIp } from '../utils/clientIp'
+import { revertThreadScenes } from '../services/trik/xp'
 
 const UPLOADS_DIR = path.join(process.cwd(), 'uploads')
 const ALLOWED_MIME_BRANDING = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
@@ -798,6 +799,8 @@ export default async function adminRoutes(app: FastifyInstance) {
     const adminUser = (request as any).user as { userId: string }
 
     const { rows: threadRows } = await db.query(`SELECT title FROM threads WHERE id = $1`, [id])
+    // Módulo RPG (trik): desfaz o xp das cenas do tópico antes do CASCADE levá-las.
+    if (threadRows[0]) await revertThreadScenes(id)
     const { rowCount } = await db.query(`DELETE FROM threads WHERE id = $1`, [id])
     if (!rowCount) return reply.code(404).send({ error: 'Thread not found' })
     logAction(adminUser.userId, 'delete_thread', 'thread', id, threadRows[0]?.title ?? null, {})
@@ -916,6 +919,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       name_underline: body.name_underline ?? false,
       icon_emoji:     body.icon_emoji ?? null,
     })
+    io?.emit('channel:created', { channel })
     return reply.code(201).send({ channel })
   })
 
@@ -924,6 +928,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   }, async (request, reply) => {
     const { ids } = request.body as z.infer<typeof ReorderChannelsBody>
     await ChannelModel.reorder(ids)
+    io?.emit('channel:reordered', { ids })
     return reply.send({ ok: true })
   })
 
@@ -934,6 +939,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     const patch  = request.body as z.infer<typeof UpdateChannelBody>
     const channel = await ChannelModel.update(id, patch)
     if (!channel) return reply.code(404).send({ error: 'Channel not found' })
+    io?.emit('channel:updated', { channel })
     return reply.send({ channel })
   })
 
@@ -944,6 +950,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     const channel = await ChannelModel.findById(id)
     if (!channel) return reply.code(404).send({ error: 'Channel not found' })
     await ChannelModel.remove(id)
+    io?.emit('channel:deleted', { channelId: id })
     return reply.send({ ok: true })
   })
 

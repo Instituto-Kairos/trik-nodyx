@@ -7,6 +7,17 @@ export interface UserStatus {
   text:  string
 }
 
+export interface LayoutChannel {
+  id:              string
+  name:            string
+  type?:           string
+  name_color?:     string | null
+  name_bold?:      boolean
+  name_italic?:    boolean
+  name_underline?: boolean
+  icon_emoji?:     string | null
+}
+
 export interface OnlineMember {
   userId:            string
   username:          string
@@ -26,6 +37,7 @@ export const chatMentionStore:   Writable<number>          = writable(0)
 export const dmUnreadStore:      Writable<number>          = writable(0)
 export const socket:             Writable<Socket | null>   = writable(null)
 export const onlineMembersStore: Writable<OnlineMember[]>  = writable([])
+export const channelsStore:      Writable<LayoutChannel[]> = writable([])
 export const tokenStore:         Writable<string | null>   = writable(null)
 export const apiBaseUrl: Writable<string> = writable("")
 
@@ -124,6 +136,29 @@ export async function initSocket(token: string, initialCount: number): Promise<v
         return updated
       })
     )
+  })
+
+  // ── Channels (live sidebar updates — no page reload needed) ─────────────────
+  _socket.on('channel:created', ({ channel }: { channel: LayoutChannel }) => {
+    channelsStore.update(list => list.some(c => c.id === channel.id) ? list : [...list, channel])
+  })
+
+  _socket.on('channel:updated', ({ channel }: { channel: LayoutChannel }) => {
+    channelsStore.update(list => list.map(c => c.id === channel.id ? { ...c, ...channel } : c))
+  })
+
+  _socket.on('channel:deleted', ({ channelId }: { channelId: string }) => {
+    channelsStore.update(list => list.filter(c => c.id !== channelId))
+  })
+
+  _socket.on('channel:reordered', ({ ids }: { ids: string[] }) => {
+    channelsStore.update(list => {
+      const byId = new Map(list.map(c => [c.id, c]))
+      const reordered = ids.map(id => byId.get(id)).filter((c): c is LayoutChannel => !!c)
+      // Any channel not in `ids` (shouldn't happen) stays appended at the end.
+      const missing = list.filter(c => !ids.includes(c.id))
+      return [...reordered, ...missing]
+    })
   })
 
   // ── Ban ────────────────────────────────────────────────────────────────────

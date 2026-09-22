@@ -13,11 +13,12 @@
 
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { getSchema } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import Image from '@tiptap/extension-image'
 
-const COMPOSANT = new URL('./components/editor/NodyxEditor.svelte', import.meta.url).pathname
+const COMPOSANT = fileURLToPath(new URL('./components/editor/NodyxEditor.svelte', import.meta.url))
 
 /** Le schéma tel que ProseMirror le construira, avec l'option testée. */
 function schemaAvec(inline: boolean) {

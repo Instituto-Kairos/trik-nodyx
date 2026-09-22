@@ -18,6 +18,8 @@ import { resolveMentions } from '../utils/mentions'
 import { db, redis } from '../config/database'
 import { checkHtmlContent } from '../services/contentFilter'
 import { io } from '../socket/io'
+import * as TrikModel from '../models/trik'
+import { processScenePost, revertScenePost, revertThreadScenes } from '../services/trik/xp'
 
 // Un titre de fil est du texte brut, jamais du HTML : checkHtmlContent() ne fait
 // que SCANNER (mots interdits) sans jamais retirer de balises. Sans ce nettoyage,
@@ -304,6 +306,12 @@ app.get('/threads', {
     bumpThreadsCache()
     // Réputation : créer un thread/article = +10 (le premier post ne donne pas le +2 réponse)
     await awardPoints(request.user!.userId, REPUTATION.THREAD)
+    // Module RPG (trik, Fase 2) : primeiro post de um tópico pode gerar XP
+    // se o tópico estiver marcado como elegível — nunca derruba a resposta.
+    processScenePost({
+      threadId: thread.id, postId: post.id,
+      authorUserId: request.user!.userId, content: sanitizedContent,
+    }).catch(err => request.log.warn({ err }, '[trik:xp] processScenePost failed'))
 
     // Attach tags if provided
     if (tag_ids && tag_ids.length > 0) {
@@ -334,17 +342,20 @@ app.get('/threads', {
     // Always use the resolved UUID — id may be a slug
     const threadId = thread.id
 
-    const [posts, tags] = await Promise.all([
+    const [posts, tags, xpEnabled] = await Promise.all([
       PostModel.listByThread(threadId, {
         limit:    query.limit  ? Number(query.limit)  : undefined,
         offset:   query.offset ? Number(query.offset) : undefined,
         viewerId,
       }),
       TagModel.getTagsForThread(threadId),
+      // Módulo RPG (trik): o selo "XP ativo" é público — vai junto com o tópico em
+      // vez de o frontend chamar uma rota admin (que devolvia 403 pra todo jogador).
+      Promise.resolve().then(() => TrikModel.isXpThread(threadId)).catch(() => false),
       ThreadModel.incrementViews(threadId),
     ])
 
-    return reply.send({ thread: { ...thread, tags }, posts })
+    return reply.send({ thread: { ...thread, tags }, posts, xp_enabled: xpEnabled })
   })
 
   // POST /api/v1/forums/posts
@@ -393,6 +404,12 @@ app.get('/threads', {
     bumpThreadsCache()
     // Réputation : répondre = +2
     await awardPoints(userId, REPUTATION.REPLY)
+    // Module RPG (trik, Fase 2) : resposta a um tópico elegível pode gerar
+    // XP — nunca derruba a resposta.
+    processScenePost({
+      threadId: resolvedThreadId, postId: post.id,
+      authorUserId: userId, content: sanitized,
+    }).catch(err => request.log.warn({ err }, '[trik:xp] processScenePost failed'))
 
     // Notifications (fire-and-forget)
     ;(async () => {
@@ -475,6 +492,17 @@ app.get('/threads', {
 
     const post = await PostModel.updateContent(id, editSanitized)
     bumpThreadsCache()
+    // Módulo RPG (trik, Fase 2) : desfaz o xp bruto do post antigo e
+    // reprocessa contra o conteúdo editado — nunca desfaz level já aplicado.
+    // Em SEQUÊNCIA (revert termina antes do reprocesso começar): rodando os dois
+    // ao mesmo tempo eles disputavam a linha de trik_scene_awards e a reação do
+    // bot. Continua fora do caminho da resposta (não faz o autor esperar).
+    revertScenePost(id)
+      .then(() => processScenePost({
+        threadId: existing.thread_id, postId: id,
+        authorUserId: existing.author_id, content: editSanitized,
+      }))
+      .catch(err => request.log.warn({ err }, '[trik:xp] revert/reprocess failed'))
     return reply.send({
       post,
       meta: { images_rehosted: rehostEdit.rehosted, images_failed: rehostEdit.failed.length },
@@ -500,6 +528,11 @@ app.get('/threads', {
       return reply.code(403).send({ error: 'Forbidden', code: 'FORBIDDEN' })
     }
 
+    // Módulo RPG (trik, Fase 2) : desfaz o xp bruto que esse post tinha gerado —
+    // ANTES de apagar: trik_scene_awards tem ON DELETE CASCADE em posts(id), então
+    // com o post já removido o prêmio some junto e não há mais o que reverter
+    // (postar → apagar → postar de novo rendia xp sem limite).
+    await revertScenePost(id)
     await PostModel.removeById(id)
     // Réputation : suppression d'une réponse = -2 pour son auteur (anti-farming)
     await awardPoints(existing.author_id, -REPUTATION.REPLY)
@@ -512,12 +545,13 @@ app.get('/threads', {
   }, async (request, reply) => {
     const { id } = request.params as { id: string }
     const body = request.body as {
-      title?:       string
-      is_pinned?:   boolean
-      is_locked?:   boolean
-      is_featured?: boolean
-      tag_ids?:     string[]
-      delete?:      boolean
+      title?:          string
+      is_pinned?:      boolean
+      is_locked?:      boolean
+      is_featured?:    boolean
+      tag_ids?:        string[]
+      delete?:         boolean
+      is_xp_enabled?:  boolean  // Módulo RPG (trik, Fase 2) — marca o tópico pra contagem de XP por cena
     }
 
     const thread = await ThreadModel.findById(id)
@@ -547,12 +581,13 @@ app.get('/threads', {
       return reply.send({ thread: updated })
     }
 
-    // Pin / lock : restreint à owner/admin DE LA COMMUNAUTÉ DU FIL (une action
-    // de modération locale a du sens dans n'importe quelle communauté).
-    if (body.is_pinned !== undefined || body.is_locked !== undefined) {
+    // Pin / lock / XP-eligibility (trik) : restreint à owner/admin DE LA
+    // COMMUNAUTÉ DU FIL (une action de modération locale a du sens dans
+    // n'importe quelle communauté).
+    if (body.is_pinned !== undefined || body.is_locked !== undefined || body.is_xp_enabled !== undefined) {
       const adminAccess = await isAdmin(userId, threadId)
       if (!adminAccess) {
-        return reply.code(403).send({ error: 'Only admins and owners can pin or lock threads', code: 'FORBIDDEN' })
+        return reply.code(403).send({ error: 'Only admins and owners can pin, lock or mark this thread', code: 'FORBIDDEN' })
       }
     }
 
@@ -565,8 +600,16 @@ app.get('/threads', {
       }
     }
 
+    // Módulo RPG (trik, Fase 2) : marca/desmarca o tópico pra contagem de
+    // XP por cena — tabela própria (trik_threads), fora de ThreadModel.
+    if (body.is_xp_enabled !== undefined) {
+      await TrikModel.setXpThread(threadId, body.is_xp_enabled, userId)
+    }
+
     // Mod/owner actions
     if (body.delete) {
+      // Módulo RPG (trik): desfaz o xp de todas as cenas do tópico antes do CASCADE levá-las.
+      await revertThreadScenes(threadId)
       await ThreadModel.remove(threadId)
       bumpThreadsCache()
       // Réputation : suppression d'un thread = -10 pour son créateur (anti-farming)

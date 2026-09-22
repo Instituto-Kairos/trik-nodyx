@@ -49,6 +49,14 @@
 		return localReactions.find(r => r.emoji === emoji);
 	}
 
+	// Reações que já existem mas não fazem parte da barra fixa de 6 emojis
+	// (ex.: ⚔️ do bot Trik marcando "essa cena contou xp") — sem isso elas
+	// ficam gravadas no banco mas nunca aparecem na tela. Mesma interação de
+	// toggleReaction, que já é genérica (não presa aos 6 emojis padrão).
+	const extraReactions = $derived(
+		localReactions.filter(r => !EMOJIS.includes(r.emoji) && r.count > 0)
+	);
+
 	function openTooltip(emoji: string) {
 		if (hoverTimer) clearTimeout(hoverTimer);
 		hoverTimer = setTimeout(() => { hoveredEmoji = emoji; }, 350);
@@ -154,6 +162,44 @@
 					users={r.users}
 					total={r.count}
 					{emoji}
+					anchor="top"
+				/>
+			{/if}
+		</div>
+	{/each}
+
+	<!-- Reações fora da barra fixa (ex.: ⚔️ do bot Trik) -->
+	{#each extraReactions as r (r.emoji)}
+		<div class="relative inline-block"
+		     onmouseenter={() => openTooltip(r.emoji)}
+		     onmouseleave={closeTooltip}
+		     role="presentation">
+			{#if isLoggedIn}
+				<button
+					type="button"
+					onclick={() => toggleReaction(r.emoji)}
+					onfocus={() => openTooltip(r.emoji)}
+					onblur={closeTooltip}
+					class="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium border transition-colors
+					{r.user_reacted
+						? 'border-indigo-600 bg-indigo-900/40 text-indigo-300'
+						: 'border-gray-700 bg-gray-800/40 text-gray-400 hover:border-gray-600 hover:text-gray-300'}"
+					title=""
+				>
+					<span>{r.emoji}</span>
+					<span>{r.count}</span>
+				</button>
+			{:else}
+				<span class="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs border border-gray-700 bg-gray-800/40 text-gray-400">
+					<span>{r.emoji}</span>
+					<span>{r.count}</span>
+				</span>
+			{/if}
+			{#if hoveredEmoji === r.emoji && r.users && r.users.length > 0}
+				<ReactionTooltip
+					users={r.users}
+					total={r.count}
+					emoji={r.emoji}
 					anchor="top"
 				/>
 			{/if}

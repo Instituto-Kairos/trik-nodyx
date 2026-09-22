@@ -19,6 +19,9 @@ nodyx-core/.claude/
 # Planos de implementação internos (rascunhos de trabalho, pas de doc publique)
 /plans/
 
+# Seeds do banco de teste do WSL (dados pessoais do jogador/personagem de teste)
+/scripts/wsl-local/seed/
+
 # Fichiers IA/context privés
 nexus-docs/discussions.MD
 nodyx-core/CURSOR_CONTEXT.MD

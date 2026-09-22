@@ -29,6 +29,8 @@ vi.mock('../models/post', () => ({
   create:            vi.fn(),
   update:            vi.fn(),
   remove:            vi.fn(),
+  removeById:        vi.fn(),
+  updateContent:     vi.fn(),
   getAuthorAndThread: vi.fn(),
 }))
 
@@ -58,10 +60,33 @@ vi.mock('../models/tag', () => ({
   setThreadTags:      vi.fn().mockResolvedValue(undefined),
 }))
 
+// Módulo RPG (trik, Fase 2) — só o que routes/forums.ts usa diretamente de
+// TrikModel (isXpThread/setXpThread, no toggle de PATCH /threads/:id).
+// isXpThread resolve falsy por padrão: os testes de POST /threads e
+// POST /posts já existentes não precisam saber do trik — o fire-and-forget
+// processScenePost() cai no caminho "not_xp_thread" e não faz mais nada.
+vi.mock('../models/trik', () => ({
+  isXpThread:                 vi.fn().mockResolvedValue(false),
+  setXpThread:                vi.fn().mockResolvedValue(undefined),
+  // Ciclo de vida das cenas (revert ao editar/apagar): ver os describes no fim do arquivo.
+  revertSceneAward:           vi.fn().mockResolvedValue(undefined),
+  listAwardedPostIdsByThread: vi.fn().mockResolvedValue([]),
+  applySceneAward:            vi.fn(),
+}))
+
+// O bot real puxa bcrypt/db só pra reagir/postar — aqui só importa que não falhe.
+vi.mock('../services/trik/bot', () => ({
+  postTrikMessage:     vi.fn().mockResolvedValue(undefined),
+  postTrikThreadReply: vi.fn().mockResolvedValue(undefined),
+  reactSceneCounted:   vi.fn().mockResolvedValue(undefined),
+  unreactSceneCounted: vi.fn().mockResolvedValue(undefined),
+}))
+
 // ── Imports ───────────────────────────────────────────────────
 
 import * as ThreadModel from '../models/thread'
 import * as PostModel   from '../models/post'
+import * as TrikModel   from '../models/trik'
 import { redis, db }    from '../config/database'
 import forumRoutes      from '../routes/forums'
 
@@ -467,5 +492,189 @@ describe('PATCH /api/v1/forums/threads/:id : nettoyage du titre (injection audit
 
     expect(res.statusCode).toBe(403)
     expect(ThreadModel.update).not.toHaveBeenCalled()
+  })
+})
+
+// Módulo RPG (trik, Fase 2) — toggle de trik_threads via is_xp_enabled.
+// Ver plans/fase-dois-passo-a-passo.md, passo 4.4: mesmo guard de
+// isAdmin() que já restringe pin/lock (só owner/admin, moderador não basta).
+describe('PATCH /api/v1/forums/threads/:id — is_xp_enabled (trik)', () => {
+  let app: Awaited<ReturnType<typeof buildApp>>
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    vi.mocked(redis.exists).mockImplementation((key: string) => Promise.resolve(key.startsWith('banned:') ? 0 : 1))
+    app = await buildApp(a => a.register(forumRoutes, { prefix: '/api/v1/forums' }))
+  })
+
+  it('retorna 403 quando quem pede é moderador mas não owner/admin', async () => {
+    vi.mocked(ThreadModel.findById).mockResolvedValueOnce(FAKE_THREAD as any)
+    vi.mocked(db.query).mockResolvedValue({ rows: [{ role: 'moderator' }], rowCount: 1 } as any)
+
+    const res = await app.inject({
+      method:  'PATCH',
+      url:     `/api/v1/forums/threads/${THREAD_UUID}`,
+      headers: { authorization: `Bearer ${makeToken()}` },
+      payload: { is_xp_enabled: true },
+    })
+
+    expect(res.statusCode).toBe(403)
+    expect(TrikModel.setXpThread).not.toHaveBeenCalled()
+  })
+
+  it('owner/admin marca o tópico como elegível pra XP', async () => {
+    vi.mocked(ThreadModel.findById).mockResolvedValueOnce(FAKE_THREAD as any)
+    vi.mocked(db.query).mockResolvedValue({ rows: [{ role: 'admin' }], rowCount: 1 } as any)
+    vi.mocked(ThreadModel.update).mockResolvedValueOnce({ ...FAKE_THREAD } as any)
+
+    const res = await app.inject({
+      method:  'PATCH',
+      url:     `/api/v1/forums/threads/${THREAD_UUID}`,
+      headers: { authorization: `Bearer ${makeToken()}` },
+      payload: { is_xp_enabled: true },
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(TrikModel.setXpThread).toHaveBeenCalledWith(THREAD_UUID, true, USER_UUID)
+  })
+
+  it('owner/admin desmarca o tópico', async () => {
+    vi.mocked(ThreadModel.findById).mockResolvedValueOnce(FAKE_THREAD as any)
+    vi.mocked(db.query).mockResolvedValue({ rows: [{ role: 'owner' }], rowCount: 1 } as any)
+    vi.mocked(ThreadModel.update).mockResolvedValueOnce({ ...FAKE_THREAD } as any)
+
+    const res = await app.inject({
+      method:  'PATCH',
+      url:     `/api/v1/forums/threads/${THREAD_UUID}`,
+      headers: { authorization: `Bearer ${makeToken()}` },
+      payload: { is_xp_enabled: false },
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(TrikModel.setXpThread).toHaveBeenCalledWith(THREAD_UUID, false, USER_UUID)
+  })
+})
+
+// ── Módulo RPG (trik): selo de XP e ciclo de vida das cenas ────────────────────
+// Achados da revisão de código de 2026-09-20: apagar/editar um post precisa
+// desfazer o xp ANTES de mexer no post (o CASCADE de trik_scene_awards leva o
+// prêmio junto com o post), e o revert de uma edição tem que terminar antes do
+// reprocesso começar (senão os dois disputam a mesma linha).
+
+describe('GET /api/v1/forums/threads/:id — xp_enabled (trik)', () => {
+  let app: Awaited<ReturnType<typeof buildApp>>
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    app = await buildApp(a => a.register(forumRoutes, { prefix: '/api/v1/forums' }))
+  })
+
+  it.each([true, false])('devolve xp_enabled=%s junto com o tópico (sem rota admin)', async (enabled) => {
+    vi.mocked(ThreadModel.findById).mockResolvedValueOnce(FAKE_THREAD as any)
+    vi.mocked(TrikModel.isXpThread).mockResolvedValueOnce(enabled)
+
+    const res = await app.inject({ method: 'GET', url: `/api/v1/forums/threads/${THREAD_UUID}` })
+
+    expect(res.statusCode).toBe(200)
+    expect(res.json().xp_enabled).toBe(enabled)
+    expect(TrikModel.isXpThread).toHaveBeenCalledWith(THREAD_UUID)
+  })
+
+  it('falha do módulo RPG não derruba a página do tópico', async () => {
+    vi.mocked(ThreadModel.findById).mockResolvedValueOnce(FAKE_THREAD as any)
+    vi.mocked(TrikModel.isXpThread).mockRejectedValueOnce(new Error('tabela trik_threads não existe'))
+
+    const res = await app.inject({ method: 'GET', url: `/api/v1/forums/threads/${THREAD_UUID}` })
+
+    expect(res.statusCode).toBe(200)
+    expect(res.json().xp_enabled).toBe(false)
+  })
+})
+
+describe('DELETE /api/v1/forums/posts/:id — desfaz o xp antes de apagar (trik)', () => {
+  let app: Awaited<ReturnType<typeof buildApp>>
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    vi.mocked(redis.exists).mockImplementation((key: string) => Promise.resolve(key.startsWith('banned:') ? 0 : 1))
+    app = await buildApp(a => a.register(forumRoutes, { prefix: '/api/v1/forums' }))
+  })
+
+  it('reverte o prêmio ANTES do DELETE (com o post já apagado o CASCADE levou a linha)', async () => {
+    vi.mocked(PostModel.getAuthorAndThread).mockResolvedValueOnce({ author_id: USER_UUID, thread_id: THREAD_UUID } as any)
+    vi.mocked(PostModel.removeById).mockResolvedValueOnce(true)
+
+    const res = await app.inject({
+      method: 'DELETE', url: `/api/v1/forums/posts/${FAKE_POST.id}`,
+      headers: { authorization: `Bearer ${makeToken()}` },
+    })
+
+    expect(res.statusCode).toBe(204)
+    expect(TrikModel.revertSceneAward).toHaveBeenCalledWith(FAKE_POST.id)
+    const revertOrder = vi.mocked(TrikModel.revertSceneAward).mock.invocationCallOrder[0]
+    const removeOrder = vi.mocked(PostModel.removeById).mock.invocationCallOrder[0]
+    expect(revertOrder).toBeLessThan(removeOrder)
+  })
+})
+
+describe('PATCH /api/v1/forums/threads/:id — apagar o tópico desfaz o xp das cenas (trik)', () => {
+  let app: Awaited<ReturnType<typeof buildApp>>
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    vi.mocked(redis.exists).mockImplementation((key: string) => Promise.resolve(key.startsWith('banned:') ? 0 : 1))
+    app = await buildApp(a => a.register(forumRoutes, { prefix: '/api/v1/forums' }))
+  })
+
+  it('reverte cada post premiado do tópico antes do ThreadModel.remove', async () => {
+    vi.mocked(ThreadModel.findById).mockResolvedValueOnce(FAKE_THREAD as any)
+    vi.mocked(db.query).mockResolvedValue({ rows: [{ role: 'moderator' }], rowCount: 1 } as any)
+    vi.mocked(TrikModel.listAwardedPostIdsByThread).mockResolvedValueOnce(['post-a', 'post-b'])
+
+    const res = await app.inject({
+      method: 'PATCH', url: `/api/v1/forums/threads/${THREAD_UUID}`,
+      headers: { authorization: `Bearer ${makeToken()}` },
+      payload: { delete: true },
+    })
+
+    expect(res.statusCode).toBe(204)
+    expect(TrikModel.listAwardedPostIdsByThread).toHaveBeenCalledWith(THREAD_UUID)
+    expect(TrikModel.revertSceneAward).toHaveBeenCalledWith('post-a')
+    expect(TrikModel.revertSceneAward).toHaveBeenCalledWith('post-b')
+    const lastRevert = Math.max(...vi.mocked(TrikModel.revertSceneAward).mock.invocationCallOrder)
+    expect(lastRevert).toBeLessThan(vi.mocked(ThreadModel.remove).mock.invocationCallOrder[0])
+  })
+})
+
+describe('PUT /api/v1/forums/posts/:id — revert e reprocesso em sequência (trik)', () => {
+  let app: Awaited<ReturnType<typeof buildApp>>
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    vi.mocked(redis.exists).mockImplementation((key: string) => Promise.resolve(key.startsWith('banned:') ? 0 : 1))
+    app = await buildApp(a => a.register(forumRoutes, { prefix: '/api/v1/forums' }))
+  })
+
+  it('só reprocessa a cena depois que o revert terminou', async () => {
+    vi.mocked(PostModel.getAuthorAndThread).mockResolvedValueOnce({ author_id: USER_UUID, thread_id: THREAD_UUID } as any)
+    vi.mocked(PostModel.updateContent).mockResolvedValueOnce(FAKE_POST as any)
+    let releaseRevert!: () => void
+    vi.mocked(TrikModel.revertSceneAward).mockReturnValueOnce(new Promise<void>(resolve => { releaseRevert = resolve }))
+
+    const res = await app.inject({
+      method: 'PUT', url: `/api/v1/forums/posts/${FAKE_POST.id}`,
+      headers: { authorization: `Bearer ${makeToken()}` },
+      payload: { content: '<p>editado</p>' },
+    })
+
+    // A resposta não espera o RPG...
+    expect(res.statusCode).toBe(200)
+    // ...mas o reprocesso (que começa por isXpThread) não pode iniciar com o revert em aberto.
+    await new Promise(resolve => setTimeout(resolve, 25))
+    expect(TrikModel.revertSceneAward).toHaveBeenCalledWith(FAKE_POST.id)
+    expect(TrikModel.isXpThread).not.toHaveBeenCalled()
+
+    releaseRevert()
+    await vi.waitFor(() => expect(TrikModel.isXpThread).toHaveBeenCalledWith(THREAD_UUID))
   })
 })

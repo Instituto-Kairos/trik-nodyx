@@ -26,6 +26,10 @@
 	import { unreadCountsStore, flashChannelIdStore } from '$lib/unreadStore';
 	import { panelCollapsedStore, membersCollapsedStore } from '$lib/communityStore';
 	import { playMessage, playMention } from '$lib/sounds';
+	import { matchTrikCommand } from '$lib/trik/commandRegistry';
+	import RegistroModal from '$lib/components/trik/RegistroModal.svelte';
+	import PlaquinhaModal from '$lib/components/trik/PlaquinhaModal.svelte';
+	import LevelupModal from '$lib/components/trik/LevelupModal.svelte';
 	const tFn = $derived($t)
 	const customEmojis = $derived($customEmojisStore)   // réactif : re-rend au chargement des emojis
 	// Barre au survol : les emojis custom que CE membre utilise le plus (sinon les premiers)
@@ -220,6 +224,12 @@
 	// Link preview cache: url → preview data
 	type LinkPreview = { url: string; title: string | null; description: string | null; image: string | null; siteName: string | null };
 	let linkPreviews = $state(new Map<string, LinkPreview | false>());
+
+	// Módulo RPG (trik) — /registro, /plaquinha e /levelup abrem modal em vez
+	// de enviar mensagem (ver plans/fase-um.md, seção 3, e plans/fase-dois.md).
+	let showRegistroModal  = $state(false);
+	let showPlaquinhaModal = $state(false);
+	let showLevelupModal   = $state(false);
 
 	// Rich editor modal — sert à la fois à composer ET à rééditer un message riche
 	let showRichModal = $state(false);
@@ -797,6 +807,30 @@
 	// ── Send ──────────────────────────────────────────────────────────────────
 	function sendMessage() {
 		if (!s || !selectedChannel || !inputText.trim()) return;
+		// Módulo RPG (trik): /registro e /plaquinha abrem modal, não viram
+		// mensagem de chat — ver plans/fase-um.md, seção 3. Gate de canal
+		// (trik_channels.purpose) fica pra depois (ver plano, passo 10).
+		const trikCmd = matchTrikCommand(inputText.trim());
+		if (trikCmd === 'registro' || trikCmd === 'plaquinha' || trikCmd === 'levelup') {
+			inputText = '';
+			if (trikCmd === 'registro') showRegistroModal = true;
+			else if (trikCmd === 'plaquinha') showPlaquinhaModal = true;
+			else showLevelupModal = true;
+			return;
+		}
+		if (trikCmd === 'teste') {
+			inputText = '';
+			const channelId = selectedChannel.id;
+			(async () => {
+				const { PUBLIC_API_URL } = await import('$env/static/public');
+				await fetch(`${PUBLIC_API_URL}/api/v1/trik/teste`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+					body: JSON.stringify({ channelId })
+				});
+			})();
+			return;
+		}
 		const cmdResult = parseSlashCommand(inputText.trim());
 		const content   = cmdResult ?? inputText.trim();
 		s.emit('chat:send', { channelId: selectedChannel.id, content, replyToId: replyTo?.id ?? null });
@@ -1742,6 +1776,18 @@
 {/if}
 
 <!-- ── Rich editor modal ───────────────────────────────────────────────────── -->
+{#if showRegistroModal && token && selectedChannel}
+	<RegistroModal {token} channelId={selectedChannel.id} onclose={() => (showRegistroModal = false)} />
+{/if}
+
+{#if showPlaquinhaModal && token && selectedChannel}
+	<PlaquinhaModal {token} channelId={selectedChannel.id} onclose={() => (showPlaquinhaModal = false)} />
+{/if}
+
+{#if showLevelupModal && token && selectedChannel}
+	<LevelupModal {token} channelId={selectedChannel.id} onclose={() => (showLevelupModal = false)} />
+{/if}
+
 {#if showRichModal}
 	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 	<div

@@ -7,11 +7,12 @@
 
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
 const EVENTS = readFileSync(
-  new URL('../migrations/114_security_events.sql', import.meta.url).pathname, 'utf-8')
+  fileURLToPath(new URL('../migrations/114_security_events.sql', import.meta.url)), 'utf-8')
 const DECISIONS = readFileSync(
-  new URL('../migrations/115_security_decisions.sql', import.meta.url).pathname, 'utf-8')
+  fileURLToPath(new URL('../migrations/115_security_decisions.sql', import.meta.url)), 'utf-8')
 
 describe('modèle de sécurité — événements', () => {
   it('ne recopie AUCUNE donnée existante dans la table', () => {

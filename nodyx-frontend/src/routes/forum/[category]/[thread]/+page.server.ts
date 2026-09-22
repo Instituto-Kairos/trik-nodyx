@@ -40,7 +40,13 @@ export const load: PageServerLoad = async ({ fetch, params, cookies }) => {
 		}
 	}
 
-	return { thread: json.thread, posts: json.posts, poll, token, ogImagePath };
+	// Módulo RPG (trik, Fase 2) : estado de elegibilidade de XP do tópico. Vem
+	// na própria resposta do tópico (`xp_enabled`) — antes era uma chamada extra
+	// à rota admin, que devolvia 403 pra todo jogador e deixava o selo "XP ativo"
+	// sempre apagado pra quem ele deveria informar.
+	const xpEnabled: boolean = json.xp_enabled === true;
+
+	return { thread: json.thread, posts: json.posts, poll, token, ogImagePath, xpEnabled };
 };
 
 export const actions: Actions = {
@@ -165,6 +171,26 @@ export const actions: Actions = {
 			headers: { Authorization: `Bearer ${token}` },
 			body: JSON.stringify({ is_featured: isFeatured })
 		});
+	},
+
+	// ── Módulo RPG (trik) : marcar/desmarcar o tópico pra contagem de XP ───
+	toggleXp: async ({ fetch, request, params, cookies }) => {
+		const token = cookies.get('token');
+		if (!token) error(401, 'Non connecté');
+
+		const form    = await request.formData();
+		const enabled = form.get('is_xp_enabled') === 'true';
+
+		const res = await apiFetch(fetch, `/forums/threads/${params.thread}`, {
+			method: 'PATCH',
+			headers: { Authorization: `Bearer ${token}` },
+			body: JSON.stringify({ is_xp_enabled: enabled })
+		});
+
+		if (!res.ok) {
+			const json = await res.json();
+			return fail(res.status, { xpError: json.error });
+		}
 	},
 
 	// ── Supprimer le thread ───────────────────────────────────────────────

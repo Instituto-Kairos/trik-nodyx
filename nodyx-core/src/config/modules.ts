@@ -59,6 +59,12 @@ export const MODULE_REGISTRY: Record<string, ModuleManifest> = {
     family: 'core', icon: '🎛️', color: '#374151',
     core: true, hasPublicFace: false, tags: [],
   },
+  trik: {
+    id: 'trik', name: 'RPG',
+    description: 'Módulo personalizado do RPG.',
+    family: 'core', icon: '⚔️', color: '#e2b41d',
+    core: true, hasPublicFace: false, tags: [],
+  },
 
   // ── Community ───────────────────────────────────────────────────────────────
 

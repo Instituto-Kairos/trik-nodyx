@@ -248,6 +248,20 @@ describe('GET /api/v1/users/:username/profile', () => {
     expect(body.metadata).toEqual({ theme: { accent: '#7c3aed' } })
   })
 
+  // Rota pública (sem login): contas de sistema (OctoGuard, bot Trik, bots de streamer) não têm perfil
+  // público — a condição sumiu num merge do fork e /api/v1/users/OctoGuard/profile passou a devolver 200
+  // com o id interno da conta. Os outros lookups de usuário (members, instance…) sempre a mantiveram.
+  it('exclui contas de sistema do perfil público (is_system = false na query)', async () => {
+    vi.mocked(db.query).mockResolvedValue({ rows: [], rowCount: 0 } as any)
+
+    const res = await app.inject({ method: 'GET', url: '/api/v1/users/OctoGuard/profile' })
+
+    expect(res.statusCode).toBe(404)
+    const sql = vi.mocked(db.query).mock.calls[0][0] as string
+    expect(sql).toMatch(/u\.is_system\s*=\s*false/)
+    expect(vi.mocked(db.query).mock.calls[0][1]).toEqual(['OctoGuard'])
+  })
+
   it('returns 404 for unknown username', async () => {
     vi.mocked(db.query).mockResolvedValue({ rows: [], rowCount: 0 } as any)
 

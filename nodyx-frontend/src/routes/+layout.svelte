@@ -7,10 +7,11 @@
 	import { page } from '$app/state';
 	import { browser } from '$app/environment';
 	import { goto, beforeNavigate } from '$app/navigation';
-	import { initSocket, unreadCountStore, chatMentionStore, dmUnreadStore, onlineMembersStore, getSocket } from '$lib/socket';
+	import { initSocket, unreadCountStore, chatMentionStore, dmUnreadStore, onlineMembersStore, channelsStore, getSocket } from '$lib/socket';
 	import StreamerNotifListener from '$lib/components/streamer/StreamerNotifListener.svelte';
+	import TrikBotCard from '$lib/components/trik/TrikBotCard.svelte';
 	import { tryAutoConnect } from '$lib/socket';
-	import type { UserStatus } from '$lib/socket';
+	import type { UserStatus, LayoutChannel } from '$lib/socket';
 	import { resolveTheme, themeToVars } from '$lib/profileThemes';
 	import { buildNameStyle, buildAnimClass, ensureFontLoaded, GOOGLE_FONTS_URL } from '$lib/nameEffects';
 	import VoicePanel from '$lib/components/VoicePanel.svelte';
@@ -215,7 +216,7 @@
 	});
 
 	// All community members (for offline section in presence sidebar)
-	let allMembers = $state<{ user_id: string; username: string; avatar: string | null }[]>([])
+	let allMembers = $state<{ user_id: string; username: string; avatar: string | null; is_system?: boolean }[]>([])
 
 	// Offline = members who are NOT currently in the online list AND are not the current user
 	// The logged-in user is always considered online (belt-and-suspenders against race conditions)
@@ -226,6 +227,18 @@
 		)
 	)
 	let showOffline = $state(false)
+
+	// Widget do bot Trik — clique num membro-bot na sidebar abre isso em vez
+	// de navegar pra uma página de perfil completa (que não existe pra bots).
+	let botPopupOpen   = $state(false);
+	let botPopupAnchor = $state<HTMLElement | null>(null);
+	// Só o bot Trik tem esse cartão (dados de GET /api/v1/trik/bot). Os outros membros
+	// de sistema (OctoGuard, bots de streamer…) seguem o caminho normal do perfil.
+	const TRIK_BOT_USERNAME = 'Trik';
+	function openBotPopup(e: MouseEvent) {
+		botPopupAnchor = e.currentTarget as HTMLElement;
+		botPopupOpen   = true;
+	}
 
 	// SSR: set locale from cookie/accept-language BEFORE first render — avoids flash of default 'fr'
 	if (data.ssrLocale) locale.setSSR(data.ssrLocale as Locale)
@@ -284,7 +297,7 @@
 				if (membersRes.ok) allMembers = (await membersRes.json()).members ?? []
 				if (channelsRes?.ok) {
 					const fresh = (await channelsRes.json()).channels ?? []
-					if (fresh.length > 0) layoutChannels = fresh
+					if (fresh.length > 0) channelsStore.set(fresh)
 				}
 			} catch { /* ignore */ }
 		}
@@ -556,17 +569,12 @@
 	}
 
 	// ── Channel Sidebar ────────────────────────────────────────────────────────
-	type LayoutChannel = {
-		id:              string
-		name:            string
-		type?:           string
-		name_color?:     string | null
-		name_bold?:      boolean
-		name_italic?:    boolean
-		name_underline?: boolean
-		icon_emoji?:     string | null
-	}
-	let layoutChannels = $state<LayoutChannel[]>((data as any).channels ?? [])
+	// Source of truth is channelsStore ($lib/socket) — seeded once from SSR data
+	// below, then kept live by the channel:created/updated/deleted/reordered
+	// socket events (registered in initSocket()), so a channel created from the
+	// admin panel shows up here without a page reload.
+	channelsStore.set((data as any).channels ?? [])
+	let layoutChannels = $derived($channelsStore)
 
 	const layoutTextChannels = $derived(layoutChannels.filter(c => !c.type || c.type === 'text'))
 	const layoutVoiceChannels = $derived(layoutChannels.filter(c => c.type === 'voice'))
@@ -1673,7 +1681,7 @@
 						{#each offlineMembers.slice(0, 10) as member (member.user_id)}
 							<button type="button"
 							        class="member offline"
-							        onclick={() => goto(`/users/${member.username}`)}>
+							        onclick={(e) => member.is_system && member.username === TRIK_BOT_USERNAME ? openBotPopup(e) : goto(`/users/${member.username}`)}>
 								<div class="avatar-wrap">
 									{#if member.avatar}
 										<img src={member.avatar} alt="" class="avatar grayscale object-cover" />
@@ -1987,6 +1995,15 @@
 <!-- ── Screen share hover preview ────────────────────────────────────────── -->
 {#if screenPreview}
 	<MemberScreenPreview {...screenPreview} />
+{/if}
+
+<!-- ── Bot Trik popup ───────────────────────────────────────────────────── -->
+{#if botPopupOpen && data.token}
+	<TrikBotCard
+		token={data.token}
+		anchorEl={botPopupAnchor}
+		onclose={() => { botPopupOpen = false; botPopupAnchor = null; }}
+	/>
 {/if}
 
 <style>

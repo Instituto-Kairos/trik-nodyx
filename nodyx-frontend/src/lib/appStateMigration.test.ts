@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 /**
  * `$app/stores` est formellement déprécié, on ne le réintroduit pas.
@@ -22,7 +23,7 @@ import { join } from 'node:path'
  * résout `$app/*` dès qu'on lui donne ce fichier.
  */
 
-const SRC = new URL('..', import.meta.url).pathname
+const SRC = fileURLToPath(new URL('..', import.meta.url))
 
 function fichiers(dir: string, acc: string[] = []): string[] {
 	for (const e of readdirSync(dir)) {

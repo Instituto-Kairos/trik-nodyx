@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { basename } from 'node:path'
 
 // ── Mocks before importing the service ────────────────────────────────────────
 // vi.hoisted() lets us declare mocks that vi.mock factories can reference,
@@ -95,7 +96,7 @@ afterEach(() => {
 describe('getBackupFilePath — path traversal guard', () => {
   it('strips path components from the filename', () => {
     const safe = getBackupFilePath('../../etc/passwd')
-    expect(safe.endsWith('/passwd')).toBe(true)
+    expect(basename(safe)).toBe('passwd')
     expect(safe.includes('..')).toBe(false)
   })
 

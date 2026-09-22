@@ -21,8 +21,9 @@
 
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
-const PAGE = new URL('../routes/translate/+page.svelte', import.meta.url).pathname
+const PAGE = fileURLToPath(new URL('../routes/translate/+page.svelte', import.meta.url))
 const src = readFileSync(PAGE, 'utf-8')
 
 /** La règle CSS d'un sélecteur, telle qu'écrite dans le composant. */

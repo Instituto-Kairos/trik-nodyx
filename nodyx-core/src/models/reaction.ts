@@ -17,6 +17,24 @@ export interface ReactionSummary {
 // Au-delà, on affiche "+N autres" côté frontend (le count total reste exact).
 const USERS_PER_EMOJI_LIMIT = 8
 
+// Primitivas idempotentes (add sempre adiciona, remove sempre remove) — ao
+// contrário de toggleReaction, que inverte o estado. Usadas pelo bot Trik
+// (services/trik/bot.ts) pra marcar/desmarcar "essa cena contou xp" sem
+// depender de saber o estado atual antes de chamar.
+export async function addReaction(postId: string, userId: string, emoji: string): Promise<void> {
+  await db.query(
+    `INSERT INTO post_reactions (post_id, user_id, emoji) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+    [postId, userId, emoji]
+  )
+}
+
+export async function removeReaction(postId: string, userId: string, emoji: string): Promise<void> {
+  await db.query(
+    `DELETE FROM post_reactions WHERE post_id = $1 AND user_id = $2 AND emoji = $3`,
+    [postId, userId, emoji]
+  )
+}
+
 export async function toggleReaction(
   postId: string,
   userId: string,

@@ -147,8 +147,8 @@ export default async function instanceRoutes(app: FastifyInstance) {
     const communityId = await getCommunityId()
     if (!communityId) return reply.send({ members: [] })
 
-    const { rows } = await db.query<{ user_id: string; username: string; avatar: string | null }>(
-      `SELECT u.id AS user_id, u.username, u.avatar
+    const { rows } = await db.query<{ user_id: string; username: string; avatar: string | null; is_system: boolean }>(
+      `SELECT u.id AS user_id, u.username, u.avatar, u.is_system
        FROM community_members cm
        JOIN users u ON u.id = cm.user_id
        WHERE cm.community_id = $1

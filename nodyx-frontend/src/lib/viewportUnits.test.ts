@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 /**
  * Garde-fou : plus de `100vh` dans le frontend utilisateur.
@@ -27,7 +28,7 @@ import { join } from 'node:path'
  *     sera fait, ce test le signalera tout seul.
  */
 
-const RACINE = new URL('../', import.meta.url).pathname
+const RACINE = fileURLToPath(new URL('../', import.meta.url))
 const EXCEPTIONS = ['/routes/overlay/', '/routes/admin/']
 const INTERDIT = /\bmin-h-screen\b|\bh-screen\b|\b100vh\b/
 
@@ -38,7 +39,7 @@ function fichiersSources(dossier: string, acc: string[] = []): string[] {
 			if (entree === 'node_modules' || entree.startsWith('.')) continue
 			fichiersSources(chemin, acc)
 		} else if (/\.(svelte|css)$/.test(entree)) {
-			acc.push(chemin)
+			acc.push(chemin.split(sep).join('/'))
 		}
 	}
 	return acc

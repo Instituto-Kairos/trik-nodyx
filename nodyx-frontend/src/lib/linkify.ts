@@ -1,36 +1,71 @@
 /**
- * Linkify — convert bare URLs to clickable <a> tags
+ * Linkify — convert bare URLs and @mentions to clickable <a> tags
  *
  * Used in two contexts:
  *  - Chat messages (HTML content from sanitize-html/TipTap): process text nodes only
  *  - Whisper messages (plain text): split approach, no XSS risk
  */
 
-const URL_REGEX = /(https?:\/\/[^\s<>"'{}|\\^`[\]]+)/g
+const URL_REGEX      = /(https?:\/\/[^\s<>"'{}|\\^`[\]]+)/g
+const MENTION_REGEX  = /(?:^|\s)@([a-zA-Z0-9_-]{2,32})/g
 
 // ── For HTML content (chat) ───────────────────────────────────────────────────
-// Replaces bare URLs only inside text nodes (between > and <), skipping anything
-// already inside an <a> tag to avoid double-linking.
+// Tokeniza por TAG: o HTML é cortado em [texto, <tag>, texto, <tag>, …] e só os
+// trechos de TEXTO são linkificados — o markup das tags (atributos de <img>,
+// <iframe>, <video>…) nunca é tocado. Uma versão anterior cortava só em <a>/</a>
+// e rodava os regex sobre todo o resto, inclusive dentro das tags: a URL de
+// `<img src="https://…">` virava um <a> DENTRO do atributo e a imagem quebrava.
+//
+// Isso ainda cobre o que aquela versão queria consertar: o texto antes da
+// primeira tag, depois da última e mensagens só de texto (sem tag nenhuma) são
+// tokens de texto como quaisquer outros — é onde uma mensagem composta por bot
+// como `<strong>Nome</strong> … por @user.` põe a @menção.
+//
+// Dentro de um <a> já existente nada é linkificado (evita link duplo). Dentro de
+// <pre>/<code> só URLs viram link (como sempre), @menções não: "@algo" em código
+// é código, não uma menção.
+// Menções rodam ANTES das URLs: a saída de uma menção (`<a>@user</a>`) nunca
+// casa com URL_REGEX, mas o inverso poderia — `https://x.com/@bob` já viraria
+// <a> e reescanear o texto dele por @menções aninharia um segundo <a>.
+
+const TAG_SPLIT_RE    = /(<[^>]*>)/
+const ANCHOR_OPEN_RE  = /^<a(?:\s[^>]*)?>$/i
+const ANCHOR_CLOSE_RE = /^<\/a\s*>$/i
+const CODE_OPEN_RE    = /^<(?:pre|code)(?:\s[^>]*)?>$/i
+const CODE_CLOSE_RE   = /^<\/(?:pre|code)\s*>$/i
 
 export function linkifyHtml(html: string): string {
-  // Fast-path: if the content contains no URL, skip
-  if (!html.includes('http')) return html
+  // Fast-path: if the content has neither a URL nor a mention, skip
+  if (!html.includes('http') && !html.includes('@')) return html
 
   let insideAnchor = 0
-  // Process the HTML token by token: tags vs text nodes
-  return html.replace(/(<\/?a[\s>])|>([^<]+)</g, (match, anchorTag, textNode) => {
-    if (anchorTag) {
-      // Track whether we're inside an <a>…</a>
-      if (anchorTag.startsWith('</a')) insideAnchor = Math.max(0, insideAnchor - 1)
-      else insideAnchor++
-      return match
-    }
-    if (insideAnchor > 0) return match  // don't linkify inside existing <a>
-    const linked = textNode.replace(URL_REGEX, (url: string) =>
-      `<a href="${url}" target="_blank" rel="noopener noreferrer" class="text-indigo-400 hover:text-indigo-300 underline break-all">${url}</a>`
-    )
-    return '>' + linked + '<'
-  })
+  let insideCode   = 0
+  // Com grupo de captura, split() põe as tags nos índices ÍMPARES.
+  return html
+    .split(TAG_SPLIT_RE)
+    .map((part, i) => {
+      if (i % 2 === 1) {
+        if (ANCHOR_OPEN_RE.test(part))       insideAnchor++
+        else if (ANCHOR_CLOSE_RE.test(part)) insideAnchor = Math.max(0, insideAnchor - 1)
+        else if (CODE_OPEN_RE.test(part))    insideCode++
+        else if (CODE_CLOSE_RE.test(part))   insideCode = Math.max(0, insideCode - 1)
+        return part // a tag em si nunca é alterada
+      }
+      if (insideAnchor > 0) return part  // don't linkify inside an existing <a>
+
+      const mentioned = insideCode > 0 ? part : part.replace(MENTION_REGEX, (full: string, username: string) => {
+        const leading = full.startsWith('@') ? '' : full[0]
+        // `.nodyx-prose a` (app.css) sets text-decoration:underline at
+        // higher specificity than the `no-underline` utility class, so the
+        // class alone loses — same fix already used elsewhere in this
+        // codebase for the same rule (chat/+page.svelte link-preview card).
+        return `${leading}<a href="/users/${username}" class="text-indigo-400 hover:text-indigo-300 font-medium" style="text-decoration: none">@${username}</a>`
+      })
+      return mentioned.replace(URL_REGEX, (url: string) =>
+        `<a href="${url}" target="_blank" rel="noopener noreferrer" class="text-indigo-400 hover:text-indigo-300 underline break-all">${url}</a>`
+      )
+    })
+    .join('')
 }
 
 // ── For plain text (whisper) ──────────────────────────────────────────────────

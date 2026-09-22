@@ -14,9 +14,10 @@
 
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
 const SQL = readFileSync(
-  new URL('../migrations/116_relais_transport.sql', import.meta.url).pathname, 'utf-8')
+  fileURLToPath(new URL('../migrations/116_relais_transport.sql', import.meta.url)), 'utf-8')
 
 describe('télémétrie de dépréciation du 7443', () => {
   it("n'enregistre QUE le transport et la date", () => {

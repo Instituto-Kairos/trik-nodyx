@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
 /**
  * La sortie des paramètres audio doit rester atteignable, même après défilement.
@@ -29,11 +30,11 @@ import { readFileSync } from 'node:fs'
  */
 
 const SOURCE = readFileSync(
-	new URL('./components/VoiceSettings.svelte', import.meta.url).pathname,
+	fileURLToPath(new URL('./components/VoiceSettings.svelte', import.meta.url)),
 	'utf-8',
 )
 const PANNEAU = readFileSync(
-	new URL('./components/VoicePanel.svelte', import.meta.url).pathname,
+	fileURLToPath(new URL('./components/VoicePanel.svelte', import.meta.url)),
 	'utf-8',
 )
 

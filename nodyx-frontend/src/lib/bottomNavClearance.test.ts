@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 /**
  * Toute page avec une zone de saisie en bas doit réserver la barre de navigation.
@@ -21,8 +22,8 @@ import { join } from 'node:path'
  * `--bottom-nav-h` quelque part.
  */
 
-const ROUTES = new URL('../routes', import.meta.url).pathname
-const COMPOSANTS = new URL('./components', import.meta.url).pathname
+const ROUTES = fileURLToPath(new URL('../routes', import.meta.url))
+const COMPOSANTS = fileURLToPath(new URL('./components', import.meta.url))
 const EXCEPTIONS = [
 	'/overlay/',
 	'/admin/',
@@ -44,7 +45,7 @@ function pages(dossier: string, acc: string[] = []): string[] {
 		// ce test ne regardait que les `+page.svelte`. Le champ etait donc
 		// entierement cache derriere la barre, sans que rien ne le signale
 		// (defaut du 17/08).
-		else if (e === '+page.svelte' || e.endsWith('.svelte')) acc.push(chemin)
+		else if (e === '+page.svelte' || e.endsWith('.svelte')) acc.push(chemin.split(sep).join('/'))
 	}
 	return acc
 }
