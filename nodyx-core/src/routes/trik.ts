@@ -217,6 +217,27 @@ export async function trikPlayerPlugin(app: FastifyInstance) {
     return reply.send({ characters })
   })
 
+  // GET /api/v1/trik/aliases?q= — alvos mencionáveis por nome de personagem.
+  //
+  // Alimenta o autocomplete de `@` no chat e no fórum. Cada item traz o par
+  // "personagem · jogador" porque é a PESSOA que valida qual jogador quis
+  // marcar: se dois jogadores têm um "Kaelen", voltam os dois e ela escolhe.
+  //
+  // O cliente insere `@[<alias>](<username>)` no texto; quem notifica é
+  // resolveMentions() (utils/mentions.ts), que lê o username entre parênteses.
+  // Ou seja, este endpoint é só descoberta — nenhuma autorização depende dele.
+  app.get('/aliases', async (request, reply) => {
+    const communityId = await getCommunityId()
+    if (!communityId) return reply.code(503).send({ error: 'Community not configured' })
+
+    const { q } = request.query as { q?: string }
+    // Um `q` longo não é um caso de uso, é um scan de tabela disfarçado.
+    const termo = (q ?? '').trim().slice(0, 100)
+
+    const aliases = await TrikModel.searchMentionableAliases(communityId, termo)
+    return reply.send({ aliases })
+  })
+
   app.post('/registro', {
     preHandler: validate({ body: RegistroBody }),
   }, async (request, reply) => {

@@ -757,6 +757,7 @@
 		} else if (path.startsWith('/polls'))        { crumbs.push({ label: tFn('nav.polls') });
 		} else if (path.startsWith('/tasks'))        { crumbs.push({ label: tFn('nav.tasks') });
 		} else if (path.startsWith('/wiki'))         { crumbs.push({ label: tFn('nav.wiki') });
+		} else if (path.startsWith('/galeria'))      { crumbs.push({ label: tFn('nav.galeria') });
 		} else if (path.startsWith('/library'))      { crumbs.push({ label: tFn('nav.library') });
 		} else if (path.startsWith('/musique'))      { crumbs.push({ label: tFn('nav.music') });
 		} else if (path.startsWith('/search'))       { crumbs.push({ label: tFn('nav.search') });
@@ -1237,7 +1238,7 @@
 						{ href: '/polls',    label: tFn('nav.polls'),     icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z',                                                                                          show: mods.polls !== false },
 						{ href: '/tasks',    label: tFn('nav.tasks'),       icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4',                                                                                                                                                    show: mods.tasks !== false },
 						{ href: '/wiki',     label: tFn('nav.wiki'),         icon: 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253',                                             show: !!mods.wiki },
-						{ href: '/library',  label: tFn('nav.library'), icon: 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253',                                             show: true },
+						{ href: '/galeria',  label: tFn('nav.galeria'), icon: 'M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z',                                                          show: mods.galeria !== false },
 						{ href: '/musique',  label: tFn('nav.music'),   icon: 'M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z',                                                                                                                                                              show: true },
 						{ href: '/garden',   label: tFn('nav.garden'),       icon: 'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z',                                                                                                                                            show: true },
 					].filter(i => i.show) as item}
@@ -1810,14 +1811,6 @@
 		</a>
 		{/if}
 
-		<!-- Bibliothèque -->
-		<a href="/library" class="flex-1 flex flex-col items-center justify-center py-2 min-h-14 gap-0.5 {isActive('/library') ? 'text-indigo-400' : 'text-gray-500'}">
-			<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-				<path stroke-linecap="round" stroke-linejoin="round" d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
-				<path stroke-linecap="round" stroke-linejoin="round" d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
-			</svg>
-			<span class="text-xs font-medium">{tFn('nav.bar_library')}</span>
-		</a>
 
 		<!-- Annuaire -->
 		<a href="/communities" class="flex-1 flex flex-col items-center justify-center py-2 min-h-14 gap-0.5 {isActive('/communities') ? 'text-indigo-400' : 'text-gray-500'}">

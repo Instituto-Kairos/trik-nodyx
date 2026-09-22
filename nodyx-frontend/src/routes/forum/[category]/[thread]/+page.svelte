@@ -31,6 +31,7 @@
 	import type { PageData } from './$types';
 	import ProfileCard from '$lib/components/ProfileCard.svelte';
 	import NodyxEditor from '$lib/components/editor/NodyxEditor.svelte';
+	import { renderAliasMentions } from '$lib/linkify';
 	import PostReactions from '$lib/components/PostReactions.svelte';
 	import PollCard from '$lib/components/PollCard.svelte';
 	import PollCreator from '$lib/components/PollCreator.svelte';
@@ -633,7 +634,7 @@
 						class="space-y-2"
 					>
 						<input type="hidden" name="post_id" value={post.id} />
-						<NodyxEditor
+						<NodyxEditor mentions
 							name="content"
 							initialContent={post.content}
 							compact={true}
@@ -653,7 +654,7 @@
 				{:else}
 					<!-- Contenu HTML rendu -->
 					<div class="nodyx-prose">
-						{@html post.content}
+						{@html renderAliasMentions(post.content)}
 					</div>
 					<!-- Réactions + Merci -->
 					<PostReactions
@@ -693,7 +694,7 @@
 				class="space-y-3"
 			>
 				{#key replyKey}
-					<NodyxEditor
+					<NodyxEditor mentions
 						name="content"
 						placeholder={tFn('forum.reply_placeholder')}
 						compact={true}

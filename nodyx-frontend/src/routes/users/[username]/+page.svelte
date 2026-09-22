@@ -7,6 +7,7 @@
 	import { page } from '$app/state'
 	import { goto } from '$app/navigation'
 	import { resolveTheme, themeToStyle } from '$lib/profileThemes'
+	import { buildNameStyle, buildAnimClass, ensureFontLoaded } from '$lib/nameEffects'
 	import { socket } from '$lib/socket'
 	import { apiFetch } from '$lib/api'
 	import { t } from '$lib/i18n'
@@ -23,6 +24,12 @@
 
 	// Initials fallback
 	const initials = $derived((profile.display_name || profile.username).trim().charAt(0).toUpperCase())
+
+	// Effets de pseudo : la page posait `style="color: ..."` à la main et
+	// laissait tomber police, halo et animation — seule la couleur des cinq
+	// effets survivait ici, alors que le chat, le forum et la sidebar passent
+	// tous par buildNameStyle(). On rejoint le helper partagé.
+	$effect(() => ensureFontLoaded(profile.name_font_family, profile.name_font_url))
 
 	// Live points — synced from server data, updated in real time via socket
 	let livePoints = $state(untrack(() => profile.points))
@@ -392,8 +399,8 @@
 			<!-- Name + meta -->
 			<div class="pb-1 min-w-0 flex-1">
 				<div class="flex flex-wrap items-center gap-2 mb-1">
-					<h1 class="text-3xl font-black leading-tight drop-shadow-lg truncate"
-					    style="color: {profile.name_color || '#ffffff'}">
+					<h1 class="text-3xl font-black leading-tight drop-shadow-lg truncate {buildAnimClass(profile)}"
+					    style={buildNameStyle(profile, '#ffffff')}>
 						{profile.display_name || profile.username}
 					</h1>
 					<!-- Level badge — prominent -->

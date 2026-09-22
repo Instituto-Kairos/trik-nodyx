@@ -7,6 +7,7 @@
 	import type { PageData } from './$types';
 	import { socket, getSocket } from '$lib/socket';
 	import { linkifyHtml } from '$lib/linkify';
+	import { searchMentionTargets, mentionInsertText, type MentionTarget } from '$lib/mentionTargets';
 	import NodyxEditor from '$lib/components/editor/NodyxEditor.svelte';
 	import EmojiPicker from '$lib/components/EmojiPicker.svelte';
 	import { loadCustomEmojis, renderCustomEmojis, customEmojisStore } from '$lib/customEmojis';
@@ -183,7 +184,7 @@
 
 	// @mention autocomplete
 	let mentionQuery       = $state('');
-	let mentionSuggestions = $state<{ username: string; avatar: string | null }[]>([]);
+	let mentionSuggestions = $state<MentionTarget[]>([]);
 	let showMentions       = $state(false);
 
 	/**
@@ -882,7 +883,7 @@
 		if (showMentions) {
 			if (e.key === 'ArrowDown')  { e.preventDefault(); mentionIndex = Math.min(mentionIndex + 1, mentionSuggestions.length - 1); return; }
 			if (e.key === 'ArrowUp')    { e.preventDefault(); mentionIndex = Math.max(mentionIndex - 1, 0); return; }
-			if (e.key === 'Enter')      { e.preventDefault(); if (mentionSuggestions[mentionIndex]) selectMention(mentionSuggestions[mentionIndex].username); return; }
+			if (e.key === 'Enter')      { e.preventDefault(); if (mentionSuggestions[mentionIndex]) selectMention(mentionSuggestions[mentionIndex]); return; }
 			if (e.key === 'Escape')     { showMentions = false; return; }
 		}
 		if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
@@ -933,27 +934,26 @@
 		if (match && match[1].length >= 1) {
 			mentionQuery = match[1];
 			try {
-				const { PUBLIC_API_URL } = await import('$env/static/public');
-				const res = await fetch(`${PUBLIC_API_URL}/api/v1/chat/members?q=${encodeURIComponent(mentionQuery)}`, {
-					headers: token ? { Authorization: `Bearer ${token}` } : {}
-				});
-				if (res.ok) {
-					mentionSuggestions = (await res.json()).members ?? [];
-					showMentions = mentionSuggestions.length > 0;
-					mentionIndex = 0;
-				}
+				mentionSuggestions = await searchMentionTargets(
+					(path, init) => apiFetch(fetch, path, init),
+					mentionQuery,
+					token ?? undefined,
+				);
+				showMentions = mentionSuggestions.length > 0;
+				mentionIndex = 0;
 			} catch { showMentions = false; }
 		} else {
 			showMentions = false;
 		}
 	}
 
-	function selectMention(username: string) {
+	function selectMention(target: MentionTarget) {
 		const textarea    = document.querySelector<HTMLTextAreaElement>('textarea#chat-input');
 		const cursor      = textarea?.selectionStart ?? inputText.length;
 		const textBefore  = inputText.slice(0, cursor);
 		const textAfter   = inputText.slice(cursor);
-		const replaced    = textBefore.replace(/@[\w\-]{0,30}$/, `@${username} `);
+		const inserido    = mentionInsertText(target) + ' ';
+		const replaced    = textBefore.replace(/@[\w\-]{0,30}$/, inserido);
 		inputText         = replaced + textAfter;
 		showMentions      = false;
 		// Re-focus textarea
@@ -1546,14 +1546,24 @@
 						<div class="absolute bottom-full left-0 mb-1 w-56 bg-gray-800 border border-gray-600 rounded-lg shadow-xl overflow-hidden z-20">
 							{#each mentionSuggestions as m, i}
 								<button
-									onclick={() => selectMention(m.username)}
+									onclick={() => selectMention(m)}
 									class="w-full text-left flex items-center gap-2 px-3 py-2 text-sm transition-colors
 									       {i === mentionIndex ? 'bg-indigo-700 text-white' : 'text-gray-300 hover:bg-gray-700'}"
 								>
 									<span class="w-5 h-5 rounded-full bg-indigo-700 flex items-center justify-center text-xs font-bold shrink-0">
-										{m.username.charAt(0).toUpperCase()}
+										{(m.alias ?? m.username).charAt(0).toUpperCase()}
 									</span>
-									@{m.username}
+									{#if m.alias}
+										<!-- Validação combinada: quem escolhe vê o personagem E o jogador
+										     por trás. É o que resolve dois "Kaelen" de jogadores diferentes,
+										     sem o servidor ter de adivinhar. -->
+										<span class="min-w-0 truncate">
+											{m.alias}
+											<span class="opacity-60"> · {m.playerName ?? m.username}</span>
+										</span>
+									{:else}
+										@{m.username}
+									{/if}
 								</button>
 							{/each}
 						</div>
@@ -1810,6 +1820,7 @@
 			<div class="flex-1 overflow-y-auto p-4">
 				{#key editorKey}
 					<NodyxEditor
+						mentions
 						compact={false}
 						initialContent={richInitial}
 						onchange={(v) => { richContent = v; }}
