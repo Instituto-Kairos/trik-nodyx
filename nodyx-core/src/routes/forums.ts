@@ -105,6 +105,7 @@ const CreateCategoryBody = z.object({
   name:         z.string().min(1).max(100),
   description:  z.string().max(500).optional(),
   position:     z.number().int().min(0).optional(),
+  parent_id:    z.string().uuid().optional(),
 })
 
 const ThreadsQuery = z.object({
@@ -344,8 +345,10 @@ app.get('/threads', {
 
     const [posts, tags, xpEnabled] = await Promise.all([
       PostModel.listByThread(threadId, {
-        limit:    query.limit  ? Number(query.limit)  : undefined,
-        offset:   query.offset ? Number(query.offset) : undefined,
+        // Pas de plafond de messages par sujet : seule la TAILLE DE PAGE est bornée
+        // (100 max) et les valeurs invalides retombent sur les défauts du model.
+        limit:    Number.isInteger(Number(query.limit))  && Number(query.limit)  > 0 ? Math.min(Number(query.limit), 100) : undefined,
+        offset:   Number.isInteger(Number(query.offset)) && Number(query.offset) > 0 ? Number(query.offset) : undefined,
         viewerId,
       }),
       TagModel.getTagsForThread(threadId),

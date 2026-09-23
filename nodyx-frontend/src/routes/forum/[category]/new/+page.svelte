@@ -16,7 +16,7 @@
 	let submitting = $state(false);
 
 	// ── Sélecteur catégorie / sous-catégorie ──────────────────────────────
-	type CatNode = { id: string; name: string; post_min_role?: string; children: CatNode[] };
+	type CatNode = { id: string; slug?: string; name: string; post_min_role?: string; children: CatNode[] };
 
 	// Rôle de l'utilisateur courant vs post_min_role de la catégorie. Un
 	// non-membre vaut -1, donc en dessous de 'member' : le back tranche pour de
@@ -27,35 +27,47 @@
 		return userRank >= (RANK[cat.post_min_role ?? 'member'] ?? 0);
 	}
 
-	function findInitial(cats: CatNode[], targetId: string): { parentId: string; subId: string | null } {
+	// Chemin d'ids de la racine jusqu'à la catégorie ciblée, à n'importe quelle profondeur.
+	// targetId vient de l'URL : c'est un slug (ou un UUID selon le lien).
+	function findPath(cats: CatNode[], targetId: string): string[] | null {
 		for (const cat of cats) {
-			if (cat.id === targetId && canPostIn(cat)) return { parentId: cat.id, subId: null };
-			for (const child of cat.children ?? []) {
-				if (child.id === targetId && canPostIn(child)) return { parentId: cat.id, subId: child.id };
-			}
+			if (cat.id === targetId || cat.slug === targetId) return [cat.id];
+			const sub = findPath(cat.children ?? [], targetId);
+			if (sub) return [cat.id, ...sub];
 		}
-		return { parentId: cats[0]?.id ?? targetId, subId: null };
+		return null;
 	}
 
 	// N'expose que les catégories où l'utilisateur peut réellement ouvrir un fil.
-	const rootCategories = $derived(
-		((data.categories ?? []) as CatNode[])
+	function filterPostable(cats: CatNode[]): CatNode[] {
+		return cats
 			.filter(canPostIn)
-			.map(c => ({ ...c, children: (c.children ?? []).filter(canPostIn) }))
-	);
+			.map(c => ({ ...c, children: filterPostable(c.children ?? []) }));
+	}
+
+	const rootCategories = $derived(filterPostable((data.categories ?? []) as CatNode[]));
 	const noCategory = $derived(rootCategories.length === 0);
-	const initial        = $derived(findInitial(rootCategories, data.currentCategoryId ?? ''));
 
-	let selectedParentId = $state(untrack(() => initial.parentId));
-	let selectedSubId    = $state<string | null>(untrack(() => initial.subId));
+	let categoryPath = $state<string[]>(untrack(() => {
+		const roots = filterPostable((data.categories ?? []) as CatNode[]);
+		return findPath(roots, data.currentCategoryId ?? '') ?? (roots[0] ? [roots[0].id] : []);
+	}));
 
-	const selectedParent  = $derived(rootCategories.find(c => c.id === selectedParentId));
-	const subcategories   = $derived(selectedParent?.children ?? []);
-	const finalCategoryId = $derived(selectedSubId || selectedParentId);
+	// Un sélecteur par niveau : racines, puis enfants du choix précédent, tant qu'il y en a.
+	const levels = $derived.by(() => {
+		const out: CatNode[][] = [];
+		let nodes = rootCategories;
+		for (let i = 0; nodes.length > 0; i++) {
+			out.push(nodes);
+			nodes = nodes.find(n => n.id === categoryPath[i])?.children ?? [];
+		}
+		return out;
+	});
+	const finalCategoryId = $derived(categoryPath[categoryPath.length - 1] ?? '');
 
-	function onParentChange(e: Event) {
-		selectedParentId = (e.currentTarget as HTMLSelectElement).value;
-		selectedSubId    = null;
+	function onLevelChange(level: number, e: Event) {
+		const value = (e.currentTarget as HTMLSelectElement).value;
+		categoryPath = value ? [...categoryPath.slice(0, level), value] : categoryPath.slice(0, level);
 	}
 
 	// ── Sondage optionnel ──────────────────────────────────────────────────
@@ -106,25 +118,19 @@
 		<div>
 			<span class="block text-sm text-gray-400 mb-2">{tFn('forum.category')}</span>
 			<div class="flex flex-wrap gap-2">
-				<select
-					onchange={onParentChange}
-					class="flex-1 min-w-[180px]bg-gray-800 border border-gray-700 px-3 py-2 text-white focus:outline-none focus:border-indigo-500"
-				>
-					{#each rootCategories as cat}
-						<option value={cat.id} selected={cat.id === selectedParentId}>{cat.name}</option>
-					{/each}
-				</select>
-				{#if subcategories.length > 0}
+				{#each levels as options, level}
 					<select
-						onchange={(e) => selectedSubId = (e.currentTarget as HTMLSelectElement).value || null}
+						onchange={(e) => onLevelChange(level, e)}
 						class="flex-1 min-w-[180px]bg-gray-800 border border-gray-700 px-3 py-2 text-white focus:outline-none focus:border-indigo-500"
 					>
-						<option value="">{tFn('forum.no_subcategory')}</option>
-						{#each subcategories as sub}
-							<option value={sub.id} selected={sub.id === selectedSubId}>{sub.name}</option>
+						{#if level > 0}
+							<option value="">{tFn('forum.no_subcategory')}</option>
+						{/if}
+						{#each options as cat}
+							<option value={cat.id} selected={cat.id === categoryPath[level]}>{cat.name}</option>
 						{/each}
 					</select>
-				{/if}
+				{/each}
 			</div>
 			<input type="hidden" name="category_id" value={finalCategoryId} />
 		</div>

@@ -26,7 +26,9 @@
 
 	import { enhance, applyAction } from '$app/forms';
 	import { untrack } from 'svelte';
-	import { invalidateAll, goto } from '$app/navigation';
+	import { invalidateAll, goto, afterNavigate } from '$app/navigation';
+	import ThreadPager from '$lib/components/ThreadPager.svelte';
+	import { POSTS_PER_PAGE } from '$lib/forumPagination';
 	import { page } from '$app/state';
 	import type { PageData } from './$types';
 	import ProfileCard from '$lib/components/ProfileCard.svelte';
@@ -142,7 +144,18 @@
 	function canDelete(post: any) { return user && (user.id === post.author_id || isMod); }
 	
 	// ── Dernier posteur ───────────────────────────────────────────────────
-	const lastPost = $derived(posts.length > 0 ? posts[posts.length - 1] : null);
+	// Dernier message du SUJET : n'est connu que sur la dernière page.
+	const lastPost = $derived(data.page === data.totalPages && posts.length > 0 ? posts[posts.length - 1] : null);
+	// Rang global du premier message de la page (numérotation « Réponse #n »).
+	const pageOffset = $derived((data.page - 1) * POSTS_PER_PAGE);
+
+	// Changer de page (ou revenir dessus) : on repart du haut du sujet. Le scroll
+	// est dans <main>, que SvelteKit ne remet pas à zéro tout seul. Avec une ancre
+	// (#post-…), SvelteKit fait déjà le saut : on n'y touche pas.
+	afterNavigate(({ to, type }) => {
+		if (type === 'enter' || type === 'popstate' || to?.url.hash) return;
+		document.getElementById('thread-top')?.scrollIntoView();
+	});
 </script>
 
 <svelte:head>
@@ -181,6 +194,8 @@
 		}
 	})}
 </svelte:head>
+
+<div id="thread-top"></div>
 
 <!-- ── En-tête du thread avec avatar créateur ─────────────────────────────── -->
 <div class="mb-8">
@@ -532,21 +547,25 @@
 {/if}
 
 <!-- ── Liste des posts (inchangée, mais on peut ajouter des séparateurs visuels) ── -->
-<div class="space-y-4 mt-6">
+<div class="mt-6">
+	<ThreadPager page={data.page} totalPages={data.totalPages} position="top" />
+</div>
+
+<div class="space-y-4 mt-2">
 	{#each posts as post, index (post.id)}
-		<!-- Séparateur visuel pour les réponses -->
-		{#if index > 0}
+		<!-- Séparateur visuel pour les réponses (tout sauf le tout premier message du sujet) -->
+		{#if pageOffset + index > 0}
 			<div class="relative flex justify-center my-2">
 				<div class="absolute inset-0 flex items-center">
 					<div class="w-full border-t border-gray-800"></div>
 				</div>
 				<div class="relative bg-gray-950 px-4 text-xs text-gray-700">
-					{tFn('forum.reply_number', { n: String(index + 1) })}
+					{tFn('forum.reply_number', { n: String(pageOffset + index + 1) })}
 				</div>
 			</div>
 		{/if}
 
-		<article class="flex flex-col sm:flex-row gap-4 border border-white/[.06] bg-gray-900/60 p-4 hover:border-indigo-900/50 transition-colors duration-200">
+		<article id="post-{post.id}" class="scroll-mt-4 flex flex-col sm:flex-row gap-4 border border-white/[.06] bg-gray-900/60 p-4 hover:border-indigo-900/50 transition-colors duration-200">
 			<!-- Profil auteur -->
 			<ProfileCard
 				username={post.author_username}
@@ -672,6 +691,10 @@
 	{/each}
 </div>
 
+<div class="mt-4">
+	<ThreadPager page={data.page} totalPages={data.totalPages} position="bottom" />
+</div>
+
 <!-- ── Formulaire de réponse (inchangé) ───────────────────────────────────── -->
 {#if !thread.is_locked}
 	{#if user}
@@ -725,3 +748,4 @@
 		{tFn('forum.thread_locked')}
 	</p>
 {/if}
+<div id="thread-end"></div>
