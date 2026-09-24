@@ -690,7 +690,16 @@ _render_caddyfile() {
         X-Frame-Options           "SAMEORIGIN"
         Referrer-Policy           "strict-origin-when-cross-origin"
         Permissions-Policy        "camera=(self), microphone=(self), geolocation=(self)"
-        Content-Security-Policy   "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self' wss: https:; frame-src https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com https://geo.dailymotion.com https://player.twitch.tv https://clips.twitch.tv https://w.soundcloud.com https://open.spotify.com; object-src 'none'; base-uri 'self'; form-action 'self';"
+        # This policy REPLACES the one SvelteKit emits (see nodyx-frontend/
+        # svelte.config.js), so it must stay a superset of it. The two Google
+        # Fonts hosts are what the username effects need: +layout.svelte loads
+        # the preset families (Orbitron, Rajdhani, ...) from fonts.googleapis.com,
+        # which then serves the woff2 files from fonts.gstatic.com. Without both,
+        # the stylesheet is refused and NO selected font renders anywhere --
+        # not on a profile, not even in the editor preview, while colour, glow
+        # and animation keep working because they need no external resource.
+        # Same drift class as the frame-src hosts noted in svelte.config.js.
+        Content-Security-Policy   "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https:; media-src 'self' blob:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' wss: https:; frame-src https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com https://geo.dailymotion.com https://player.twitch.tv https://clips.twitch.tv https://w.soundcloud.com https://open.spotify.com; object-src 'none'; base-uri 'self'; form-action 'self';"
         -Server
     }
 }

@@ -1,22 +1,42 @@
 import { error, redirect, fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { apiFetch } from '$lib/api';
+import { POSTS_PER_PAGE, totalPages, parsePageParam } from '$lib/forumPagination';
 
-export const load: PageServerLoad = async ({ fetch, params, cookies }) => {
+export const load: PageServerLoad = async ({ fetch, params, cookies, url }) => {
 	const token = cookies.get('token') ?? null;
 
-	const res  = await apiFetch(fetch, `/forums/threads/${params.thread}`);
-	const json = await res.json();
+	// Pagination : pas de plafond de messages par sujet, seulement un découpage
+	// d'affichage. `?page=last` (posé après une réponse) et une page hors borne
+	// sont résolues avec le total renvoyé par l'API, d'où un éventuel 2e appel.
+	const wanted = parsePageParam(url.searchParams.get('page'));
+	const fetchPage = (p: number, limit = POSTS_PER_PAGE) =>
+		apiFetch(fetch, `/forums/threads/${params.thread}?limit=${limit}&offset=${(p - 1) * POSTS_PER_PAGE}`);
+
+	let page = wanted === 'last' ? 1 : wanted;
+	let res  = await fetchPage(page, wanted === 'last' ? 1 : POSTS_PER_PAGE);
+	let json = await res.json();
 
 	if (!res.ok) {
 		error(res.status, json.error ?? 'Thread introuvable');
+	}
+
+	const pages  = totalPages(json.thread.post_count);
+	const target = wanted === 'last' ? pages : Math.min(wanted, pages);
+	if (target !== page || wanted === 'last') {
+		page = target;
+		res  = await fetchPage(page);
+		json = await res.json();
+		if (!res.ok) {
+			error(res.status, json.error ?? 'Thread introuvable');
+		}
 	}
 
 	// Redirect UUID-based URLs to canonical slug URL (301 for SEO)
 	const thread = json.thread;
 	const catParam  = params.category;
 	const catSlug   = thread.category_slug ?? null;
-	const canonical = `/forum/${catSlug ?? catParam}/${thread.slug ?? params.thread}`;
+	const canonical = `/forum/${catSlug ?? catParam}/${thread.slug ?? params.thread}${page > 1 ? `?page=${page}` : ''}`;
 	if ((thread.slug && params.thread !== thread.slug) || (catSlug && catParam !== catSlug)) {
 		redirect(301, canonical);
 	}
@@ -25,7 +45,8 @@ export const load: PageServerLoad = async ({ fetch, params, cookies }) => {
 	// bannière de l'article. Lue côté serveur pour que Discord/Twitter/Facebook
 	// (qui n'exécutent pas de JS) la voient dans le HTML SSR. Chemin relatif :
 	// le composant l'absolutise via page.url.origin.
-	const ogImagePath: string | null =
+	// Seule la page 1 porte le message d'ouverture : ailleurs, pas d'image propre.
+	const ogImagePath: string | null = page > 1 ? null :
 		(json.posts?.[0]?.content ?? '').match(/<img\b[^>]*\bsrc=["']([^"']+)["']/i)?.[1] ?? null;
 
 	// Charger le sondage lié à ce thread (s'il existe)
@@ -46,7 +67,7 @@ export const load: PageServerLoad = async ({ fetch, params, cookies }) => {
 	// sempre apagado pra quem ele deveria informar.
 	const xpEnabled: boolean = json.xp_enabled === true;
 
-	return { thread: json.thread, posts: json.posts, poll, token, ogImagePath, xpEnabled };
+	return { thread: json.thread, posts: json.posts, poll, token, ogImagePath, xpEnabled, page, totalPages: pages };
 };
 
 export const actions: Actions = {
@@ -69,6 +90,11 @@ export const actions: Actions = {
 			const json = await res.json();
 			return fail(res.status, { replyError: json.error });
 		}
+
+		// Atterrit sur le dernier message : sa page n'est pas connue ici (le total
+		// vient du load), d'où `?page=last` + ancre sur le post créé.
+		const { post } = await res.json();
+		redirect(303, `/forum/${params.category}/${params.thread}?page=last${post?.id ? `#post-${post.id}` : ''}`);
 	},
 
 	// ── Éditer un post ────────────────────────────────────────────────────

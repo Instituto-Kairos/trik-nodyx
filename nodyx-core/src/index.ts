@@ -25,6 +25,7 @@ import gardenRoutes       from './routes/garden'
 import whisperRoutes      from './routes/whispers'
 import pollRoutes         from './routes/polls'
 import dmRoutes           from './routes/dm'
+import galeriaRoutes      from './routes/galeria'
 import eventRoutes           from './routes/events'
 import authenticatorRoutes   from './routes/authenticator'
 import taskRoutes            from './routes/tasks'
@@ -226,6 +227,7 @@ server.register(gardenRoutes,        { prefix: '/api/v1/garden' })
 server.register(whisperRoutes,       { prefix: '/api/v1/whispers' })
 server.register(pollRoutes,          { prefix: '/api/v1/polls' })
 server.register(dmRoutes,            { prefix: '/api/v1/dm' })
+server.register(galeriaRoutes,       { prefix: '/api/v1/galeria' })
 server.register(eventRoutes,          { prefix: '/api/v1/events' })
 server.register(authenticatorRoutes,  { prefix: '/api/auth' })
 server.register(taskRoutes,           { prefix: '/api/v1/tasks' })

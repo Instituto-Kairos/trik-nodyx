@@ -44,16 +44,27 @@ echo -e "${BOLD}━━━  Update do servidor de teste (WSL)  ━━━${RESET}"
 STEP="1. checar a base do /opt/nodyx"
 info "Conferindo que $NODYX_DIR está na mesma base do fork..."
 OPT_HEAD="$(git -c safe.directory='*' -C "$NODYX_DIR" rev-parse HEAD)"
-if ! git -c safe.directory='*' -C "$REPO" diff --quiet "$OPT_HEAD" HEAD -- nodyx-core nodyx-frontend 2>/dev/null; then
-  die "/opt/nodyx está em ${OPT_HEAD:0:7}, que não é o commit-base do fork (nodyx-core/nodyx-frontend diferem,
-   ou o commit não existe no fork). Copiar só o que mudou misturaria versões.
+# O commit de /opt precisa existir no fork e ser ANCESTRAL do HEAD daqui: aí o
+# staging pode copiar tudo que mudou de lá pra cá (commits da branch + o que
+# ainda não foi commitado). Se não for ancestral, /opt tem código que o fork não
+# tem — copiar só o diff misturaria versões.
+if ! git -c safe.directory='*' -C "$REPO" merge-base --is-ancestor "$OPT_HEAD" HEAD 2>/dev/null; then
+  die "/opt/nodyx está em ${OPT_HEAD:0:7}, que não é ancestral do HEAD do fork (commit desconhecido
+   aqui, ou /opt tem coisa que o fork não tem). Copiar só o que mudou misturaria versões.
    Rode full-reset.sh (ele também traz o upstream) ou sincronize o fork."
 fi
-ok "base ${OPT_HEAD:0:7} = fork"
+export BASE="$OPT_HEAD"
+ok "base ${OPT_HEAD:0:7} é ancestral do fork"
+
+DELETED="$(git -c safe.directory='*' -C "$REPO" diff --diff-filter=D --name-only "$OPT_HEAD" HEAD -- nodyx-core nodyx-frontend)"
+if [[ -n "$DELETED" ]]; then
+  echo -e "${RED}⚠  arquivos apagados no fork desde ${OPT_HEAD:0:7} continuarão existindo em /opt (use full-reset.sh):${RESET}" >&2
+  echo "$DELETED" >&2
+fi
 
 STEP="2. staging"
 info "Preparando o staging (como $SUDO_USER)..."
-runuser -u "$SUDO_USER" -- bash "$HERE/stage.sh" | grep '^---'
+runuser -u "$SUDO_USER" -- env BASE="$BASE" bash "$HERE/stage.sh" | grep '^---'
 
 STEP="3. ajustes de schema"
 info "Aplicando ajustes de schema (idempotentes)..."

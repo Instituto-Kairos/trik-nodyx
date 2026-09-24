@@ -104,6 +104,16 @@ export const MODULE_REGISTRY: Record<string, ModuleManifest> = {
     family: 'community', icon: '📊', color: '#10b981',
     core: false, hasPublicFace: false, tags: ['toutes'],
   },
+  // Galeria INTERNA (family 'community'), distinta do módulo `gallery` abaixo,
+  // que é a galeria pública de vitrine (family 'website') e segue sem
+  // implementação. Ids separados de propósito: propósitos e públicos distintos.
+  galeria: {
+    id: 'galeria', name: 'Galeria',
+    description: "Galerie d'images interne — albums, titres et descriptions riches.",
+    family: 'community', icon: '🖼️', color: '#f59e0b',
+    core: false, hasPublicFace: false, tags: ['créatifs', 'gaming'],
+    isNew: true,
+  },
   wiki: {
     id: 'wiki', name: 'Wiki',
     description: 'Base de connaissances interne éditable par les membres.',

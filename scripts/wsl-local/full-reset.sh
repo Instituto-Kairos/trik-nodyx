@@ -75,17 +75,18 @@ UPSTREAM="$(ngit rev-parse '@{u}')"
 LOCAL_HEAD="$(ngit rev-parse HEAD)"
 ok "upstream: $(ngit log -1 --format='%h %s' "$UPSTREAM")"
 
-# O stage.sh só copia o que difere do último commit do fork; o resto de
-# /opt/nodyx vem do upstream. Só dá certo se os dois forem a mesma base.
-if ! git -c safe.directory='*' -C "$REPO" diff --quiet "$UPSTREAM" HEAD -- nodyx-core nodyx-frontend 2>/dev/null; then
-  die "O upstream ($UPSTREAM) não é o commit-base do fork (nodyx-core/nodyx-frontend diferem, ou o commit não existe no fork).
-   O upstream avançou. Sincronize o fork com o upstream primeiro (merge upstream/main, plans: upstream_sync) e rode de novo.
+# O stage.sh copia o que difere do commit do upstream (commits do fork +
+# mudanças não commitadas); o resto de /opt/nodyx vem do próprio upstream. Só
+# dá certo se o upstream for ancestral do HEAD do fork.
+if ! git -c safe.directory='*' -C "$REPO" merge-base --is-ancestor "$UPSTREAM" HEAD 2>/dev/null; then
+  die "O upstream ($UPSTREAM) não é ancestral do HEAD do fork (commit desconhecido aqui, ou o upstream avançou).
+   Sincronize o fork com o upstream primeiro (merge upstream/main, plans: upstream_sync) e rode de novo.
    NADA foi alterado."
 fi
-ok "o commit-base do fork é o mesmo do upstream"
+ok "o upstream é ancestral do HEAD do fork"
 
-info "Preparando o staging (arquivos do fork que diferem do commit, como $SUDO_USER)..."
-runuser -u "$SUDO_USER" -- bash "$HERE/stage.sh" | grep '^---'
+info "Preparando o staging (arquivos do fork que diferem do upstream, como $SUDO_USER)..."
+runuser -u "$SUDO_USER" -- env BASE="$UPSTREAM" bash "$HERE/stage.sh" | grep '^---'
 STAGED="$(find /tmp/trik-fase2-deploy -type f | wc -l)"
 [[ "$STAGED" -gt 0 ]] || die "Staging vazio."
 ok "$STAGED arquivos em /tmp/trik-fase2-deploy"

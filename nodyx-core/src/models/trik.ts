@@ -511,6 +511,53 @@ export interface TrikRegistroPlayer {
   characters:    TrikRegistroCharacter[]
 }
 
+/** Um alias mencionável = um personagem, já emparelhado com seu jogador. */
+export interface TrikAlias {
+  alias:       string   // nome do personagem, como aparece na cena
+  username:    string   // quem é notificado de verdade
+  player_name: string   // nome OOC do jogador, para a validação combinada
+  avatar:      string | null
+}
+
+/**
+ * Aliases mencionáveis: um personagem é um apelido DO JOGADOR, então o que sai
+ * daqui já é o par "nome do personagem · jogador" pronto para o autocomplete
+ * exibir e validar. Marcar o alias marca o jogador.
+ *
+ * Escopado à comunidade e sem contas de sistema, pelo mesmo motivo que
+ * resolveMentions() o é (garde-fou do upstream, audit 16/09): um jogador
+ * excluído da comunidade não deve ser notificável por um personagem antigo.
+ *
+ * A colisão de nomes NÃO é resolvida aqui de propósito. `trik_characters` tem
+ * UNIQUE (player_id, name), ou seja, dois jogadores PODEM ter um "Kaelen" cada.
+ * Nesse caso as duas linhas voltam e é a pessoa que escolhe no dropdown, vendo
+ * o jogador ao lado — é a validação combinada. Filtrar aqui seria decidir no
+ * escuro por ela.
+ */
+export async function searchMentionableAliases(
+  communityId: string,
+  q: string,
+  limit = 8,
+): Promise<TrikAlias[]> {
+  const termo = q.trim()
+  const { rows } = await db.query<TrikAlias>(
+    `SELECT c.name        AS alias,
+            u.username    AS username,
+            p.name        AS player_name,
+            u.avatar      AS avatar
+       FROM trik_characters c
+       JOIN trik_players    p  ON p.id = c.player_id
+       JOIN users           u  ON u.id = p.id
+       JOIN community_members cm ON cm.user_id = u.id AND cm.community_id = $1
+      WHERE u.is_system = false
+        AND ($2 = '' OR c.name ILIKE $3)
+      ORDER BY c.name ASC
+      LIMIT $4`,
+    [communityId, termo, `%${termo}%`, limit],
+  )
+  return rows
+}
+
 export async function listRegistros(): Promise<TrikRegistroPlayer[]> {
   const [players, characters] = await Promise.all([
     db.query(

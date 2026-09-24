@@ -16,7 +16,7 @@
 	<title>{tFn('wiki_edit.meta_title', { title: pg?.title })}</title>
 </svelte:head>
 
-<div class="max-w-3xl mx-auto py-8 px-4">
+<div class="w-full max-w-3xl xl:max-w-4xl 2xl:max-w-5xl mx-auto py-8 px-4 sm:px-6">
 
 	<!-- Breadcrumb -->
 	<div class="flex items-center gap-2 text-sm text-gray-500 mb-6">
@@ -48,7 +48,7 @@
 			<input
 				id="title" name="title" required
 				value={pg?.title ?? ''}
-				class="w-full bg-gray-900/60 border border-gray-700/60 rounded-xl px-4 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-violet-500/60"
+				class="w-full xl:max-w-3xl bg-gray-900/60 border border-gray-700/60 rounded-xl px-4 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-violet-500/60"
 			/>
 		</div>
 
@@ -62,7 +62,7 @@
 					id="category" name="category"
 					value={pg?.category ?? ''}
 					placeholder={tFn('wiki_new.category_ph')}
-					class="w-full bg-gray-900/60 border border-gray-700/60 rounded-xl px-4 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-violet-500/60"
+					class="w-full xl:max-w-3xl bg-gray-900/60 border border-gray-700/60 rounded-xl px-4 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-violet-500/60"
 				/>
 			</div>
 			<div class="flex items-end pb-0.5">
@@ -82,7 +82,7 @@
 			</label>
 			<textarea
 				id="excerpt" name="excerpt" rows="2"
-				class="w-full bg-gray-900/60 border border-gray-700/60 rounded-xl px-4 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-violet-500/60 resize-none"
+				class="w-full xl:max-w-3xl bg-gray-900/60 border border-gray-700/60 rounded-xl px-4 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-violet-500/60 resize-none"
 			>{pg?.excerpt ?? ''}</textarea>
 		</div>
 

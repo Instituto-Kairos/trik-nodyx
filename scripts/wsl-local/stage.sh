@@ -14,6 +14,10 @@ set -euo pipefail
 
 LOCAL="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 STAGE=/tmp/trik-fase2-deploy
+# Base da comparação. Padrão HEAD (mudanças ainda não commitadas). Quando as
+# mudanças já estão commitadas numa branch, passe o commit que está instalado
+# em /opt/nodyx — é o que o update.sh/full-reset.sh fazem (BASE=<commit>).
+BASE="${BASE:-HEAD}"
 
 rm -rf "$STAGE"
 mkdir -p "$STAGE/nodyx-core" "$STAGE/nodyx-frontend"
@@ -25,7 +29,7 @@ copy_changed() {
   # `ls-files -m` só compara stat (que difere entre Windows e WSL e marca o repo
   # todo como modificado); `diff --name-only HEAD` compara o conteúdo de verdade — com autocrlf=true, que o
   # git do WSL não herda da config global do Windows (senão todo arquivo CRLF vira "modificado").
-  { git -c safe.directory='*' -c core.filemode=false -c core.autocrlf=true diff --name-only --relative HEAD
+  { git -c safe.directory='*' -c core.filemode=false -c core.autocrlf=true diff --name-only --relative "$BASE"
     git -c safe.directory='*' -c core.autocrlf=true ls-files -o --exclude-standard
   } | sort -u \
     | while IFS= read -r f; do [[ -f "$f" ]] && printf '%s\n' "$f"; done \
@@ -38,5 +42,5 @@ copy_changed nodyx-frontend
 TOTAL=$(find "$STAGE" -type f | wc -l)
 [[ "$TOTAL" -gt 0 ]] || { echo "Nada pra staging — git não listou nenhum arquivo." >&2; exit 1; }
 
-echo "--- staged em $STAGE ($TOTAL arquivos) ---"
+echo "--- staged em $STAGE ($TOTAL arquivos, base $BASE) ---"
 find "$STAGE" -type f | sort

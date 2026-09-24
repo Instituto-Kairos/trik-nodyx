@@ -5,18 +5,29 @@
 	import { anchoredPopover } from '$lib/actions/anchoredPopover'
 	import { t } from '$lib/i18n'
 	import { TextSelection } from '@tiptap/pm/state'
+	import { searchMentionTargets, mentionInsertText, type MentionTarget } from '$lib/mentionTargets'
 
 	let {
 		name       = 'content',
 		placeholder = '',
 		initialContent = '',
 		compact    = false,
+		mentions   = false,
 		onchange   = (_html: string) => {},
 	}: {
 		name?:           string
 		placeholder?:    string
 		initialContent?: string
 		compact?:        boolean
+		/**
+		 * Liga o autocomplete de `@` (membros + aliases de personagem).
+		 *
+		 * Opt-in, e não o contrário: o editor é compartilhado por dez telas, mas o
+		 * texto inserido (`@[Nome](username)`) só é RENDERIZADO onde alguém o
+		 * passou por renderAliasMentions() — hoje, o tópico do fórum. Ligado por
+		 * padrão, as outras telas gravariam uma marcação que apareceria crua.
+		 */
+		mentions?:       boolean
 		onchange?:       (html: string) => void
 	} = $props()
 
@@ -685,7 +696,27 @@
 				NodyxTerm, TwitchLive,
 			],
 			content: initialContent,
-			onTransaction() { syncActive(); syncBubble() },
+			// handleKeyDown roda ANTES do TipTap: é o único lugar de onde se pode
+			// tomar as setas e o Enter do editor enquanto o dropdown está aberto.
+			editorProps: {
+				handleKeyDown(_view, event) {
+					if (!mentionOpen || mentionItems.length === 0) return false
+					if (event.key === 'ArrowDown') {
+						mentionIdx = Math.min(mentionIdx + 1, mentionItems.length - 1); return true
+					}
+					if (event.key === 'ArrowUp') {
+						mentionIdx = Math.max(mentionIdx - 1, 0); return true
+					}
+					if (event.key === 'Enter' || event.key === 'Tab') {
+						const alvo = mentionItems[mentionIdx]
+						if (alvo) { escolherMention(alvo); return true }
+						return false
+					}
+					if (event.key === 'Escape') { fecharMention(); return true }
+					return false
+				},
+			},
+			onTransaction() { syncActive(); syncBubble(); void detectarMention() },
 			onUpdate({ editor: e }) {
 				html = e.getHTML()
 				charCount = e.storage.characterCount.characters()
@@ -696,6 +727,79 @@
 		syncActive()
 	})
 
+	// ── Autocomplete de @menção (membros + aliases de personagem) ─────────────
+	//
+	// O compositor do fórum nunca teve dropdown de `@` — só o chat tinha. E é no
+	// fórum que as cenas do RPG acontecem (trik_threads), ou seja, é exatamente
+	// aqui que marcar um personagem precisa funcionar.
+	//
+	// Feito à mão em vez de @tiptap/extension-mention de propósito: o texto
+	// inserido é PLANO (`@[Nome](username)`), já que quem o interpreta são
+	// $lib/linkify.ts e o servidor. Um nó customizado do TipTap traria schema,
+	// serialização e migração de conteúdo sem nada em troca.
+	let mentionOpen  = $state(false)
+	let mentionItems = $state<MentionTarget[]>([])
+	let mentionIdx   = $state(0)
+	let mentionTop   = $state(0)
+	let mentionLeft  = $state(0)
+	// Posições no documento do trecho `@consulta` a substituir.
+	let mentionFrom  = 0
+	let mentionTo    = 0
+	// Descarta resposta de busca que chegue fora de ordem: sem isto, uma consulta
+	// lenta ("@a") pode sobrescrever a lista de uma mais recente ("@ast").
+	let mentionSeq   = 0
+
+	function fecharMention() { mentionOpen = false; mentionItems = [] }
+
+	async function detectarMention() {
+		if (!mentions || !editor) return
+		const { state } = editor
+		const { from, empty } = state.selection
+		if (!empty) return fecharMention()
+
+		// Só o bloco de texto corrente: `textBetween` com um limite curto evita
+		// varrer o documento a cada tecla.
+		const inicio = Math.max(0, from - 40)
+		const antes  = state.doc.textBetween(inicio, from, '\n', '\n')
+		// \p{L}/\p{N} com flag u: dá para digitar acento na consulta, o que o
+		// \w do chat não permite. A busca no servidor é ILIKE %termo%.
+		const m = antes.match(/@([\p{L}\p{N}_-]{1,30})$/u)
+		if (!m) return fecharMention()
+
+		mentionFrom = from - m[0].length
+		mentionTo   = from
+
+		const coords = editor.view.coordsAtPos(mentionFrom)
+		mentionTop  = coords.bottom + 4
+		mentionLeft = coords.left
+
+		const seq = ++mentionSeq
+		try {
+			const alvos = await searchMentionTargets(
+				(path, init) => apiFetch(fetch, path, init),
+				m[1],
+				token,
+			)
+			if (seq !== mentionSeq) return
+			mentionItems = alvos
+			mentionOpen  = alvos.length > 0
+			mentionIdx   = 0
+		} catch {
+			if (seq === mentionSeq) fecharMention()
+		}
+	}
+
+	function escolherMention(t: MentionTarget) {
+		if (!editor) return
+		// Texto plano + espaço: o `@[Nome](username)` é lido depois por
+		// $lib/linkify.ts (render) e pelo servidor (notificação).
+		editor.chain().focus()
+			.deleteRange({ from: mentionFrom, to: mentionTo })
+			.insertContent(mentionInsertText(t) + ' ')
+			.run()
+		fecharMention()
+	}
+
 	// ── Close popups when clicking outside the editor ─────────────────────────
 	function onDocClick(e: MouseEvent) {
 		const t = e.target as Node
@@ -705,6 +809,7 @@
 		if (wrapperEl && !wrapperEl.contains(t) && !inPopup) {
 			showColor = showEmoji = showLink = showImage = showVideo = showAudio = showTable = false
 			bubbleVisible = false
+			fecharMention()
 		}
 	}
 
@@ -1567,6 +1672,42 @@
 		class="nodyx-content px-4 {compact ? 'min-h-[120px] max-h-[55vh]' : 'min-h-[320px] max-h-[65vh]'} overflow-y-auto py-4"
 	></div>
 
+	<!-- ── Autocomplete de @menção ───────────────────────────────────────── -->
+	<!-- `position: fixed` ancorado no caret (coordsAtPos): a área de conteúdo
+	     tem overflow-y-auto, e um dropdown absoluto dentro dela seria cortado
+	     justamente quando o caret está no fim do texto. -->
+	{#if mentionOpen && mentionItems.length > 0}
+		<div
+			class="nodyx-mention-pop"
+			style="top:{mentionTop}px; left:{mentionLeft}px;"
+			role="listbox"
+			aria-label={tFn('editor.mention.aria')}
+		>
+			{#each mentionItems as m, i}
+				<button
+					type="button"
+					role="option"
+					aria-selected={i === mentionIdx}
+					class="nodyx-mention-item {i === mentionIdx ? 'is-active' : ''}"
+					onmouseenter={() => (mentionIdx = i)}
+					onclick={() => escolherMention(m)}
+				>
+					<span class="nodyx-mention-ini">{(m.alias ?? m.username).charAt(0).toUpperCase()}</span>
+					{#if m.alias}
+						<!-- Validação combinada: quem escolhe vê o personagem E o jogador
+						     por trás. É o que desfaz dois "Kaelen" de jogadores diferentes,
+						     sem o servidor precisar adivinhar. -->
+						<span class="nodyx-mention-lbl">
+							{m.alias}<span class="nodyx-mention-sub"> · {m.playerName ?? m.username}</span>
+						</span>
+					{:else}
+						<span class="nodyx-mention-lbl">@{m.username}</span>
+					{/if}
+				</button>
+			{/each}
+		</div>
+	{/if}
+
 	<!-- ── Barre flottante (quickbar) sur la sélection ──────────────────── -->
 	{#if bubbleVisible}
 	<div bind:this={bubbleEl} class="nodyx-bubble {bubbleBelow ? 'below' : ''}" style="top:{bubbleTop}px; left:{bubbleLeft}px;" role="toolbar" aria-label={tFn('editor.bubble.aria')}>
@@ -1735,4 +1876,54 @@
 
 	/* Styles éditeur spécifiques à la toolbar (boutons, popups)
 	   Les styles prose sont dans app.css (.nodyx-prose / .nodyx-content .tiptap) */
+
+/* ── Autocomplete de @menção ─────────────────────────────────────────────────
+   z-index acima da barra flutuante da seleção (nodyx-bubble), senão ela cobre
+   a lista quando há texto selecionado. */
+.nodyx-mention-pop {
+	position: fixed;
+	z-index: 60;
+	min-width: 15rem;
+	max-width: 22rem;
+	max-height: 14rem;
+	overflow-y: auto;
+	background: var(--p-bg, #111827);
+	border: 1px solid var(--p-card-border, #374151);
+	border-radius: 0.5rem;
+	box-shadow: 0 10px 30px rgb(0 0 0 / 0.45);
+	padding: 0.25rem;
+}
+.nodyx-mention-item {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	width: 100%;
+	padding: 0.375rem 0.5rem;
+	border-radius: 0.375rem;
+	font-size: 0.8125rem;
+	color: rgb(209 213 219);
+	text-align: left;
+	background: none;
+	border: 0;
+	cursor: pointer;
+}
+.nodyx-mention-item.is-active {
+	background: rgb(var(--nx-accent-rgb, 99 102 241) / 0.9);
+	color: #fff;
+}
+.nodyx-mention-ini {
+	flex: 0 0 auto;
+	width: 1.25rem;
+	height: 1.25rem;
+	border-radius: 9999px;
+	background: rgb(var(--nx-accent-rgb, 99 102 241) / 0.6);
+	color: #fff;
+	font-size: 0.625rem;
+	font-weight: 700;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+.nodyx-mention-lbl { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nodyx-mention-sub { opacity: 0.6; }
 </style>

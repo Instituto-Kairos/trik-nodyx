@@ -381,12 +381,6 @@
 				<h1 class="feed-title">{tFn('feed.title')}</h1>
 				<p class="feed-sub">{tFn('feed.subtitle')}</p>
 			</div>
-			<a href="/discover" class="feed-explore-btn">
-				<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
-				</svg>
-				Explorer
-			</a>
 		</div>
 	</div>
 
@@ -504,7 +498,6 @@
 					</div>
 					<p class="feed-empty-title">{tFn('feed.empty_title')}</p>
 					<p class="feed-empty-sub">{tFn('feed.empty_sub')}</p>
-					<a href="/discover" class="feed-empty-cta">{tFn('feed.empty_cta')}</a>
 				</div>
 			{:else}
 				<div class="posts-list">
@@ -829,22 +822,6 @@
 	font-size: 0.7rem;
 	color: rgba(255,255,255,0.3);
 	margin-top: 1px;
-}
-.feed-explore-btn {
-	display: flex;
-	align-items: center;
-	gap: 0.375rem;
-	font-size: 0.75rem;
-	font-weight: 600;
-	color: rgba(255,255,255,0.5);
-	padding: 0.375rem 0.75rem;
-	border: 1px solid rgba(255,255,255,0.08);
-	transition: all 0.15s;
-}
-.feed-explore-btn:hover {
-	color: rgba(255,255,255,0.8);
-	border-color: rgb(var(--nx-accent-rgb) / 0.4);
-	background: rgb(var(--nx-accent-rgb) / 0.08);
 }
 
 /* ── Layout ───────────────────────────────────────────────────────────────── */
@@ -1354,8 +1331,6 @@
 .feed-empty-icon svg { width: 28px; height: 28px; }
 .feed-empty-title  { font-size: 1rem; font-weight: 700; color: rgba(255,255,255,0.6); margin-bottom: 0.5rem; }
 .feed-empty-sub    { font-size: 0.8rem; color: rgba(255,255,255,0.25); max-width: 300px; }
-.feed-empty-cta    { margin-top: 1.25rem; font-size: 0.8rem; font-weight: 600; color: var(--nx-accent); transition: color 0.15s; }
-.feed-empty-cta:hover { color: var(--nx-accent-soft); }
 
 .feed-sentinel { padding: 2rem; display: flex; justify-content: center; }
 .feed-loader   { display: flex; gap: 0.375rem; }
