@@ -1022,7 +1022,7 @@ _nodyx_upgrade() {
   # Heap cap scaled to total RAM (see fresh-install path for the rationale)
   _RB_RAM_MB=$(free -m 2>/dev/null | awk '/^Mem/{print $2}' || echo 4096)
   if   [[ "$_RB_RAM_MB" -lt 1500 ]]; then export NODE_OPTIONS="--max-old-space-size=768"
-  elif [[ "$_RB_RAM_MB" -lt 3000 ]]; then export NODE_OPTIONS="--max-old-space-size=1536"
+  elif [[ "$_RB_RAM_MB" -lt 3000 ]]; then export NODE_OPTIONS="--max-old-space-size=3072"
   elif [[ "$_RB_RAM_MB" -lt 8000 ]]; then export NODE_OPTIONS="--max-old-space-size=2048"
   else                                    export NODE_OPTIONS="--max-old-space-size=4096"
   fi
@@ -2651,7 +2651,11 @@ fi
 # dépasse facilement 1 Go de heap : il faut au moins 1.5 Go pour finir le
 # build sans OOM. On scale linéairement selon ce que la machine a.
 #  < 1.5 GB  → 768 MB  (RPi 1 GB, build lent mais possible avec swap)
-#  1.5–3 GB  → 1536 MB (RPi 4 2-4 GB / micro-VPS)
+#  1.5–3 GB  → 3072 MB (RPi 4 2-4 GB / micro-VPS — dont notre instance AWS ~2 GB)
+#              Plafond SUPÉRIEUR à la RAM physique, volontairement : 1536 ne
+#              suffisait plus (le build du frontend mourait en OOM) et le heap
+#              est un plafond, pas une réservation — le noyau pagine le reste.
+#              Exige donc une SWAP active sur ces machines.
 #  3–8 GB    → 2048 MB (VPS standard 4 GB)
 #  ≥ 8 GB    → 4096 MB (machines modernes, build rapide sans contention)
 if [[ "$_RAM_TOTAL_MB" -lt 1500 ]]; then
@@ -2659,7 +2663,7 @@ if [[ "$_RAM_TOTAL_MB" -lt 1500 ]]; then
   info "$(printf "$(t front_low_ram_node_cap)" "${_RAM_TOTAL_MB}")"
   _RPI_LABEL="$(t front_build_label_rpi)"
 elif [[ "$_RAM_TOTAL_MB" -lt 3000 ]]; then
-  export NODE_OPTIONS="--max-old-space-size=1536"
+  export NODE_OPTIONS="--max-old-space-size=3072"
   _RPI_LABEL=""
 elif [[ "$_RAM_TOTAL_MB" -lt 8000 ]]; then
   export NODE_OPTIONS="--max-old-space-size=2048"

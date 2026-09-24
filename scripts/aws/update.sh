@@ -313,15 +313,30 @@ npm_ci_se_preciso() {
 
 # Teto de heap do Node pela RAM total, espelhando install.sh. Sem isto, o build
 # do frontend morre por OOM numa instância pequena (t3.micro/small).
+#
+# A faixa de 1,5–3 GB usa 3072 MB, MAIS que a RAM física: é o valor que o
+# Rafael pôs à mão no install.sh da instância AWS (~2 GB) depois de o build do
+# frontend morrer com os 1536 originais — 4257 módulos do SvelteKit não cabem.
+# Acima da RAM física só funciona com SWAP ATIVA; o heap é um teto, não uma
+# reserva, e o kernel pagina o excedente. A etapa confere a swap e avisa.
+# Para forçar outro valor: NODE_HEAP_MB=2048 sudo bash update.sh
 RAM_MB=$(free -m 2>/dev/null | awk '/^Mem/{print $2}' || echo 9999)
 if   [[ "$RAM_MB" -lt 1500 ]]; then HEAP=768
-elif [[ "$RAM_MB" -lt 3000 ]]; then HEAP=1536
+elif [[ "$RAM_MB" -lt 3000 ]]; then HEAP=3072
 elif [[ "$RAM_MB" -lt 8000 ]]; then HEAP=2048
 else                                HEAP=4096
 fi
+HEAP="${NODE_HEAP_MB:-$HEAP}"
 export NODE_OPTIONS="--max-old-space-size=${HEAP}"
+SWAP_MB=$(free -m 2>/dev/null | awk '/^Swap/{print $2}' || echo 0)
+if [[ "$HEAP" -gt "$RAM_MB" && "${SWAP_MB:-0}" -lt 512 ]]; then
+  warn "Heap de ${HEAP}MB acima da RAM (${RAM_MB}MB) e swap de apenas ${SWAP_MB:-0}MB:
+   o build do frontend pode morrer por OOM. Ative swap (sudo fallocate -l 2G /swapfile &&
+   sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile) ou use
+   NODE_HEAP_MB=<menor> nesta execução."
+fi
 [[ "$RAM_MB" -ge 1500 ]] || warn "Só ${RAM_MB}MB de RAM: build lento, e precisa de swap ativa."
-ok "RAM ${RAM_MB}MB → heap do Node ${HEAP}MB"
+ok "RAM ${RAM_MB}MB · swap ${SWAP_MB:-0}MB → heap do Node ${HEAP}MB"
 
 if [[ $MUDOU_CORE == 1 ]]; then
   ETAPA="4a. build do backend"
