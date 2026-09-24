@@ -13,6 +13,10 @@
 #   · scripts/wsl-local/update.sh  → servidor de teste em WSL, copia do repo Windows
 #   · este (scripts/aws/update.sh) → UMA instância na AWS, repo em /opt/nodyx, git pull
 #
+# E o `sudo nodyx-update` que o install.sh deixa em /usr/local/bin faz o mesmo
+# papel deste, mais fraco (pull como root, npm ci sempre, sem backup nem
+# verificação). `--instalar-comando` faz aquele comando apontar pra cá.
+#
 # ─── Os três detalhes de config que fazem este script existir ────────────────
 # Rodar os comandos "na mão" numa instância nodyx falha por três motivos que
 # nada avisa direito. Este script trata os três:
@@ -116,26 +120,64 @@ CADDYFILE="${CADDYFILE:-/etc/caddy/Caddyfile}"
 PM2=(runuser -u nodyx -- env PM2_HOME=/home/nodyx/.pm2 pm2)
 GIT=(git -c safe.directory='*' -C "$NODYX_DIR")
 
+COMANDO="${COMANDO:-/usr/local/bin/nodyx-update}"
+
 RAMO=""
 FAZER_BACKUP=1
 DRY_RUN=0
+INSTALAR_COMANDO=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --ramo)        RAMO="${2:-}"; shift 2 ;;
     --sem-backup)  FAZER_BACKUP=0; shift ;;
     --dry-run)     DRY_RUN=1; shift ;;
+    --instalar-comando) INSTALAR_COMANDO=1; shift ;;
     -h|--help)
       awk 'NR>1 && /^#/ { sub(/^# ?/,""); print; next } NR>1 { exit }' "$0"
       echo
       echo "Opções:"
-      echo "  --ramo <nome>   ramo a atualizar (padrão: o que está em uso)"
-      echo "  --sem-backup    pula o backup do banco (NÃO recomendado)"
-      echo "  --dry-run       mostra o que mudaria e sai, sem tocar em nada"
+      echo "  --ramo <nome>        ramo a atualizar (padrão: o que está em uso)"
+      echo "  --sem-backup         pula o backup do banco (NÃO recomendado)"
+      echo "  --dry-run            mostra o que mudaria e sai, sem tocar em nada"
+      echo "  --instalar-comando   faz 'sudo nodyx-update' passar a chamar ESTE script, e sai"
       exit 0 ;;
     *) die "Opção desconhecida: $1 (use --help)" ;;
   esac
 done
+
+# ── `sudo nodyx-update`: o comando que já existe no servidor ─────────────────
+# O install.sh gera /usr/local/bin/nodyx-update, e é ele que o Rafael tem no
+# dedo. Só que a versão gerada é mais fraca que este script em três pontos que
+# já mordemos: roda o `git pull` COMO ROOT (os arquivos novos nascem de root e
+# o update seguinte não consegue mexer neles — foi o "Permission denied" do
+# servidor de teste), roda `npm ci` sempre (o passo mais lento, quase nunca
+# necessário) e não faz backup nem confere se os serviços voltaram.
+# Esta opção troca aquele arquivo por um atalho pra cá, guardando o original.
+if [[ $INSTALAR_COMANDO == 1 ]]; then
+  [[ $EUID -eq 0 ]] || die "Rode com sudo: sudo bash $0 --instalar-comando"
+  ALVO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+  [[ "$ALVO" == "$NODYX_DIR"/* ]] || warn "Este script está em $ALVO, fora de $NODYX_DIR:
+   o atalho vai apontar pra esse caminho. Rode a partir de $NODYX_DIR/scripts/aws/ pra ele
+   se atualizar junto com o repo."
+  if [[ -e "$COMANDO" ]] && ! grep -q 'scripts/aws/update.sh' "$COMANDO" 2>/dev/null; then
+    BKP="${COMANDO}.install-sh-$(date +%Y%m%dT%H%M%S)"
+    cp -p "$COMANDO" "$BKP"
+    ok "nodyx-update anterior (o do install.sh) guardado em $BKP"
+  fi
+  cat > "$COMANDO" <<EOF
+#!/usr/bin/env bash
+# Atalho gerado por $ALVO --instalar-comando.
+# O update de verdade mora no repo (versionado); aqui só fica o apontador, pra
+# 'sudo nodyx-update' continuar sendo o comando do dia a dia e já pegar as
+# melhorias que chegarem por git.
+exec bash "$ALVO" "\$@"
+EOF
+  chmod +x "$COMANDO"
+  ok "'sudo nodyx-update' agora chama $ALVO"
+  echo "   Confira:  sudo nodyx-update --dry-run"
+  exit 0
+fi
 
 ETAPA="início"
 OLD_HEAD=""

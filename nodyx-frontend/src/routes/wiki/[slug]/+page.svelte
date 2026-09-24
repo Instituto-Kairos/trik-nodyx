@@ -37,7 +37,7 @@
 	<meta name="description" content={pg?.excerpt ?? ''} />
 </svelte:head>
 
-<div class="max-w-3xl mx-auto py-8 px-4">
+<div class="w-full max-w-3xl xl:max-w-4xl 2xl:max-w-5xl mx-auto py-8 px-4 sm:px-6">
 
 	<!-- Breadcrumb -->
 	<div class="flex items-center gap-2 text-sm text-gray-500 mb-6">
@@ -125,3 +125,21 @@
 		</a>
 	</div>
 </div>
+
+<style>
+/* Largura de leitura. A coluna da página cresce com a tela (até 5xl em monitor
+   grande) porque imagens, tabelas e a caixa de sumário (.toc, que flutua à
+   direita) aproveitam esse espaço. O texto corrido, não: linha muito longa
+   cansa e faz perder a próxima linha ao voltar. Então o parágrafo tem medida
+   própria, ~72 caracteres, e só ele.
+   :global porque o conteúdo vem de {@html} — o escopo do Svelte não alcança. */
+.nodyx-prose :global(p),
+.nodyx-prose :global(ul),
+.nodyx-prose :global(ol),
+.nodyx-prose :global(blockquote),
+.nodyx-prose :global(h2),
+.nodyx-prose :global(h3),
+.nodyx-prose :global(h4) {
+	max-width: 72ch;
+}
+</style>

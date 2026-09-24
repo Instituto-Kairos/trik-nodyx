@@ -748,12 +748,20 @@
 }
 
 /* ── Grid ───────────────────────────────────────────────────────────────────── */
+/* Sem número fixo de colunas: o auto-fill se ajusta à largura real (que muda
+   com a sidebar/lista de membros). No telefone o mínimo é metade da largura,
+   o que garante 2 colunas sem colapsar pra 1; acima disso o mínimo cresce por
+   faixa pra a capa não virar selo num monitor grande. */
 .lib-grid {
 	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+	grid-template-columns: repeat(auto-fill, minmax(calc(50% - 0.5px), 1fr));
 	gap: 1px;
 	background: rgba(255, 255, 255, 0.04);
 }
+@media (min-width: 480px)  { .lib-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); } }
+@media (min-width: 768px)  { .lib-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); } }
+@media (min-width: 1280px) { .lib-grid { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); } }
+@media (min-width: 1920px) { .lib-grid { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); } }
 
 .lib-card {
 	display: block;
@@ -864,5 +872,23 @@
 	font-size: 0.75rem;
 	color: rgba(255, 255, 255, 0.2);
 	margin: 0;
+}
+
+/* Telefone: os paddings de 28px comem a tela, a busca de 240px fixos estoura a
+   linha e os formulários de 2 colunas ficam ilegíveis — tudo vira uma coluna e
+   a busca ocupa a largura que sobrar. */
+@media (max-width: 640px) {
+	.lib-header { padding: 16px 14px 0; }
+	.lib-body { padding: 16px 14px 40px; }
+	.lib-upload-panel { padding: 16px 14px; }
+	.lib-header-actions { margin-left: 0; width: 100%; }
+	.lib-search-form { flex: 1; min-width: 0; }
+	.lib-search-input { width: 100%; min-width: 0; }
+	.lib-upload-form,
+	.lib-upload-row2 { grid-template-columns: 1fr; }
+	.lib-upload-file-row { flex-direction: column; gap: 10px; }
+	.lib-tabs { overflow-x: auto; scrollbar-width: none; }
+	.lib-tabs::-webkit-scrollbar { display: none; }
+	.lib-tab { white-space: nowrap; }
 }
 </style>

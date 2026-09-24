@@ -6,9 +6,41 @@ propósito: `scripts/ops/` é do servidor multi-app do autor upstream
 (`nodyx.org`, `demo.nodyx.org`, o hub, em `/var/www/nexus`), e mexer lá geraria
 conflito a cada merge de `Pokled:main`.
 
+## Primeira vez (ovo e galinha)
+
+Este script chega ao servidor **pelo próprio git pull que ele faz** — ou seja,
+na primeira vez ele ainda não existe em `/opt/nodyx`. Ele não depende de onde
+está (usa `NODYX_DIR=/opt/nodyx`), então basta copiá-lo e rodar de fora:
+
+```bash
+# na sua máquina
+scp scripts/aws/update.sh <servidor>:/tmp/
+
+# no servidor
+sudo bash /tmp/update.sh --dry-run   # confere o ramo e o que mudaria
+sudo bash /tmp/update.sh             # atualiza (e traz o script pra /opt/nodyx)
+```
+
+Depois disso, para `sudo nodyx-update` (o comando que o `install.sh` deixou em
+`/usr/local/bin`) passar a usar este script em vez da versão fraca gerada na
+instalação — que faz `git pull` como root, roda `npm ci` sempre e não faz
+backup nem verificação:
+
+```bash
+sudo bash /opt/nodyx/scripts/aws/update.sh --instalar-comando
+sudo nodyx-update --dry-run
+```
+
+O original é guardado em `/usr/local/bin/nodyx-update.install-sh-<data>`, e o
+que fica no lugar é só um atalho de duas linhas para o script versionado — logo
+as melhorias futuras chegam por git, sem reinstalar nada.
+
+## Uso
+
 ```bash
 # no servidor, como root
-sudo bash /opt/nodyx/scripts/aws/update.sh
+sudo nodyx-update                                          # depois de --instalar-comando
+sudo bash /opt/nodyx/scripts/aws/update.sh                 # equivalente, sempre funciona
 
 sudo bash /opt/nodyx/scripts/aws/update.sh --dry-run       # só mostra o que mudaria
 sudo bash /opt/nodyx/scripts/aws/update.sh --ramo main     # ramo explícito

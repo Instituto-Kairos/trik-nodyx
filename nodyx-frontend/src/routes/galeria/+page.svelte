@@ -386,7 +386,11 @@
 {/if}
 
 <style>
-.gal-root { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
+/* Sem max-width: o +layout tira o `max-w-5xl` desta rota justamente pra grade
+   poder crescer com a tela (numa galeria, mais colunas = mais imagens visíveis).
+   `--gal-gap` é o mesmo vão usado pela grade e pelo cálculo das 2 colunas no
+   telefone. */
+.gal-root { padding: 1.5rem; --gal-gap: 0.875rem; }
 
 .gal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1.25rem; }
 .gal-title { font-size: 1.25rem; font-weight: 800; color: #fff; }
@@ -460,11 +464,21 @@
 .gal-tagfilter { font-size: 0.75rem; color: rgba(255,255,255,0.5); margin-bottom: 0.75rem; }
 
 /* ── Grade ─────────────────────────────────────────────────────────────────── */
+/* A grade não tem número fixo de colunas: o auto-fill decide pela largura
+   disponível (que varia com a sidebar e a lista de membros abertas ou não).
+   No telefone o mínimo é metade da largura (menos meio vão): dá exatamente 2
+   colunas por mais estreita que seja a tela, sem colapsar pra 1. Daí pra cima
+   o mínimo vira pixels e cresce por faixa, pra que num monitor grande as
+   miniaturas não virem selos. */
 .gal-grid {
 	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-	gap: 0.875rem;
+	gap: var(--gal-gap, 0.875rem);
+	grid-template-columns: repeat(auto-fill, minmax(calc(50% - var(--gal-gap, 0.875rem) / 2), 1fr));
 }
+@media (min-width: 480px)  { .gal-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); } }
+@media (min-width: 768px)  { .gal-grid { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); } }
+@media (min-width: 1280px) { .gal-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); } }
+@media (min-width: 1920px) { .gal-grid { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); } }
 .gal-card {
 	display: flex; flex-direction: column; text-align: left; cursor: pointer;
 	background: rgba(255,255,255,0.03);

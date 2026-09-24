@@ -274,13 +274,19 @@
 }
 
 /* ── Grid ───────────────────────────────────────────────────────────────────── */
+/* Cartão de texto (título + resumo): o mínimo é largo de propósito — duas
+   colunas estreitas picotariam o resumo. Abaixo de 280px o auto-fill já cai
+   sozinho pra uma coluna; acima, o mínimo cresce por faixa pra que num monitor
+   grande a linha de texto não fique curta demais. */
 .wiki-grid {
 	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+	grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
 	gap: 1px;
 	background: rgba(255, 255, 255, 0.05);
 	border: 1px solid rgba(255, 255, 255, 0.05);
 }
+@media (min-width: 1280px) { .wiki-grid { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); } }
+@media (min-width: 1920px) { .wiki-grid { grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); } }
 
 .wiki-card {
 	display: block;
@@ -407,5 +413,19 @@
 
 .wiki-empty-link:hover {
 	color: var(--nx-accent-2-soft2);
+}
+
+/* Telefone: os 28px de padding lateral comem a tela e a busca de largura fixa
+   estoura a linha do cabeçalho. As categorias rolam na horizontal em vez de
+   virar um bloco de várias linhas. */
+@media (max-width: 640px) {
+	.wiki-header { padding: 16px 14px 0; }
+	.wiki-body { padding: 16px 14px 40px; }
+	.wiki-header-actions { margin-left: 0; width: 100%; }
+	.wiki-search-form { flex: 1; min-width: 0; }
+	.wiki-search-input { width: 100%; min-width: 0; }
+	.wiki-cats { overflow-x: auto; scrollbar-width: none; flex-wrap: nowrap; }
+	.wiki-cats::-webkit-scrollbar { display: none; }
+	.wiki-cat { white-space: nowrap; }
 }
 </style>
