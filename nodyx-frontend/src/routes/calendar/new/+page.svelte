@@ -4,6 +4,8 @@
 	import { enhance } from '$app/forms';
 	import { PUBLIC_API_URL } from '$env/static/public';
 	import NodyxEditor from '$lib/components/editor/NodyxEditor.svelte';
+	import DateInput from '$lib/components/DateInput.svelte';
+	import { isoToValue } from '$lib/dateMask';
 	import type { PageData, ActionData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -17,8 +19,11 @@
 	const tomorrow = new Date();
 	tomorrow.setDate(tomorrow.getDate() + 1);
 	tomorrow.setHours(18, 0, 0, 0);
-	const defaultStart = tomorrow.toISOString().slice(0, 16);
-	const defaultEnd   = new Date(tomorrow.getTime() + 2 * 3600_000).toISOString().slice(0, 16);
+	// `isoToValue` e não `toISOString().slice(0, 16)`: o segundo devolve UTC
+	// num campo que lê hora local, então num fuso UTC-4 as 18h viravam 22h na
+	// tela e outras 4 horas de deriva ao salvar.
+	const defaultStart = isoToValue(tomorrow, 'datetime');
+	const defaultEnd   = isoToValue(new Date(tomorrow.getTime() + 2 * 3600_000), 'datetime');
 
 	let isAllDay    = $state(false);
 	let rsvpEnabled = $state(false);
@@ -170,17 +175,19 @@
 			<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 				<div>
 					<label for="starts_at" class="block text-sm font-medium text-gray-300 mb-1.5">{tFn('event.field_start')} <span class="text-red-400">*</span></label>
-					<input id="starts_at" name="starts_at" type="{isAllDay ? 'date' : 'datetime-local'}" required
-					       value={isAllDay ? defaultStart.slice(0,10) : defaultStart}
+					<DateInput id="starts_at" name="starts_at" required
+					       mode={isAllDay ? 'date' : 'datetime'}
+					       value={defaultStart}
 					       class="w-full bg-gray-800/80 border border-gray-700 rounded-xl px-4 py-3 text-white text-sm
-					              focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/40 transition-colors [color-scheme:dark]"/>
+					              focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/40 transition-colors [color-scheme:dark]" />
 				</div>
 				<div>
 					<label for="ends_at" class="block text-sm font-medium text-gray-300 mb-1.5">Fin <span class="text-gray-600 text-xs font-normal">(optionnel)</span></label>
-					<input id="ends_at" name="ends_at" type="{isAllDay ? 'date' : 'datetime-local'}"
-					       value={isAllDay ? defaultEnd.slice(0,10) : defaultEnd}
+					<DateInput id="ends_at" name="ends_at"
+					       mode={isAllDay ? 'date' : 'datetime'}
+					       value={defaultEnd}
 					       class="w-full bg-gray-800/80 border border-gray-700 rounded-xl px-4 py-3 text-white text-sm
-					              focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/40 transition-colors [color-scheme:dark]"/>
+					              focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/40 transition-colors [color-scheme:dark]" />
 				</div>
 			</div>
 

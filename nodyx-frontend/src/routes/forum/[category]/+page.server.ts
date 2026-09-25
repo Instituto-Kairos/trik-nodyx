@@ -3,17 +3,7 @@
 import { error, redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import { apiFetch } from '$lib/api';
-
-function findCategoryInTree(categories: any[], param: string): any {
-	for (const cat of categories) {
-		if (cat.id === param || cat.slug === param) return cat;
-		if (cat.children?.length > 0) {
-			const found = findCategoryInTree(cat.children, param);
-			if (found) return found;
-		}
-	}
-	return null;
-}
+import { findCategoryPath } from '$lib/forumTree';
 
 export const load: PageServerLoad = async ({ fetch, params }) => {
 	// 1. Récupérer les threads (accepte UUID ou slug côté API)
@@ -28,8 +18,11 @@ export const load: PageServerLoad = async ({ fetch, params }) => {
 	const categoriesRes = await apiFetch(fetch, `/instance/categories`);
 	const categoriesJson = await categoriesRes.json();
 
-	// 3. Trouver la catégorie par ID ou slug
-	const category = findCategoryInTree(categoriesJson.categories || [], params.category)
+	// 3. Trouver la catégorie par ID ou slug, en gardant TOUTE la lignée :
+	//    les catégories s'imbriquent sans limite de profondeur et le fil
+	//    d'Ariane a besoin des ancêtres, pas seulement de la feuille.
+	const trail    = findCategoryPath(categoriesJson.categories || [], params.category);
+	const category = trail?.[trail.length - 1]
 		?? threadsJson.category
 		?? { id: params.category, name: 'Discussions', slug: null, description: null };
 
@@ -41,6 +34,9 @@ export const load: PageServerLoad = async ({ fetch, params }) => {
 	return {
 		threads: threadsJson.threads,
 		categoryId: category.id,
-		category
+		category,
+		// Lignée racine → catégorie courante. Vide si l'arbre n'a pas répondu :
+		// la page retombe alors sur la catégorie seule.
+		trail: (trail ?? [category]).map(c => ({ id: c.id, name: c.name, slug: c.slug ?? null }))
 	};
 };

@@ -1,6 +1,10 @@
 <script lang="ts">
 	import { t } from '$lib/i18n';
+	import { datetime } from '$lib/datetime';
 	const tFn = $derived($t);
+	// Antes daqui os formatos tinham 'fr-FR' fixo: numa instância em
+	// português os nomes de mês e de dia da semana saíam em francês.
+	const dt = $derived($datetime);
 	import { enhance } from '$app/forms';
 	import { goto } from '$app/navigation';
 	import type { PageData, ActionData } from './$types';
@@ -13,21 +17,11 @@
 	let deleting = $state(false);
 
 	// ── Formatage dates ────────────────────────────────────────────────────────
-	function fDate(iso: string) {
-		return new Date(iso).toLocaleDateString('fr-FR', {
-			weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-		});
-	}
-	function fTime(iso: string) {
-		return new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-	}
-	function fDateShort(iso: string) {
-		return new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
-	}
-	function dayNum(iso: string) { return new Date(iso).getDate(); }
-	function monthShort(iso: string) {
-		return new Date(iso).toLocaleDateString('fr-FR', { month: 'short' }).toUpperCase();
-	}
+	const fDate      = (iso: string) => dt.dateLong(iso);
+	const fTime      = (iso: string) => dt.time(iso);
+	const fDateShort = (iso: string) => dt.dateShort(iso);
+	const dayNum     = (iso: string) => dt.dayNum(iso);
+	const monthShort = (iso: string) => dt.monthShort(iso);
 	function isPast(iso: string) { return new Date(iso) < new Date(); }
 
 	// ── OSM embed ─────────────────────────────────────────────────────────────

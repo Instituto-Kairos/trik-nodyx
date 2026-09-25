@@ -9,7 +9,6 @@ import jwt from 'jsonwebtoken'
 import sanitizeHtml from 'sanitize-html'
 import { db, redis } from '../config/database'
 import * as ChannelModel from '../models/channel'
-import * as NotificationModel from '../models/notification'
 import { resolveMentions } from '../utils/mentions'
 import { io } from './io'
 import { sendPushToUser } from '../routes/notifications'
@@ -587,9 +586,42 @@ export function registerSocketIO(server: Server): void {
             .catch(err => console.error('[chat:send] twitch relay error', err))
         }
 
-        // Push notifications for @mentions
-        const mentionedIds = await resolveMentions(sanitized, memberCheck[0].community_id).catch(() => [])
-        for (const notifiedUserId of mentionedIds) {
+        // ── Quem este message precisa avisar, e por onde ──────────────────────
+        //
+        // O sininho (/notifications) carrega SÓ assunto de fórum: resposta em
+        // tópico, agradecimento e menção num post — coisas que têm um destino
+        // exato para onde levar o usuário. O chat não entra ali: até 24/09 uma
+        // menção no chat criava uma linha em `notifications` que aparecia no
+        // sininho SEM botão "Ver" (o link é montado de category_id + thread_id,
+        // que uma mensagem de chat não tem), então a notificação só podia ser
+        // marcada como lida. O sinal de chat vive no ÍCONE DE CHAT, via
+        // `chat:mention`, e no Web Push — os dois levam à conversa.
+        //
+        // Duas coisas avisam aqui, no mesmo laço para não mandar dois pushes a
+        // quem foi mencionado E respondido na mesma mensagem:
+        //   · menção (@username ou o alias `@[Personagem](username)`)
+        //   · resposta a uma mensagem sua (replyToId)
+        const mencionados = new Set(
+          await resolveMentions(sanitized, memberCheck[0].community_id).catch(() => [])
+        )
+
+        // Responder alguém é dirigir-se a ele tanto quanto citá-lo: sem isto,
+        // uma resposta direta passava em silêncio se não trouxesse um `@`.
+        // Preso ao canal na própria consulta: um replyToId forjado apontando
+        // para outro canal não deve virar aviso para quem não está aqui.
+        let respondido: string | null = null
+        if (replyToId) {
+          const { rows: alvo } = await db.query<{ author_id: string }>(
+            `SELECT author_id FROM channel_messages WHERE id = $1 AND channel_id = $2`,
+            [replyToId, channelId]
+          ).catch(() => ({ rows: [] as { author_id: string }[] }))
+          respondido = alvo[0]?.author_id ?? null
+        }
+
+        const aAvisar = new Set(mencionados)
+        if (respondido) aAvisar.add(respondido)
+
+        for (const notifiedUserId of aAvisar) {
           if (notifiedUserId === userId) continue
           // Déjà en train de regarder ce channel (onglet actif) ? Il lit le message
           // en direct -> aucune notif (cloche/badge/push) nécessaire.
@@ -597,17 +629,8 @@ export function registerSocketIO(server: Server): void {
             const userSockets = await io.in(`user:${notifiedUserId}`).fetchSockets().catch(() => [])
             if (userSockets.some(s => s.data.activeChannel === channelId)) continue
           }
-          await NotificationModel.create({
-            user_id:   notifiedUserId,
-            type:      'mention',
-            actor_id:  userId,
-            thread_id: null,
-            post_id:   null,
-          }).catch(() => {})
           if (io) {
-            const count = await NotificationModel.getUnreadCount(notifiedUserId).catch(() => 0)
-            io.to(`user:${notifiedUserId}`).emit('notification:new', { unreadCount: count })
-            // Separate chat-specific mention badge (won't mix with forum notifications)
+            // Badge do ícone de chat (nunca se mistura com o sininho do fórum)
             io.to(`user:${notifiedUserId}`).emit('chat:mention')
           }
           // Web Push si l'utilisateur n'est pas connecté en temps réel.
@@ -618,10 +641,14 @@ export function registerSocketIO(server: Server): void {
             `SELECT locale FROM users WHERE id = $1`, [notifiedUserId]
           ).catch(() => ({ rows: [] }))
           const pushLocale = resolveServerLocale(localeRows[0]?.locale, process.env.NODYX_COMMUNITY_LANGUAGE)
+          // Mencionado E respondido na mesma mensagem conta como menção: é o
+          // aviso mais forte dos dois.
+          const ehMencao = mencionados.has(notifiedUserId)
+          const textos   = pushStrings(pushLocale)
           sendPushToUser(notifiedUserId, {
-            title: pushStrings(pushLocale).mentionTitle(username),
+            title: ehMencao ? textos.mentionTitle(username) : textos.replyTitle(username),
             body:  sanitized.slice(0, 80),
-            type:  'mention',
+            type:  ehMencao ? 'mention' : 'reply',
             tag:   'chat-mention',
             url:   '/chat',
           }).catch(() => {})

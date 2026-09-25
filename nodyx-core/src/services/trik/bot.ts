@@ -14,7 +14,6 @@ import { db } from '../../config/database'
 import * as ChannelModel from '../../models/channel'
 import * as PostModel from '../../models/post'
 import * as ReactionModel from '../../models/reaction'
-import * as NotificationModel from '../../models/notification'
 import { io } from '../../socket/io'
 import { sanitize } from '../../utils/sanitize'
 import { resolveMentions } from '../../utils/mentions'
@@ -137,8 +136,8 @@ export async function updateTrikBotProfile(patch: { bio?: string | null; avatarU
  * Notificação de @menção: postar via ChannelModel.addMessage() direto (em
  * vez do handler chat:send) pula o trecho que resolve @menções e cria a
  * notificação — mesma limitação que o bot de welcome do OctoGuard já tem.
- * Replica esse trecho aqui (resolveMentions + NotificationModel.create +
- * push), senão @fulano no texto do bot nunca notifica ninguém de verdade.
+ * Replica esse trecho aqui (resolveMentions + sinal de chat + push), senão
+ * @fulano no texto do bot nunca notifica ninguém de verdade.
  */
 export async function postTrikMessage(channelId: string, content: string): Promise<void> {
   try {
@@ -162,16 +161,10 @@ export async function postTrikMessage(channelId: string, content: string): Promi
         const userSockets = await io.in(`user:${notifiedUserId}`).fetchSockets().catch(() => [])
         if (userSockets.some(s => s.data.activeChannel === channelId)) continue
       }
-      await NotificationModel.create({
-        user_id:   notifiedUserId,
-        type:      'mention',
-        actor_id:  botId,
-        thread_id: null,
-        post_id:   null,
-      }).catch(() => {})
+      // Sinal no ÍCONE DE CHAT, não no sininho: desde 24/09 o sininho
+      // (/notifications) carrega só assunto de fórum, que é o que tem um
+      // destino exato para o botão "Ver". Mesma regra do chat:send.
       if (io) {
-        const count = await NotificationModel.getUnreadCount(notifiedUserId).catch(() => 0)
-        io.to(`user:${notifiedUserId}`).emit('notification:new', { unreadCount: count })
         io.to(`user:${notifiedUserId}`).emit('chat:mention')
       }
       const { rows: localeRows } = await db.query<{ locale: string | null }>(

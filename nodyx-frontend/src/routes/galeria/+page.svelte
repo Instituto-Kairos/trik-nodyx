@@ -38,11 +38,19 @@
 	const albums = $derived(data.albums as Album[])
 	const images = $derived(data.images as Imagem[])
 
-	// O backend serve os arquivos estáticos em /uploads, fora do prefixo da API.
-	// Mesmo cálculo que a antiga /library fazia.
-	const base = API_URL.replace('/api/v1', '')
-	const urlThumb = (i: Imagem) => `${base}/uploads/${i.thumbnail_path ?? i.file_path}`
-	const urlCheia = (i: Imagem) => `${base}/uploads/${i.file_path}`
+	// O backend serve os arquivos estáticos em /uploads, fora do prefixo da API,
+	// e tanto o Caddy (`handle /uploads/*`) quanto o proxy do Vite em dev mandam
+	// esse caminho pro backend. Então o caminho RELATIVO é o que vale aqui.
+	//
+	// Não derive isto de API_URL: ele é resolvido no import e, em SSR, vale
+	// `http://127.0.0.1:3000` (o backend local, endereço interno). Essas URLs
+	// entram no HTML renderizado no servidor e o NAVEGADOR é que vai buscá-las —
+	// resultado, em produção: "Mixed Content" na página HTTPS e bloqueio pela CSP
+	// (`img-src 'self' data: blob: https:` recusa http:// num IP). As imagens da
+	// galeria não carregavam nada. API_URL só serve para o próprio código buscar
+	// a API; nunca para montar endereço que o navegador vai resolver.
+	const urlThumb = (i: Imagem) => `/uploads/${i.thumbnail_path ?? i.file_path}`
+	const urlCheia = (i: Imagem) => `/uploads/${i.file_path}`
 
 	// Valor inicial do campo de busca: leitura deliberada, não deve reagir.
 	let busca = $state(untrack(() => (data.q ?? '') as string))

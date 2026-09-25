@@ -599,6 +599,103 @@ export async function listRegistros(): Promise<TrikRegistroPlayer[]> {
   return players.rows.map(p => ({ ...p, characters: byPlayer.get(p.id) ?? [] }))
 }
 
+// ─── Admin: correção de um registro (PATCH /admin/trik/registros/...) ──────
+// O /registro é um mutirão de uma vez só: o jogador preenche o modal e o que
+// entrou, entrou (upsertPlayer é DO NOTHING, createCharacter é INSERT). Sem
+// isto, um erro de digitação num nome ou num link de ficha só se conserta no
+// banco. O PATCH é parcial de propósito — o botão de passe manda só
+// `permitActive`, o formulário manda o resto.
+//
+// Deliberadamente FORA daqui: conduct_*/principles_* e os campos de
+// progressão. Esses pontos têm orçamento (points_*/spent_* em
+// trik_character_progress, ver applyLevelupInTx) e mexer neles por fora
+// dessa contabilidade dessincroniza o /levelup. template_* também fica de
+// fora: é o /plaquinha que grava.
+
+/** Chave aceita no corpo do PATCH → coluna. Whitelist: o SET é montado por
+ *  concatenação, então nada que venha do cliente pode virar nome de coluna. */
+const REGISTRO_PLAYER_COLUMNS = {
+  name:         'name',
+  pronouns:     'pronouns',
+  birthDate:    'birth_date',
+  permitActive: 'permit_active',
+} as const
+
+const REGISTRO_CHARACTER_COLUMNS = {
+  name:               'name',
+  pronouns:           'pronouns',
+  birthDate:          'birth_date',
+  faceclaimName:      'faceclaim_name',
+  faceclaimBirthDate: 'faceclaim_birth_date',
+  fichaLink:          'ficha_link',
+  pantheon:           'pantheon',
+  divineBond:         'divine_bond',
+  divineGift:         'divine_gift',
+} as const
+
+export type RegistroPlayerPatch    = Partial<Record<keyof typeof REGISTRO_PLAYER_COLUMNS,    string | boolean | null>>
+export type RegistroCharacterPatch = Partial<Record<keyof typeof REGISTRO_CHARACTER_COLUMNS, string | null>>
+
+/** Monta `col = $n` só para as chaves presentes. `$1` fica reservado ao id. */
+function buildSet(
+  columns: Record<string, string>,
+  patch: Record<string, unknown>,
+): { sets: string[]; values: unknown[] } {
+  const sets: string[] = []
+  const values: unknown[] = []
+  for (const [key, column] of Object.entries(columns)) {
+    if (!Object.prototype.hasOwnProperty.call(patch, key)) continue
+    values.push(patch[key])
+    sets.push(`${column} = $${values.length + 1}`)
+  }
+  return { sets, values }
+}
+
+/** null = jogador inexistente. Patch vazio nunca chega aqui (o schema recusa). */
+export async function updateRegistroPlayer(
+  id: string,
+  patch: RegistroPlayerPatch,
+): Promise<TrikPlayer | null> {
+  const { sets, values } = buildSet(REGISTRO_PLAYER_COLUMNS, patch)
+  if (!sets.length) return getPlayer(id)
+  const { rows } = await db.query<TrikPlayer>(
+    `UPDATE trik_players
+        SET ${sets.join(', ')}, updated_at = NOW()
+      WHERE id = $1
+      RETURNING id, name, pronouns, birth_date::text AS birth_date,
+                permit_active, created_at, updated_at`,
+    [id, ...values],
+  )
+  return rows[0] ?? null
+}
+
+/** null = personagem inexistente. Colisão de nome (UNIQUE player_id+name)
+ *  sobe como erro 23505 — quem chama traduz pra 409. */
+export async function updateRegistroCharacter(
+  id: string,
+  patch: RegistroCharacterPatch,
+): Promise<TrikCharacter | null> {
+  const { sets, values } = buildSet(REGISTRO_CHARACTER_COLUMNS, patch)
+  if (!sets.length) {
+    const { rows } = await db.query<TrikCharacter>(`SELECT * FROM trik_characters WHERE id = $1`, [id])
+    return rows[0] ?? null
+  }
+  const { rows } = await db.query<TrikCharacter>(
+    `UPDATE trik_characters
+        SET ${sets.join(', ')}, updated_at = NOW()
+      WHERE id = $1
+      RETURNING id, player_id, name, pronouns, birth_date::text AS birth_date,
+                faceclaim_name, faceclaim_birth_date::text AS faceclaim_birth_date,
+                ficha_link, pantheon, divine_bond, divine_gift,
+                conduct_presenca, conduct_proposito, conduct_sangue,
+                principles_mente, principles_coracao, principles_corpo,
+                template_name, template_signature,
+                created_at, updated_at, last_active_at`,
+    [id, ...values],
+  )
+  return rows[0] ?? null
+}
+
 // ─── Fase 2: curva de XP (editável via admin, GET/PUT /admin/trik/xp-levels) ──
 // Consumida por applyXpInTx a cada cena que gera xp. Migration
 // só popula um seed placeholder (níveis 1-3) — sem editar aqui, personagens

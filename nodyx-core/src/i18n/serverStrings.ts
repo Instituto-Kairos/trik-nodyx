@@ -66,6 +66,11 @@ interface ResetEmailStrings {
 
 interface PushStrings {
   mentionTitle: (username: string) => string
+  // Responder alguém no chat avisa tanto quanto citá-lo, mas não é a mesma
+  // coisa: reaproveitar mentionTitle diria "mencionou você" para quem apenas
+  // recebeu uma resposta. Um push, diferente de um erro de API, não é
+  // retraduzível depois de entregue — o service worker o mostra como veio.
+  replyTitle:   (username: string) => string
 }
 
 const VERIFY_EMAIL: Record<ServerLocale, VerifyEmailStrings> = {
@@ -129,8 +134,14 @@ const RESET_EMAIL: Record<ServerLocale, ResetEmailStrings> = {
 }
 
 const PUSH: Record<ServerLocale, PushStrings> = {
-  fr: { mentionTitle: (u) => `@${u} vous a mentionné` },
-  en: { mentionTitle: (u) => `@${u} mentioned you` },
+  fr: {
+    mentionTitle: (u) => `@${u} vous a mentionné`,
+    replyTitle:   (u) => `@${u} vous a répondu`,
+  },
+  en: {
+    mentionTitle: (u) => `@${u} mentioned you`,
+    replyTitle:   (u) => `@${u} replied to you`,
+  },
 }
 
 export function verifyEmailStrings(locale: ServerLocale): VerifyEmailStrings {

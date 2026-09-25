@@ -6,6 +6,7 @@
 	import PollCreator from '$lib/components/PollCreator.svelte';
 	import { t } from '$lib/i18n';
 	import { untrack } from 'svelte';
+	import { findCategoryIdPath } from '$lib/forumTree';
 
 	const tFn = $derived($t)
 
@@ -27,17 +28,6 @@
 		return userRank >= (RANK[cat.post_min_role ?? 'member'] ?? 0);
 	}
 
-	// Chemin d'ids de la racine jusqu'à la catégorie ciblée, à n'importe quelle profondeur.
-	// targetId vient de l'URL : c'est un slug (ou un UUID selon le lien).
-	function findPath(cats: CatNode[], targetId: string): string[] | null {
-		for (const cat of cats) {
-			if (cat.id === targetId || cat.slug === targetId) return [cat.id];
-			const sub = findPath(cat.children ?? [], targetId);
-			if (sub) return [cat.id, ...sub];
-		}
-		return null;
-	}
-
 	// N'expose que les catégories où l'utilisateur peut réellement ouvrir un fil.
 	function filterPostable(cats: CatNode[]): CatNode[] {
 		return cats
@@ -50,7 +40,7 @@
 
 	let categoryPath = $state<string[]>(untrack(() => {
 		const roots = filterPostable((data.categories ?? []) as CatNode[]);
-		return findPath(roots, data.currentCategoryId ?? '') ?? (roots[0] ? [roots[0].id] : []);
+		return findCategoryIdPath(roots, data.currentCategoryId ?? '') ?? (roots[0] ? [roots[0].id] : []);
 	}));
 
 	// Un sélecteur par niveau : racines, puis enfants du choix précédent, tant qu'il y en a.

@@ -1,19 +1,18 @@
 <script lang="ts">
 	import { t } from '$lib/i18n';
+	import { datetime } from '$lib/datetime';
 	const tFn = $derived($t);
+	// Formatação pelo idioma do app, com hora em 24h. Antes daqui saía
+	// `toLocale*([])`, que segue o idioma do NAVEGADOR: num Chrome em
+	// en-US a agenda de uma instância em português mostrava "3:30 PM".
+	const dt = $derived($datetime);
 	import { goto } from '$app/navigation';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
 
-	function formatDate(iso: string) {
-		return new Date(iso).toLocaleDateString([], {
-			weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-		});
-	}
-	function formatTime(iso: string) {
-		return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-	}
+	const formatDate = (iso: string) => dt.dateLong(iso);
+	const formatTime = (iso: string) => dt.time(iso);
 	function formatDateRange(ev: any): string {
 		if (ev.is_all_day) return formatDate(ev.starts_at);
 		const start = tFn('event.at', { date: formatDate(ev.starts_at), time: formatTime(ev.starts_at) });
@@ -33,7 +32,7 @@
 	const grouped = $derived(() => {
 		const map = new Map<string, any[]>();
 		for (const ev of data.events) {
-			const key = new Date(ev.starts_at).toLocaleDateString([], { month: 'long', year: 'numeric' });
+			const key = dt.monthYear(ev.starts_at);
 			if (!map.has(key)) map.set(key, []);
 			map.get(key)!.push(ev);
 		}
@@ -102,7 +101,7 @@
 							<!-- Date badge -->
 							<div class="cal-date-badge {isToday(ev) ? 'cal-date-badge--today' : ''}">
 								<span class="cal-date-month">
-									{new Date(ev.starts_at).toLocaleDateString([], { month: 'short' }).toUpperCase()}
+									{dt.monthShort(ev.starts_at)}
 								</span>
 								<span class="cal-date-day">
 									{new Date(ev.starts_at).getDate()}

@@ -4,6 +4,8 @@
 	import { enhance } from '$app/forms';
 	import { PUBLIC_API_URL } from '$env/static/public';
 	import NodyxEditor from '$lib/components/editor/NodyxEditor.svelte';
+	import DateInput from '$lib/components/DateInput.svelte';
+	import { isoToValue } from '$lib/dateMask';
 	import type { PageData, ActionData } from './$types';
 	import { untrack } from 'svelte';
 
@@ -17,15 +19,11 @@
 	let uploadingCover = $state(false);
 	let uploadError    = $state<string | null>(null);
 
-	// Dates → format datetime-local (YYYY-MM-DDTHH:mm)
-	function toLocal(iso: string | null): string {
-		if (!iso) return '';
-		return new Date(iso).toISOString().slice(0, 16);
-	}
-	function toDate(iso: string | null): string {
-		if (!iso) return '';
-		return new Date(iso).toISOString().slice(0, 10);
-	}
+	// `toISOString().slice(0, 16)` devolvia UTC num campo que lê hora local:
+	// um evento das 18h aparecia como 22h aqui e, ao salvar, escorregava
+	// outras 4 horas — a cada edição. `isoToValue` usa os getters locais.
+	const startValue = isoToValue(ev.starts_at, 'datetime');
+	const endValue   = isoToValue(ev.ends_at,   'datetime');
 
 	let isAllDay    = $state(ev.is_all_day   ?? false);
 	let rsvpEnabled = $state(ev.rsvp_enabled ?? false);
@@ -182,17 +180,19 @@
 			<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 				<div>
 					<label for="starts_at" class="block text-sm font-medium text-gray-300 mb-1.5">{tFn('event.field_start')} <span class="text-red-400">*</span></label>
-					<input id="starts_at" name="starts_at" type="{isAllDay ? 'date' : 'datetime-local'}" required
-					       value={isAllDay ? toDate(ev.starts_at) : toLocal(ev.starts_at)}
+					<DateInput id="starts_at" name="starts_at" required
+					       mode={isAllDay ? 'date' : 'datetime'}
+					       value={startValue}
 					       class="w-full bg-gray-800/80 border border-gray-700 rounded-xl px-4 py-3 text-white text-sm
-					              focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/40 transition-colors [color-scheme:dark]"/>
+					              focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/40 transition-colors [color-scheme:dark]" />
 				</div>
 				<div>
 					<label for="ends_at" class="block text-sm font-medium text-gray-300 mb-1.5">Fin <span class="text-gray-600 text-xs font-normal">(optionnel)</span></label>
-					<input id="ends_at" name="ends_at" type="{isAllDay ? 'date' : 'datetime-local'}"
-					       value={isAllDay ? toDate(ev.ends_at) : toLocal(ev.ends_at)}
+					<DateInput id="ends_at" name="ends_at"
+					       mode={isAllDay ? 'date' : 'datetime'}
+					       value={endValue}
 					       class="w-full bg-gray-800/80 border border-gray-700 rounded-xl px-4 py-3 text-white text-sm
-					              focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/40 transition-colors [color-scheme:dark]"/>
+					              focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/40 transition-colors [color-scheme:dark]" />
 				</div>
 			</div>
 

@@ -167,9 +167,12 @@ export async function removeById(id: string): Promise<boolean> {
 }
 
 // Get minimal post info (for auth checks)
-export async function getAuthorAndThread(id: string): Promise<{ author_id: string; thread_id: string } | null> {
-  const { rows } = await db.query<{ author_id: string; thread_id: string }>(
-    `SELECT author_id, thread_id FROM posts WHERE id = $1`,
+// `content` vem junto porque a edição precisa do texto ANTES da alteração para
+// saber quem já estava mencionado (senão cada salvamento re-notificaria todos os
+// citados). Mesma linha, mesma consulta — nenhuma ida extra ao banco.
+export async function getAuthorAndThread(id: string): Promise<{ author_id: string; thread_id: string; content: string } | null> {
+  const { rows } = await db.query<{ author_id: string; thread_id: string; content: string }>(
+    `SELECT author_id, thread_id, content FROM posts WHERE id = $1`,
     [id]
   )
   return rows[0] ?? null

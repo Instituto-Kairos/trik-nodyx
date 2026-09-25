@@ -2,6 +2,7 @@
 	import type { PageData } from './$types';
 	import { onMount, onDestroy } from 'svelte';
 	import { t } from '$lib/i18n';
+	import { datetime } from '$lib/datetime';
 	import { replyCount } from '$lib/forumCounts';
 	import WidgetZone from '$lib/components/homepage/WidgetZone.svelte';
 	import GridRenderer from '$lib/components/homepage/GridRenderer.svelte';
@@ -9,6 +10,7 @@
 	import type { HomepagePosition, GridLayout, GridTheme } from '$lib/types/homepage';
 	import { GRID_GOOGLE_FONTS_URL } from '$lib/types/homepage';
 	const tFn = $derived($t)
+	const dt = $derived($datetime)
 
 	let { data }: { data: PageData } = $props();
 
@@ -763,9 +765,13 @@
 		<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
 			{#each publicEvents as ev}
 				{@const d  = new Date(ev.starts_at)}
-				{@const day = d.toLocaleDateString(instance.language === 'fr' ? 'fr-FR' : 'en-US', { day: 'numeric' })}
-				{@const mon = d.toLocaleDateString(instance.language === 'fr' ? 'fr-FR' : 'en-US', { month: 'short' })}
-				{@const time = ev.is_all_day ? tFn('home.all_day') : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+				<!-- `instance.language === 'fr' ? 'fr-FR' : 'en-US'` jogava toda
+				     instância não-francesa no formato americano, e a hora vinha do
+				     locale do navegador (12h num Chrome en-US). Agora é o idioma do
+				     app, com hora sempre em 24h. -->
+				{@const day = dt.dayNum(d)}
+				{@const mon = dt.monthShort(d)}
+				{@const time = ev.is_all_day ? tFn('home.all_day') : dt.time(d)}
 				<a href="/calendar" class="group relative flex flex-col rounded-2xl overflow-hidden transition-all duration-200"
 					style="background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.07);"
 					onmouseenter={e => { (e.currentTarget as HTMLElement).style.borderColor = 'rgb(var(--nx-cyan-rgb) / .35)'; (e.currentTarget as HTMLElement).style.background = 'rgb(var(--nx-cyan-rgb) / .06)' }}

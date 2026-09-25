@@ -1,4 +1,5 @@
 <script lang="ts">
+	import DateInput from '$lib/components/DateInput.svelte'
 	import { apiFetch } from '$lib/api';
 	import { portal } from '$lib/actions/portal';
 
@@ -189,9 +190,8 @@
 								bind:value={playerName}
 								class="rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-white"
 							/>
-							<input
-								type="date"
-								placeholder="Data de nascimento"
+							<DateInput
+								placeholder="Nascimento (dd/mm/aaaa)"
 								bind:value={playerBirthDate}
 								class="rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-white"
 							/>
@@ -215,8 +215,8 @@
 							bind:value={charName}
 							class="rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-white"
 						/>
-						<input
-							type="date"
+						<DateInput
+							placeholder="Nascimento (dd/mm/aaaa)"
 							bind:value={charBirthDate}
 							class="rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-white"
 						/>
@@ -232,8 +232,8 @@
 							bind:value={faceclaimName}
 							class="rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-white"
 						/>
-						<input
-							type="date"
+						<DateInput
+							placeholder="Nascimento do avatar (dd/mm/aaaa)"
 							bind:value={faceclaimBirthDate}
 							class="rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-white"
 						/>

@@ -57,6 +57,9 @@
 	let showVideo   = $state(false)
 	let showAudio   = $state(false)
 	let showTable   = $state(false)
+	// Mobile seulement : déplie les options repliées derrière le bouton « ⋯ ».
+	// Sur ≥ 640px la barre est entière et ce drapeau ne sert à rien.
+	let moreOpen    = $state(false)
 
 	let linkUrl     = $state('')
 	let imageUrl    = $state('')
@@ -1301,7 +1304,7 @@
 
 	<!-- ── Toolbar ─────────────────────────────────────────────────────── -->
 	{#if editor}
-	<div class="nodyx-toolbar flex flex-wrap items-center gap-0.5 px-2 py-1.5 border-b border-gray-800 bg-gray-900/95 backdrop-blur relative z-10 rounded-t-xl shrink-0"
+	<div class="nodyx-toolbar flex flex-wrap items-center gap-0.5 px-2 py-1.5 border-b border-gray-800 bg-gray-900/95 backdrop-blur relative z-10 rounded-t-xl shrink-0 {moreOpen ? 'more-open' : ''}"
 		role="toolbar"
 		tabindex="0"
 		onmousedown={(e) => {
@@ -1317,25 +1320,25 @@
 			<button type="button" onclick={() => toggleAny('bold')}      class="tb-btn {a.bold      ? 'active' : ''}" title={tFn('editor.bold')}>         <b>B</b></button>
 			<button type="button" onclick={() => toggleAny('italic')}    class="tb-btn {a.italic    ? 'active' : ''}" title={tFn('editor.italic')}>  <i>I</i></button>
 			<button type="button" onclick={() => toggleAny('underline')} class="tb-btn {a.underline ? 'active' : ''}" title={tFn('editor.underline')}>  <u>U</u></button>
-			<button type="button" onclick={() => toggleAny('strike')}    class="tb-btn {a.strike    ? 'active' : ''}" title={tFn('editor.strikethrough')}>               <s>S</s></button>
-			<button type="button" onclick={() => toggleAny('code')}      class="tb-btn {a.code      ? 'active' : ''}" title={tFn('editor.code_inline')}>
+			<button type="button" onclick={() => toggleAny('strike')}    class="tb-btn tb-more {a.strike    ? 'active' : ''}" title={tFn('editor.strikethrough')}>               <s>S</s></button>
+			<button type="button" onclick={() => toggleAny('code')}      class="tb-btn tb-more {a.code      ? 'active' : ''}" title={tFn('editor.code_inline')}>
 				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
 			</button>
 		</div>
 
-		<div class="tb-sep"></div>
+		<div class="tb-sep tb-more"></div>
 
 		<!-- Headings -->
-		<div class="flex items-center gap-0.5">
+		<div class="tb-more flex items-center gap-0.5">
 			<button type="button" onclick={() => toggleAny('h1')} class="tb-btn text-xs font-bold {a.h1 ? 'active' : ''}" title={tFn('editor.heading_1')}>H1</button>
 			<button type="button" onclick={() => toggleAny('h2')} class="tb-btn text-xs font-bold {a.h2 ? 'active' : ''}" title={tFn('editor.heading_2')}>H2</button>
 			<button type="button" onclick={() => toggleAny('h3')} class="tb-btn text-xs font-bold {a.h3 ? 'active' : ''}" title={tFn('editor.heading_3')}>H3</button>
 		</div>
 
-		<div class="tb-sep"></div>
+		<div class="tb-sep tb-more"></div>
 
 		<!-- Blocks -->
-		<div class="flex items-center gap-0.5">
+		<div class="tb-more flex items-center gap-0.5">
 			<!-- Blockquote -->
 			<button type="button" onclick={() => toggleAny('quote')} class="tb-btn {a.quote ? 'active' : ''}" title={tFn('editor.blockquote')}>
 				<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983zm-14.017 0v-7.391c0-5.704 3.748-9.57 9-10.609l.996 2.151c-2.433.917-3.996 3.638-3.996 5.849h3.983v10h-9.983z"/></svg>
@@ -1350,10 +1353,10 @@
 			</button>
 		</div>
 
-		<div class="tb-sep"></div>
+		<div class="tb-sep tb-more"></div>
 
 		<!-- Lists -->
-		<div class="flex items-center gap-0.5">
+		<div class="tb-more flex items-center gap-0.5">
 			<button type="button" onclick={() => toggleAny('bullet')}  class="tb-btn {a.bullet  ? 'active' : ''}" title={tFn('editor.bullet_list')}>
 				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="5" cy="7" r="1.5" fill="currentColor"/><circle cx="5" cy="12" r="1.5" fill="currentColor"/><circle cx="5" cy="17" r="1.5" fill="currentColor"/><path stroke-linecap="round" stroke-width="2" d="M9 7h11M9 12h11M9 17h11"/></svg>
 			</button>
@@ -1362,10 +1365,10 @@
 			</button>
 		</div>
 
-		<div class="tb-sep"></div>
+		<div class="tb-sep tb-more"></div>
 
 		<!-- Alignements -->
-		<div class="flex items-center gap-0.5">
+		<div class="tb-more flex items-center gap-0.5">
 			<button type="button" onclick={() => toggleAny('left')}    class="tb-btn {a.left    ? 'active' : ''}" title={tFn('editor.align_left')}>
 				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-width="2" d="M3 6h18M3 10h12M3 14h18M3 18h12"/></svg>
 			</button>
@@ -1380,10 +1383,10 @@
 			</button>
 		</div>
 
-		<div class="tb-sep"></div>
+		<div class="tb-sep tb-more"></div>
 
 		<!-- Couleur texte -->
-		<div class="relative">
+		<div class="tb-more relative">
 			<button type="button" onclick={() => { showColor = !showColor; showEmoji = showLink = showImage = showVideo = showAudio = showTable = false }} class="tb-btn" title={tFn('editor.text_color')}>
 				<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-width="2" d="M7 20h10M12 4l5 12H7L12 4z"/></svg>
 			</button>
@@ -1397,7 +1400,7 @@
 			{/if}
 		</div>
 
-		<div class="tb-sep"></div>
+		<div class="tb-sep tb-more"></div>
 
 		<!-- Lien -->
 		<div class="relative">
@@ -1460,7 +1463,7 @@
 		</div>
 
 		<!-- Vidéo YouTube -->
-		<div class="relative">
+		<div class="tb-more relative">
 			<button type="button" onclick={() => { showVideo = !showVideo; showColor = showEmoji = showLink = showImage = showAudio = showTable = false }} class="tb-btn" title={tFn('editor.insert_video')}>
 				<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M19.615 3.184c-3.604-.246-11.631-.245-15.23 0-3.897.266-4.356 2.62-4.385 8.816.029 6.185.484 8.549 4.385 8.816 3.6.245 11.626.246 15.23 0 3.897-.266 4.356-2.62 4.385-8.816-.029-6.185-.484-8.549-4.385-8.816zm-10.615 12.816v-8l8 3.993-8 4.007z"/></svg>
 			</button>
@@ -1474,7 +1477,7 @@
 		</div>
 
 		<!-- Audio (mp3 / ogg / wav / m4a / webm) -->
-		<div class="relative">
+		<div class="tb-more relative">
 			<button type="button" onclick={() => { showAudio = !showAudio; showColor = showEmoji = showLink = showImage = showVideo = showTable = false }} class="tb-btn" title={tFn('editor.audio.btn_title')}>
 				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19a3 3 0 11-6 0 3 3 0 016 0zm12-3a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
 			</button>
@@ -1574,17 +1577,17 @@
 			{/if}
 		</div>
 
-		<div class="tb-sep"></div>
+		<div class="tb-sep tb-more"></div>
 
 		<!-- Deux colonnes -->
-		<button type="button" onclick={() => toggleAny('twoCols')} class="tb-btn" title={tFn('editor.two_cols')}>
+		<button type="button" onclick={() => toggleAny('twoCols')} class="tb-btn tb-more" title={tFn('editor.two_cols')}>
 			<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="2" y="3" width="9" height="18" rx="1.5" stroke-width="2"/><rect x="13" y="3" width="9" height="18" rx="1.5" stroke-width="2"/></svg>
 		</button>
 
-		<div class="tb-sep"></div>
+		<div class="tb-sep tb-more"></div>
 
 		<!-- Table -->
-		<div class="relative">
+		<div class="tb-more relative">
 			<button type="button" onclick={() => { showTable = !showTable; showColor = showEmoji = showLink = showImage = showVideo = showAudio = false }} class="tb-btn {a.table ? 'active' : ''}" title={tFn('editor.table')}>
 				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" stroke-width="2"/><path stroke-width="1.5" d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
 			</button>
@@ -1607,6 +1610,18 @@
 			</div>
 			{/if}
 		</div>
+
+		<!-- Mobile : tout ce qui n'est pas B/I/U, lien, image et emoji est replié
+		     derrière ce bouton. Invisible à partir de 640px (voir .tb-more-toggle). -->
+		<button type="button"
+			class="tb-btn tb-more-toggle {moreOpen ? 'active' : ''}"
+			aria-expanded={moreOpen}
+			onclick={() => (moreOpen = !moreOpen)}
+			title={moreOpen ? tFn('editor.less_options') : tFn('editor.more_options')}>
+			<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-width="3" d="M6 12h.01M12 12h.01M18 12h.01"/>
+			</svg>
+		</button>
 
 	</div>
 	{/if}
@@ -1804,6 +1819,24 @@
 		margin-left: 0.25rem;
 		margin-right: 0.25rem;
 		flex-shrink: 0;
+	}
+
+	/* ── Barre compacte sur mobile ─────────────────────────────────
+	   Vingt-cinq boutons + `flex-wrap` : sur un téléphone la barre s'étale sur
+	   plusieurs rangées et mange la hauteur de la zone de saisie. Sous 640px (le
+	   `sm` de Tailwind) on ne garde que B/I/U, lien, image et emoji ; le reste
+	   porte .tb-more et attend derrière le bouton « ⋯ ».
+
+	   Le découpage est purement CSS, sans mesure de viewport côté client :
+	   celle-ci ferait diverger le HTML du SSR et le premier rendu (mismatch
+	   d'hydratation). L'ordre du DOM ne bouge pas non plus — en masquant les
+	   .tb-more, `flex-wrap` remonte simplement les boutons restants sur une
+	   seule ligne. */
+	@media (max-width: 639px) {
+		:global(.nodyx-toolbar:not(.more-open) .tb-more) { display: none; }
+	}
+	@media (min-width: 640px) {
+		:global(.tb-more-toggle) { display: none; }
 	}
 
 	/* ── Popups ────────────────────────────────────────────────────────── */

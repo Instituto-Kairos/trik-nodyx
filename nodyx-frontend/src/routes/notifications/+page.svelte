@@ -5,13 +5,26 @@
 	import { unreadCountStore } from '$lib/socket';
 	import { goto } from '$app/navigation';
 	import { untrack } from 'svelte';
+	import { POSTS_PER_PAGE } from '$lib/forumPagination';
 
 	const tFn = $derived($t)
 
+	// O `Authorization` não é opcional aqui. requireAuth (core) lê SÓ o header
+	// Bearer — não há repli por cookie —, então esta chamada saía sem
+	// credencial e voltava 401. E o erro era invisível duas vezes: `fetch` não
+	// rejeita num 401 (o `.catch` nunca disparava) e o contador já tinha sido
+	// decrementado na tela. A notificação seguia não-lida no servidor e o
+	// número voltava no carregamento seguinte. O ✓ ao lado nunca teve o
+	// problema: passa pela form action, que roda no servidor com o cookie.
 	async function markReadAndNavigate(notif: any) {
 		if (!notif.is_read) {
 			unreadCountStore.update(n => Math.max(0, n - 1))
-			fetch(`/api/v1/notifications/${notif.id}/read`, { method: 'PATCH' }).catch(() => {})
+			const n = notifications.find((x: any) => x.id === notif.id)
+			if (n) n.is_read = true
+			fetch(`/api/v1/notifications/${notif.id}/read`, {
+				method:  'PATCH',
+				headers: { Authorization: `Bearer ${data.token}` },
+			}).catch(() => {})
 		}
 		goto(notifLink(notif))
 	}
@@ -22,10 +35,14 @@
 	const unread = $derived(notifications.filter((n: any) => !n.is_read).length);
 	const readCount = $derived(notifications.filter((n: any) => n.is_read).length);
 
+	// `wave` faltava nos dois mapas, e os replis abaixo (`?? '🔔'` e
+	// `?? notif.type`) são silenciosos: um aceno aparecia para o usuário como a
+	// palavra crua « wave ». O tipo é criado desde sempre em routes/members.ts.
 	const TYPE_ICON: Record<string, string> = {
 		thread_reply: '💬',
 		post_thanks:  '🙏',
 		mention:      '@',
+		wave:         '👋',
 		canvas_access_request: '🎨',
 		canvas_access_granted: '🎨',
 	};
@@ -34,6 +51,7 @@
 		thread_reply: tFn('notifications.thread_reply_label'),
 		post_thanks:  tFn('notifications.post_thanks_label'),
 		mention:      tFn('notifications.mention_label'),
+		wave:         tFn('notifications.wave_label'),
 		canvas_access_request: tFn('notifications.canvas_access_request_label'),
 		canvas_access_granted: tFn('notifications.canvas_access_granted_label'),
 	});
@@ -45,13 +63,31 @@
 		});
 	}
 
+	// Link para a MENSAGEM que gerou a notificação, não para o topo do tópico.
+	// Dois detalhes que faziam o "Ver" errar o alvo até 24/09:
+	//
+	//  · a âncora era `#<uuid>`, mas o elemento no DOM é `id="post-<uuid>"`
+	//    (forum/[category]/[thread]/+page.svelte) — nunca casava, e o salto
+	//    simplesmente não acontecia;
+	//  · faltava a página. Um tópico é paginado de POSTS_PER_PAGE em
+	//    POSTS_PER_PAGE, e o link caía sempre na primeira: a partir da 31ª
+	//    mensagem o alvo nem estava renderizado, então não havia o que ancorar.
+	//
+	// `post_index` (quantos posts vêm antes, vindo do servidor) resolve a
+	// página. Os slugs evitam o 301 que a página do tópico faz ao receber UUID.
 	function notifLink(n: any): string {
-		if (n.category_id && n.thread_id) {
-			const cat    = n.category_slug ?? n.category_id;
-			const thread = n.thread_slug   ?? n.thread_id;
-			return `/forum/${cat}/${thread}${n.post_id ? `#${n.post_id}` : ''}`;
+		if (!n.category_id || !n.thread_id) return '#';
+
+		const cat    = n.category_slug ?? n.category_id;
+		const thread = n.thread_slug   ?? n.thread_id;
+		let url      = `/forum/${cat}/${thread}`;
+
+		if (typeof n.post_index === 'number') {
+			const page = Math.floor(n.post_index / POSTS_PER_PAGE) + 1;
+			if (page > 1) url += `?page=${page}`;
 		}
-		return '#';
+		if (n.post_id) url += `#post-${n.post_id}`;
+		return url;
 	}
 </script>
 

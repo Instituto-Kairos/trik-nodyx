@@ -26,6 +26,8 @@ vi.mock('../models/trik', () => ({
   setChannelPurposes: vi.fn().mockResolvedValue(undefined),
   isXpThread:         vi.fn(),
   listRegistros:      vi.fn(),
+  updateRegistroPlayer:    vi.fn(),
+  updateRegistroCharacter: vi.fn(),
   listXpLevels:       vi.fn(),
   setXpLevels:        vi.fn().mockResolvedValue(undefined),
 }))
@@ -123,6 +125,115 @@ describe('trikAdminPlugin', () => {
 
       expect(res.statusCode).toBe(200)
       expect(res.json()).toEqual({ players })
+    })
+  })
+
+  // PATCH de um registro: o "Editar" e o botão de Passe da tela admin.
+  // O corpo é parcial e `.strict()` — campo desconhecido é 400, não silêncio.
+
+  const PLAYER_ID = '33333333-3333-4333-8333-333333333333'
+  const PATCH_PLAYER = `/api/v1/admin/trik/registros/players/${PLAYER_ID}`
+  const PATCH_CHAR   = `/api/v1/admin/trik/registros/characters/${PLAYER_ID}`
+
+  const patch = (url: string, payload: unknown, token = 'admin') =>
+    app.inject({ method: 'PATCH', url, headers: { Authorization: `Bearer ${token}` }, payload: payload as any })
+
+  describe('PATCH /registros/players/:id', () => {
+    it('retorna 401 sem token', async () => {
+      const res = await app.inject({ method: 'PATCH', url: PATCH_PLAYER, payload: { name: 'X' } })
+      expect(res.statusCode).toBe(401)
+      expect(TrikModel.updateRegistroPlayer).not.toHaveBeenCalled()
+    })
+
+    it('retorna 403 pra quem não é admin', async () => {
+      const res = await patch(PATCH_PLAYER, { name: 'X' }, 'notadmin')
+      expect(res.statusCode).toBe(403)
+      expect(TrikModel.updateRegistroPlayer).not.toHaveBeenCalled()
+    })
+
+    it('grava o Passe e devolve o jogador', async () => {
+      vi.mocked(TrikModel.updateRegistroPlayer).mockResolvedValue({ id: PLAYER_ID, permit_active: true } as any)
+
+      const res = await patch(PATCH_PLAYER, { permitActive: true })
+
+      expect(res.statusCode).toBe(200)
+      expect(TrikModel.updateRegistroPlayer).toHaveBeenCalledWith(PLAYER_ID, { permitActive: true })
+      expect(res.json().player.permit_active).toBe(true)
+    })
+
+    it('retorna 404 quando o jogador não existe', async () => {
+      vi.mocked(TrikModel.updateRegistroPlayer).mockResolvedValue(null)
+      const res = await patch(PATCH_PLAYER, { name: 'X' })
+      expect(res.statusCode).toBe(404)
+    })
+
+    it('retorna 400 com id que não é uuid', async () => {
+      const res = await patch('/api/v1/admin/trik/registros/players/nao-uuid', { name: 'X' })
+      expect(res.statusCode).toBe(400)
+      expect(TrikModel.updateRegistroPlayer).not.toHaveBeenCalled()
+    })
+
+    it('retorna 400 com corpo vazio, campo desconhecido ou data fora do formato', async () => {
+      for (const payload of [{}, { apelido: 'X' }, { birthDate: '22/09/2000' }, { name: '' }]) {
+        const res = await patch(PATCH_PLAYER, payload)
+        expect(res.statusCode, JSON.stringify(payload)).toBe(400)
+      }
+      expect(TrikModel.updateRegistroPlayer).not.toHaveBeenCalled()
+    })
+
+    it('aceita apagar um campo opcional com null', async () => {
+      vi.mocked(TrikModel.updateRegistroPlayer).mockResolvedValue({ id: PLAYER_ID } as any)
+      const res = await patch(PATCH_PLAYER, { pronouns: null, birthDate: null })
+      expect(res.statusCode).toBe(200)
+      expect(TrikModel.updateRegistroPlayer).toHaveBeenCalledWith(PLAYER_ID, { pronouns: null, birthDate: null })
+    })
+  })
+
+  describe('PATCH /registros/characters/:id', () => {
+    it('retorna 401 sem token', async () => {
+      const res = await app.inject({ method: 'PATCH', url: PATCH_CHAR, payload: { name: 'X' } })
+      expect(res.statusCode).toBe(401)
+      expect(TrikModel.updateRegistroCharacter).not.toHaveBeenCalled()
+    })
+
+    it('recusa link de ficha que não é http(s)', async () => {
+      for (const fichaLink of ['javascript:alert(1)', 'data:text/html,x', 'ftp://exemplo.test/f']) {
+        const res = await patch(PATCH_CHAR, { fichaLink })
+        expect(res.statusCode, fichaLink).toBe(400)
+      }
+      expect(TrikModel.updateRegistroCharacter).not.toHaveBeenCalled()
+    })
+
+    it('aceita link https e devolve o personagem', async () => {
+      vi.mocked(TrikModel.updateRegistroCharacter).mockResolvedValue({ id: PLAYER_ID, name: 'Jahzell' } as any)
+
+      const res = await patch(PATCH_CHAR, { name: 'Jahzell', fichaLink: 'https://exemplo.test/ficha' })
+
+      expect(res.statusCode).toBe(200)
+      expect(res.json().character.name).toBe('Jahzell')
+    })
+
+    it('recusa campo de progressão (conduta/princípios/plaquinha)', async () => {
+      for (const payload of [{ conductPresenca: 3 }, { principlesMente: 3 }, { templateName: 'x' }]) {
+        const res = await patch(PATCH_CHAR, payload)
+        expect(res.statusCode, JSON.stringify(payload)).toBe(400)
+      }
+      expect(TrikModel.updateRegistroCharacter).not.toHaveBeenCalled()
+    })
+
+    it('retorna 404 quando o personagem não existe', async () => {
+      vi.mocked(TrikModel.updateRegistroCharacter).mockResolvedValue(null)
+      const res = await patch(PATCH_CHAR, { name: 'X' })
+      expect(res.statusCode).toBe(404)
+    })
+
+    it('traduz a colisão de nome (23505) em 409', async () => {
+      vi.mocked(TrikModel.updateRegistroCharacter).mockRejectedValue(Object.assign(new Error('dup'), { code: '23505' }))
+
+      const res = await patch(PATCH_CHAR, { name: 'Jahzell' })
+
+      expect(res.statusCode).toBe(409)
+      expect(res.json().code).toBe('DUPLICATE_NAME')
     })
   })
 

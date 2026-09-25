@@ -5,6 +5,7 @@
 	import { page } from '$app/state';
 	import { t } from '$lib/i18n';
 	import { replyCount, isUnanswered } from '$lib/forumCounts';
+	import Breadcrumb, { type Crumb } from '$lib/components/Breadcrumb.svelte';
 
 	const tFn = $derived($t)
 
@@ -15,6 +16,18 @@
 	// Use slug for URLs if available (SEO), fall back to UUID
 	const categoryId = $derived((data.category?.slug ?? data.categoryId) as string);
 	const subcategories = $derived((data.category?.children ?? []) as any[]);
+
+	// Fil d'Ariane : racine → catégorie courante. Le dernier degré n'est pas un
+	// lien (on y est déjà). Les catégories s'imbriquent sans limite, donc cette
+	// liste n'a pas de longueur connue — le composant colapse le milieu.
+	const trail  = $derived(((data as any).trail ?? []) as { id: string; name: string; slug: string | null }[]);
+	const crumbs = $derived<Crumb[]>([
+		{ label: tFn('nav.home'), href: '/' },
+		...trail.map((c, i) => ({
+			label: c.name,
+			href:  i === trail.length - 1 ? null : `/forum/${c.slug ?? c.id}`,
+		})),
+	]);
 	const user = $derived((data as any).user as any); // Si user est passé
 
 	// Pour le moment, pas de category, on utilise un nom par défaut
@@ -286,12 +299,8 @@
 
 			<div>
 				<!-- Fil d'Ariane -->
-				<div class="flex items-center gap-2 mb-2">
-					<a href="/" class="text-sm text-gray-500 hover:text-indigo-400 transition-colors">{tFn('nav.home')}</a>
-					<svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-						<path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
-					</svg>
-					<span class="text-sm font-medium text-indigo-400">{categoryName}</span>
+				<div class="mb-2">
+					<Breadcrumb items={crumbs} />
 				</div>
 
 				<h1 class="text-2xl sm:text-4xl font-bold text-white tracking-tight mb-2">{categoryName}</h1>

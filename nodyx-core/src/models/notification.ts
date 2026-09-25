@@ -18,6 +18,16 @@ export interface NotificationWithActor extends Notification {
   actor_avatar:   string | null
   thread_title:   string | null
   category_id:    string | null
+  // Para montar o link canônico sem uma segunda ida ao servidor. Sem os slugs
+  // o link cai nos UUIDs, que funcionam mas custam um redirect 301 a cada
+  // clique (a página do tópico reescreve para a forma canônica).
+  category_slug:  string | null
+  thread_slug:    string | null
+  // Quantos posts do tópico vêm ANTES do post citado, para descobrir em que
+  // página ele está. Um tópico é paginado de 30 em 30: sem isto o link levava
+  // sempre à página 1, e a mensagem que gerou a notificação simplesmente não
+  // estava no DOM — a âncora não tinha onde ancorar.
+  post_index:     number | null
 }
 
 export async function create(data: {
@@ -41,14 +51,26 @@ export async function listForUser(
   limit   = 30
 ): Promise<NotificationWithActor[]> {
   const { rows } = await db.query<NotificationWithActor>(
+    // `post_index` conta os posts ANTERIORES ao citado, na MESMA ordenação que
+    // a listagem do tópico usa (posts.created_at ASC). Empate de created_at
+    // fica indefinido dos dois lados — a listagem também não desempata —, e no
+    // pior caso a âncora cai na página vizinha.
     `SELECT n.*,
-            u.username    AS actor_username,
-            u.avatar      AS actor_avatar,
-            t.title       AS thread_title,
-            t.category_id AS category_id
+            u.username     AS actor_username,
+            u.avatar       AS actor_avatar,
+            t.title        AS thread_title,
+            t.category_id  AS category_id,
+            t.slug         AS thread_slug,
+            cat.slug       AS category_slug,
+            CASE WHEN p.id IS NULL THEN NULL ELSE (
+              SELECT COUNT(*)::int FROM posts p2
+              WHERE p2.thread_id = p.thread_id AND p2.created_at < p.created_at
+            ) END          AS post_index
      FROM notifications n
-     LEFT JOIN users   u ON u.id = n.actor_id
-     LEFT JOIN threads t ON t.id = n.thread_id
+     LEFT JOIN users      u   ON u.id  = n.actor_id
+     LEFT JOIN threads    t   ON t.id  = n.thread_id
+     LEFT JOIN categories cat ON cat.id = t.category_id
+     LEFT JOIN posts      p   ON p.id  = n.post_id
      WHERE n.user_id = $1
      ORDER BY n.created_at DESC
      LIMIT $2`,

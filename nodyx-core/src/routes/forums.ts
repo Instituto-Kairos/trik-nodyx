@@ -30,6 +30,70 @@ function stripTitleTags(title: string): string {
   return title.replace(/<[^>]*>/g, '').trim()
 }
 
+// ── Notificação de menção num conteúdo de fórum ──────────────────────────────
+//
+// O MESMO bloco existia só na resposta (POST /posts). Faltava nos outros dois
+// lugares onde se escreve um texto de fórum, e a ausência era invisível:
+//
+//   · abertura de tópico (POST /threads) — e o autocomplete de menção está
+//     LIGADO nessa tela (forum/[category]/new passa `mentions` ao NodyxEditor),
+//     então o usuário escolhia a pessoa numa lista e ela nunca era avisada;
+//   · edição de post (PUT /posts/:id) — um `@` acrescentado ao editar não
+//     avisava ninguém.
+//
+// `jaNotificados` existe para a edição: sem isso, cada salvamento re-notificaria
+// todo mundo que já estava citado no texto antigo, e corrigir uma vírgula
+// mandaria a notificação de novo. Quem entrou AGORA no texto é notificado; quem
+// já estava, não.
+//
+// Nenhum dos dois derruba a requisição: os chamadores rodam isto fora do
+// caminho da resposta.
+
+// Quem um texto de fórum menciona, resolvido na comunidade DO TÓPICO.
+//
+// Escopado a partir do tópico, e não da categoria, porque a edição de post só
+// tem o thread_id em mãos — um único caminho serve aos três chamadores.
+// O escopo por comunidade não é cosmético: resolveMentions() o exige para que
+// um usuário excluído/banido não seja notificável por menção.
+async function mencionadosEm(html: string, threadId: string): Promise<string[]> {
+  const { rows } = await db.query<{ community_id: string }>(
+    `SELECT cat.community_id
+     FROM threads t
+     JOIN categories cat ON cat.id = t.category_id
+     WHERE t.id = $1`,
+    [threadId]
+  )
+  if (!rows[0]) return []
+  return resolveMentions(html, rows[0].community_id)
+}
+
+async function notificarMencoes(opts: {
+  html:        string
+  actorId:     string
+  threadId:    string
+  postId:      string
+  jaNotificados?: string[]
+}): Promise<void> {
+  const anteriores = new Set(opts.jaNotificados ?? [])
+  const mencionados = await mencionadosEm(opts.html, opts.threadId)
+
+  for (const mentionedId of mencionados) {
+    if (mentionedId === opts.actorId) continue
+    if (anteriores.has(mentionedId)) continue
+    await NotificationModel.create({
+      user_id:   mentionedId,
+      type:      'mention',
+      actor_id:  opts.actorId,
+      thread_id: opts.threadId,
+      post_id:   opts.postId,
+    })
+    if (io) {
+      const count = await NotificationModel.getUnreadCount(mentionedId)
+      io.to(`user:${mentionedId}`).emit('notification:new', { unreadCount: count })
+    }
+  }
+}
+
 // Check if userId is owner/admin/moderator in the community that owns a thread
 async function isMod(userId: string, threadId: string): Promise<boolean> {
   const { rows } = await db.query<{ role: string }>(
@@ -314,6 +378,21 @@ app.get('/threads', {
       authorUserId: request.user!.userId, content: sanitizedContent,
     }).catch(err => request.log.warn({ err }, '[trik:xp] processScenePost failed'))
 
+    // Menções na ABERTURA do tópico. Fire-and-forget, igual à resposta: uma
+    // falha de notificação não derruba a criação do tópico.
+    ;(async () => {
+      try {
+        await notificarMencoes({
+          html:     sanitizedContent,
+          actorId:  request.user!.userId,
+          threadId: thread.id,
+          postId:   post.id,
+        })
+      } catch {
+        // Never block the response for notification failures
+      }
+    })()
+
     // Attach tags if provided
     if (tag_ids && tag_ids.length > 0) {
       await TagModel.setThreadTags(thread.id, tag_ids)
@@ -432,25 +511,12 @@ app.get('/threads', {
           }
         }
         // Notify mentioned users (scopé à la communauté du fil : cf resolveMentions)
-        const { rows: catRows2 } = await db.query<{ community_id: string }>(
-          `SELECT community_id FROM categories WHERE id = $1`, [thread.category_id]
-        )
-        const mentionedIds = catRows2[0] ? await resolveMentions(sanitized, catRows2[0].community_id) : []
-        for (const mentionedId of mentionedIds) {
-          if (mentionedId !== userId) {
-            await NotificationModel.create({
-              user_id:   mentionedId,
-              type:      'mention',
-              actor_id:  userId,
-              thread_id: thread.id,
-              post_id:   post.id,
-            })
-            if (io) {
-              const count = await NotificationModel.getUnreadCount(mentionedId)
-              io.to(`user:${mentionedId}`).emit('notification:new', { unreadCount: count })
-            }
-          }
-        }
+        await notificarMencoes({
+          html:     sanitized,
+          actorId:  userId,
+          threadId: thread.id,
+          postId:   post.id,
+        })
       } catch {
         // Never block the response for notification failures
       }
@@ -506,6 +572,24 @@ app.get('/threads', {
         authorUserId: existing.author_id, content: editSanitized,
       }))
       .catch(err => request.log.warn({ err }, '[trik:xp] revert/reprocess failed'))
+
+    // Menções ACRESCENTADAS nesta edição. `jaNotificados` é lido do conteúdo
+    // ANTERIOR: quem já estava citado não recebe de novo a cada salvamento.
+    // O ator é quem EDITA (pode ser um moderador), não o autor do post.
+    ;(async () => {
+      try {
+        await notificarMencoes({
+          html:          editSanitized,
+          actorId:       userId,
+          threadId:      existing.thread_id,
+          postId:        id,
+          jaNotificados: await mencionadosEm(existing.content, existing.thread_id),
+        })
+      } catch {
+        // Never block the response for notification failures
+      }
+    })()
+
     return reply.send({
       post,
       meta: { images_rehosted: rehostEdit.rehosted, images_failed: rehostEdit.failed.length },

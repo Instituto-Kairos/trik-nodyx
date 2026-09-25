@@ -42,7 +42,8 @@
 set -Eeuo pipefail
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  RECADO PARA A PRÓXIMA SESSÃO DO CLAUDE  (escrito em 2026-09-22)
+#  RECADO PARA A PRÓXIMA SESSÃO DO CLAUDE  (escrito em 2026-09-22,
+#                                            atualizado em 2026-09-24)
 # ═════════════════════════════════════════════════════════════════════════════
 #
 # Leia isto antes de mexer aqui. O Rafael trabalha neste projeto a partir de
@@ -53,7 +54,7 @@ set -Eeuo pipefail
 # O git é o único canal que atravessa — por isso este recado está aqui, e não
 # na memória (que também é local).
 #
-# ── O que foi feito nesta sessão ─────────────────────────────────────────────
+# ── O que foi feito em 2026-09-22 ────────────────────────────────────────────
 #
 #  · CSP das fontes. As fontes selecionáveis de apelido não funcionavam em
 #    lugar nenhum, nem no preview do editor. Causa: a CSP que o Caddy posto
@@ -72,12 +73,89 @@ set -Eeuo pipefail
 #    /feed é o primeiro item da barra mobile — era o caminho que mantinha a
 #    tela retirada acessível. Removidos.
 #
+# ── O que foi feito em 2026-09-24 ────────────────────────────────────────────
+#
+#  · Barra mobile: item "Explorar" retirado. Era o link para /communities
+#    (`nav.bar_directory`, rotulado "Explorar" em pt-BR / "Explore" em en /
+#    "Annuaire" em fr) na nav `lg:hidden fixed bottom-0` de
+#    routes/+layout.svelte. A rota NÃO ficou órfã: o "+" da sidebar
+#    (mesmo arquivo, `nav.discover_title`) continua abrindo /communities.
+#    A chave `nav.bar_directory` ficou nos oito locales, sem uso — igual a
+#    `feed.explore_btn`, órfã desde a remoção dos links do /discover.
+#    tests/responsive/bottom-nav.spec.ts não conta itens (afere opacidade e
+#    altura de alvo), então segue passando com um item a menos.
+#
+#  · Notificações, centralização decidida pelo Rafael em 2026-09-24: o SININHO
+#    (/notifications) carrega SÓ assunto de fórum — resposta em tópico,
+#    agradecimento e menção num post —, porque são os únicos tipos com destino
+#    exato. O chat sinaliza no PRÓPRIO ÍCONE (evento `chat:mention`) e no Web
+#    Push, nunca no sininho. Antes, uma menção de chat criava linha em
+#    `notifications` que aparecia sem botão "Ver" (o link vem de
+#    category_id + thread_id, que chat não tem) — só dava para marcar como lida.
+#    Mexido em socket/index.ts e services/trik/bot.ts.
+#      · O "Ver" agora cai NA mensagem: a âncora era `#<uuid>` mas o DOM usa
+#        `id="post-<uuid>"`, e faltava a página (tópico pagina de 30 em 30, o
+#        link ia sempre pra 1ª). models/notification.ts passou a devolver
+#        post_index + os slugs. Guardado por src/tests/notifLink.test.ts.
+#      · O "Ver" também não marcava como lida: a chamada saía SEM o header
+#        Authorization e voltava 401 em silêncio (fetch não rejeita em 401, e o
+#        contador já tinha sido decrementado). requireAuth só lê Bearer.
+#      · Menção passou a avisar na ABERTURA de tópico e na EDIÇÃO de post, que
+#        nunca avisaram — e o autocomplete de menção já estava ligado na tela de
+#        abrir tópico. Helper único `notificarMencoes` em routes/forums.ts;
+#        na edição, quem já estava citado no texto antigo não é re-notificado.
+#      · Responder alguém no chat agora avisa (antes só `@` avisava).
+#      · `wave` aparecia como a palavra crua "wave": faltava nos dois mapas da
+#        página e em todos os 8 locales. Corrigido.
+#    AINDA ABERTO: linhas de menção de chat criadas ANTES de 24/09 seguem no
+#    sininho sem "Ver" até serem lidas. Limpá-las é apagar dados — não fiz.
+#
+#  · Galeria em HTTPS: as miniaturas não carregavam ("Mixed Content" +
+#    bloqueio de CSP). routes/galeria/+page.svelte montava o endereço das
+#    imagens com o API_URL de $lib/api, que é resolvido no import e vale
+#    `http://127.0.0.1:3000` em SSR — o endereço interno ia no HTML e o
+#    NAVEGADOR é que tentava buscar. Passou a usar caminho relativo
+#    (/uploads/...), que o Caddy (`handle /uploads/*`) e o proxy do Vite já
+#    mandam pro backend. Era o ÚNICO lugar com esse defeito: os outros derivam
+#    de PUBLIC_API_URL, que é o domínio público. Guardado por
+#    nodyx-frontend/src/tests/uploadsUrlRelative.test.ts. Não precisa de nada
+#    manual no servidor — só o rebuild do frontend que este script já faz.
+#
+#  · Heap do build: 1536 → 3072 MB na faixa 1,5–3 GB (commit e446d44, install.sh
+#    + este script). É o deploy que o Rafael subiu em 2026-09-23 — resolve o OOM
+#    do build do frontend na instância AWS (~2 GB), e NÃO tem nada de DM.
+#
 # ── NÃO "conserte" isto sem perguntar ────────────────────────────────────────
 #
 # O envio de mensagens diretas ESTÁ QUEBRADO, e é de propósito que continua
-# assim: o Rafael abriu bug report e prefere esperar a correção do autor
-# original (upstream Pokled). Uma correção foi escrita e REVERTIDA a pedido
-# dele. Se você "descobrir" esse bug, não o corrija por iniciativa própria.
+# assim. NÃO o corrija por iniciativa própria, e não o rediagnostique: já foi
+# feito duas vezes. O estado em 2026-09-24, conferido nos refs e no código:
+#
+#  · O autor JÁ ESCREVEU a correção — upstream, commit aa4fe1d,
+#    "fix(dm): messages chiffrés cassés en silence sur les instances sans
+#    instance.esy (#752)", de 2026-09-23. O #752 é o bug report do Rafael.
+#
+#  · Ela está no branch `fix/dm-e2e-instance-key-752` e NÃO foi mergeada no
+#    `upstream/main`. Por isso o update de 2026-09-23 não trouxe nada de DM:
+#    `git log HEAD..upstream/main` está vazio, e o que subiu (e446d44) foi só
+#    o teto de heap. O servidor em /opt/nodyx faz fast-forward de origin/main,
+#    então ele também não tem o fix.
+#
+#  · DECISÃO DO RAFAEL (2026-09-24): ESPERAR o merge no main do autor, em vez
+#    de cherry-pickar o branch. Foi perguntado e respondido. Não reabra sozinho.
+#    Antes disso, uma correção nossa já havia sido escrita e REVERTIDA a pedido
+#    dele — são duas recusas, não uma.
+#
+#  · Conferir se já caiu (aa4fe1d está no clone desde o fetch de 24/09):
+#      git fetch upstream --prune
+#      git merge-base --is-ancestor aa4fe1d upstream/main && echo MERGEADO
+#    Testado com `git merge-tree`: aplica em HEAD sem conflito, e não traz
+#    migration nova (toca nodyx-core e nodyx-frontend → rebuild dos dois).
+#
+#  · O que o fix dele faz, além do que diagnosticamos: gera `instance.esy` no
+#    boot do nodyx-core se faltar (idempotente), só limpa o campo DEPOIS de o
+#    encryptDM passar, mostra erro visível (`sendError`) no envio e na edição,
+#    e registra a chave pública no login — não só ao abrir a conversa.
 #
 # Diagnóstico, para não ter de refazer: `instance.esy` só é gerado por
 # `npm run generate-esy`, que o install.sh nunca chama — então

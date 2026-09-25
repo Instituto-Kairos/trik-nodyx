@@ -79,6 +79,42 @@ const RegistroBody = z.object({
   }),
 })
 
+// Admin: correção de um registro já gravado. PATCH parcial — só as chaves
+// presentes são escritas (ver buildSet em models/trik.ts). `.strict()` para
+// que um campo escrito errado no formulário vire 400 em vez de virar silêncio.
+const ISO_DATE = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Data precisa ser AAAA-MM-DD')
+
+const naoVazio = <T extends z.ZodRawShape>(shape: T) =>
+  z.object(shape).strict().refine(
+    body => Object.keys(body).length > 0,
+    'Nada para atualizar',
+  )
+
+const RegistroPlayerPatch = naoVazio({
+  name:         z.string().min(1).max(100).optional(),
+  pronouns:     z.string().max(50).nullable().optional(),
+  birthDate:    ISO_DATE.nullable().optional(),
+  permitActive: z.boolean().optional(),
+})
+
+const RegistroCharacterPatch = naoVazio({
+  name:               z.string().min(1).max(100).optional(),
+  pronouns:           z.string().max(50).nullable().optional(),
+  birthDate:          ISO_DATE.nullable().optional(),
+  faceclaimName:      z.string().max(100).nullable().optional(),
+  faceclaimBirthDate: ISO_DATE.nullable().optional(),
+  // Mesma regra do RegistroBody: o link vira <a href> na tela admin, e
+  // z.string().url() sozinho aceita javascript:/data:.
+  fichaLink:          z.string().url().max(500)
+    .refine(u => /^https?:\/\//i.test(u), 'O link da ficha precisa começar com http:// ou https://')
+    .optional(),
+  pantheon:           z.string().max(100).nullable().optional(),
+  divineBond:         z.string().max(100).nullable().optional(),
+  divineGift:         z.string().max(240).nullable().optional(),
+})
+
+const RegistroIdParams = z.object({ id: z.string().uuid() })
+
 const PlaquinhaBody = z.object({
   channelId:         z.string().uuid(),
   characterId:       z.string().uuid(),
@@ -340,6 +376,42 @@ export async function trikAdminPlugin(app: FastifyInstance) {
   // e o nível/xp de cada um — o que o /registro e o /plaquinha gravaram.
   app.get('/registros', async (_request, reply) => {
     return reply.send({ players: await TrikModel.listRegistros() })
+  })
+
+  // Correção de um registro. O /registro grava uma vez e não reabre
+  // (upsertPlayer é DO NOTHING), então sem isto um nome ou um link de ficha
+  // digitado errado só se conserta no banco.
+  //
+  // `permitActive` (o "Passe" na tela) entra pelo patch do jogador: é a única
+  // escrita dessa coluna no código todo — antes disso ela ficava no DEFAULT
+  // FALSE da migration pra todo mundo.
+  app.patch('/registros/players/:id', {
+    preHandler: validate({ params: RegistroIdParams, body: RegistroPlayerPatch }),
+  }, async (request, reply) => {
+    const { id } = request.params as z.infer<typeof RegistroIdParams>
+    const patch = request.body as z.infer<typeof RegistroPlayerPatch>
+    const player = await TrikModel.updateRegistroPlayer(id, patch)
+    if (!player) return reply.code(404).send({ error: 'Jogador não encontrado', code: 'NOT_FOUND' })
+    return reply.send({ player })
+  })
+
+  app.patch('/registros/characters/:id', {
+    preHandler: validate({ params: RegistroIdParams, body: RegistroCharacterPatch }),
+  }, async (request, reply) => {
+    const { id } = request.params as z.infer<typeof RegistroIdParams>
+    const patch = request.body as z.infer<typeof RegistroCharacterPatch>
+    try {
+      const character = await TrikModel.updateRegistroCharacter(id, patch)
+      if (!character) return reply.code(404).send({ error: 'Personagem não encontrado', code: 'NOT_FOUND' })
+      return reply.send({ character })
+    } catch (err: any) {
+      // UNIQUE (player_id, name): o mesmo jogador já tem um personagem com
+      // esse nome. Dois jogadores PODEM ter homônimos, então não é global.
+      if (err?.code === '23505') {
+        return reply.code(409).send({ error: 'Esse jogador já tem um personagem com esse nome', code: 'DUPLICATE_NAME' })
+      }
+      throw err
+    }
   })
 
   app.get('/channels', async (_request, reply) => {

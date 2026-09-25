@@ -74,6 +74,13 @@
 	const unreadCount     = $derived($unreadCountStore);
 	const chatMentions    = $derived($chatMentionStore);
 	const dmUnread        = $derived($dmUnreadStore);
+	// Total de mensagens de chat não lidas — a soma do mesmo `unreadCountsStore`
+	// que a lista de canais já mostra por canal. Serve o badge do ícone de chat
+	// na barra mobile, que até 24/09 exibia `unreadCount`: o número do SININHO,
+	// ou seja, notificações de fórum sobre um ícone de conversa.
+	const chatUnread      = $derived(
+		Object.values($unreadCountsStore).reduce((soma, n) => soma + (n ?? 0), 0)
+	);
 	const onlineMembers   = $derived($onlineMembersStore);
 
 	// ── Activités en temps réel ────────────────────────────────────────────────
@@ -1785,9 +1792,9 @@
 			<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
 			</svg>
-			{#if unreadCount > 0}
+			{#if chatUnread > 0}
 				<span class="absolute top-1.5 right-[calc(50%-14px)] min-w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold px-1 flex items-center justify-center">
-					{unreadCount > 9 ? '9+' : unreadCount}
+					{chatUnread > 9 ? '9+' : chatUnread}
 				</span>
 			{/if}
 			<span class="text-xs font-medium">{tFn('nav.bar_chat')}</span>
@@ -1809,16 +1816,6 @@
 		</a>
 		{/if}
 
-
-		<!-- Annuaire -->
-		<a href="/communities" class="flex-1 flex flex-col items-center justify-center py-2 min-h-14 gap-0.5 {isActive('/communities') ? 'text-indigo-400' : 'text-gray-500'}">
-			<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-				<circle cx="12" cy="12" r="10"/>
-				<line x1="2" y1="12" x2="22" y2="12"/>
-				<path stroke-linecap="round" stroke-linejoin="round" d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-			</svg>
-			<span class="text-xs font-medium">{tFn('nav.bar_directory')}</span>
-		</a>
 
 		<!-- Profil / Connexion -->
 		{#if user}

@@ -5,9 +5,15 @@
 
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
+// `fileURLToPath` et non `.pathname` : sous Windows, le pathname d'une file://
+// URL vaut « /C:/… », avec une barre de tête. Node le prend alors pour un chemin
+// absolu POSIX, le résout sur le disque courant, et cherche « C:\C:\…\117_… » —
+// ENOENT sur un fichier qui est bien là. Toute la suite échouait au chargement,
+// donc aucun de ces invariants n'était vérifié sur une machine Windows.
 const M117 = readFileSync(
-  new URL('../migrations/117_durcissement_vitrine.sql', import.meta.url).pathname, 'utf-8')
+  fileURLToPath(new URL('../migrations/117_durcissement_vitrine.sql', import.meta.url)), 'utf-8')
 
 describe('migration 117 — durcissement vitrine', () => {
   it('ajoute post_min_role avec défaut inerte "member" et une contrainte de valeurs', () => {

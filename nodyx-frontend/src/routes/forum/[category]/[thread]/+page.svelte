@@ -39,6 +39,7 @@
 	import PollCreator from '$lib/components/PollCreator.svelte';
 	import { t } from '$lib/i18n';
 	import { replyCount } from '$lib/forumCounts';
+	import Breadcrumb, { type Crumb } from '$lib/components/Breadcrumb.svelte';
 
 	const tFn = $derived($t)
 
@@ -47,6 +48,17 @@
 	// ── Réactivité ────────────────────────────────────────────────────────
 	const thread = $derived(data.thread);
 	const posts  = $derived(data.posts);
+
+	// Fil d'Ariane : racine → lignée de catégories → sujet courant. La lignée
+	// peut avoir n'importe quelle profondeur (`On > EUA > Nova Orleans >
+	// Instituto Kairos`), le composant colapse le milieu sur mobile. Le dernier
+	// degré, le titre du sujet, n'est pas un lien : on y est déjà.
+	const trail  = $derived(((data as any).trail ?? []) as { id: string; name: string; slug: string | null }[]);
+	const crumbs = $derived<Crumb[]>([
+		{ label: tFn('nav.home'), href: '/' },
+		...trail.map(c => ({ label: c.name, href: `/forum/${c.slug ?? c.id}` })),
+		{ label: thread.title, href: null },
+	]);
 	// Image de partage : bannière de l'article (1re image du post) → bannière de
 	// communauté → logo → og-image par défaut. Toujours une seule og:image.
 	const shareImage = $derived(
@@ -205,12 +217,7 @@
 	     la fonctionnalité n'existe pas côté nodyx-core (aucune route, aucune
 	     table), et un bouton qui ne fait rien ment à l'utilisateur. -->
 	<div class="mb-4">
-		<a href="/forum/{thread.category_slug ?? thread.category_id}" class="text-sm text-gray-500 hover:text-indigo-400 transition-colors inline-flex items-center gap-1">
-			<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-				<path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-			</svg>
-			{tFn('forum.back_to_forum')}
-		</a>
+		<Breadcrumb items={crumbs} />
 	</div>
 
 	<!-- Carte d'identité du thread avec avatar du créateur -->

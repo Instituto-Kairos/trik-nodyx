@@ -2,6 +2,7 @@ import { error, redirect, fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { apiFetch } from '$lib/api';
 import { POSTS_PER_PAGE, totalPages, parsePageParam } from '$lib/forumPagination';
+import { findCategoryPath } from '$lib/forumTree';
 
 export const load: PageServerLoad = async ({ fetch, params, cookies, url }) => {
 	const token = cookies.get('token') ?? null;
@@ -49,17 +50,32 @@ export const load: PageServerLoad = async ({ fetch, params, cookies, url }) => {
 	const ogImagePath: string | null = page > 1 ? null :
 		(json.posts?.[0]?.content ?? '').match(/<img\b[^>]*\bsrc=["']([^"']+)["']/i)?.[1] ?? null;
 
-	// Charger le sondage lié à ce thread (s'il existe)
-	let poll: any = null;
-	if (token) {
+	// Sondage du thread + arbre des catégories, EN PARALLÈLE.
+	//
+	// Le fil d'Ariane a besoin de toute la lignée (`On > EUA > Nova Orleans >
+	// Instituto Kairos`), or la réponse du thread ne porte que `category_slug`
+	// — la feuille. `ThreadModel.findById` ne joint que `c.slug`. L'arbre entier
+	// vient donc de /instance/categories, la même source que la page de
+	// catégorie, plutôt que d'une deuxième lecture de la hiérarchie en SQL.
+	// Enchaîné derrière le sondage, ça coûtait un aller-retour de plus par vue.
+	const loadPoll = async () => {
+		if (!token) return null;
 		const pollRes = await apiFetch(fetch, `/polls?thread_id=${thread.id}&limit=1`, {
 			headers: { Authorization: `Bearer ${token}` },
 		});
-		if (pollRes.ok) {
-			const pollJson = await pollRes.json();
-			poll = pollJson.polls?.[0] ?? null;
-		}
-	}
+		if (!pollRes.ok) return null;
+		const pollJson = await pollRes.json();
+		return pollJson.polls?.[0] ?? null;
+	};
+	const loadTrail = async () => {
+		const catsRes = await apiFetch(fetch, '/instance/categories');
+		if (!catsRes.ok) return [];
+		const catsJson = await catsRes.json();
+		return findCategoryPath(catsJson.categories ?? [], catSlug ?? catParam) ?? [];
+	};
+
+	const [poll, trailNodes] = await Promise.all([loadPoll(), loadTrail()]);
+	const trail = trailNodes.map(c => ({ id: c.id, name: c.name, slug: c.slug ?? null }));
 
 	// Módulo RPG (trik, Fase 2) : estado de elegibilidade de XP do tópico. Vem
 	// na própria resposta do tópico (`xp_enabled`) — antes era uma chamada extra
@@ -67,7 +83,7 @@ export const load: PageServerLoad = async ({ fetch, params, cookies, url }) => {
 	// sempre apagado pra quem ele deveria informar.
 	const xpEnabled: boolean = json.xp_enabled === true;
 
-	return { thread: json.thread, posts: json.posts, poll, token, ogImagePath, xpEnabled, page, totalPages: pages };
+	return { thread: json.thread, posts: json.posts, poll, token, ogImagePath, xpEnabled, page, totalPages: pages, trail };
 };
 
 export const actions: Actions = {
