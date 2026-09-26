@@ -44,6 +44,17 @@ npm_install_if_needed() {
   fi
 }
 
+# O build do frontend (SvelteKit + Vite, 4500+ módulos) estoura o heap padrão do
+# Node (~900 MB) e morre com "JavaScript heap out of memory". Mesmo teto que o
+# install.sh e o scripts/aws/update.sh usam. Outro valor: NODE_HEAP_MB=6144 sudo bash ...
+RAM_MB=$(free -m | awk '/^Mem/{print $2}')
+if   [[ "$RAM_MB" -lt 3000 ]]; then HEAP=3072
+elif [[ "$RAM_MB" -lt 8000 ]]; then HEAP=2048
+else                                HEAP=4096
+fi
+export NODE_OPTIONS="--max-old-space-size=${NODE_HEAP_MB:-$HEAP}"
+ok "Heap do Node: ${NODE_HEAP_MB:-$HEAP} MB (RAM ${RAM_MB} MB)"
+
 info "Rebuild backend..."
 cd "$NODYX_DIR/nodyx-core"
 npm_install_if_needed
