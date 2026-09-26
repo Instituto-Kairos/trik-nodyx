@@ -154,8 +154,8 @@
 	// P2P reaction flash — messageId → Set of emojis currently animating
 	let reactionFlash  = $state(new Map<string, Set<string>>());
 
-	// GIF picker
-	let showGifPicker   = $state(false);
+	// Menu do compositor (hambúrguer): editor rico, emoji e enquete
+	let showComposerMenu  = $state(false);
 	let showComposerEmoji = $state(false);
 
 	// Insère un emoji (unicode ou :shortcode:) dans la zone de saisie au curseur
@@ -168,12 +168,6 @@
 		inputText = inputText.slice(0, start) + text + inputText.slice(end);
 		tick().then(() => { ta.focus(); const pos = start + text.length; ta.setSelectionRange(pos, pos); });
 	}
-	let gifQuery        = $state('');
-	let gifResults      = $state<{ id: string; preview: string; url: string }[]>([]);
-	let gifLoading      = $state(false);
-	let gifTimer: ReturnType<typeof setTimeout> | null = null;
-	// Computed once at mount — which GIF provider is configured
-	let gifProvider     = $state<'tenor' | 'giphy' | null>(null);
 
 	// Mobile long-press
 	let longPressMsg    = $state<string | null>(null);
@@ -609,10 +603,6 @@
 	onMount(async () => {
 		if (!browser) return;
 		loadCustomEmojis();   // emojis custom de l'instance (:shortcode:)
-		// Detect configured GIF provider
-		const { PUBLIC_TENOR_KEY, PUBLIC_GIPHY_KEY } = await import('$env/static/public');
-		if (PUBLIC_TENOR_KEY) gifProvider = 'tenor';
-		else if (PUBLIC_GIPHY_KEY) gifProvider = 'giphy';
 
 		const existing = getSocket();
 		if (existing) {
@@ -649,62 +639,12 @@
 	function onDocClick(e: MouseEvent) {
 		const target = e.target as HTMLElement;
 		if (!target.closest('[data-picker]')) pickerMsgId = null;
-		if (!target.closest('[data-gif-picker]')) { showGifPicker = false; }
-		if (!target.closest('[data-emoji-picker]')) { showComposerEmoji = false; }
+		// composedPath() e não target.closest(): o item "Emoji" do menu some do DOM
+		// (o menu fecha) antes deste listener rodar, e aí closest() não acha mais o
+		// [data-composer-menu] — o clique parecia "fora" e fechava o emoji na hora.
+		const noMenu = e.composedPath().some((n) => n instanceof Element && n.hasAttribute('data-composer-menu'));
+		if (!noMenu) { showComposerMenu = false; showComposerEmoji = false; }
 		if (!target.closest('[data-msg-actions]')) longPressMsg = null;
-	}
-
-	// ── GIF picker ────────────────────────────────────────────────────────────
-	async function searchGifs(q: string) {
-		if (!q.trim() || !gifProvider) { gifResults = []; return; }
-		gifLoading = true;
-		try {
-			const { PUBLIC_TENOR_KEY, PUBLIC_GIPHY_KEY } = await import('$env/static/public');
-
-			if (gifProvider === 'tenor' && PUBLIC_TENOR_KEY) {
-				const res = await fetch(
-					`https://tenor.googleapis.com/v2/search?q=${encodeURIComponent(q)}&key=${PUBLIC_TENOR_KEY}&limit=20&media_filter=gif`
-				);
-				if (res.ok) {
-					const data = await res.json();
-					gifResults = (data.results ?? []).map((r: any) => ({
-						id:      r.id,
-						preview: r.media_formats?.tinygif?.url ?? r.media_formats?.gif?.url,
-						url:     r.media_formats?.gif?.url,
-					}));
-				}
-			} else if (gifProvider === 'giphy' && PUBLIC_GIPHY_KEY) {
-				const res = await fetch(
-					`https://api.giphy.com/v1/gifs/search?q=${encodeURIComponent(q)}&api_key=${PUBLIC_GIPHY_KEY}&limit=20&rating=g`
-				);
-				if (res.ok) {
-					const data = await res.json();
-					gifResults = (data.data ?? []).map((r: any) => ({
-						id:      r.id,
-						preview: r.images?.fixed_height_small?.url ?? r.images?.downsized?.url,
-						url:     r.images?.downsized?.url ?? r.images?.original?.url,
-					}));
-				}
-			}
-		} catch { /* ignore */ }
-		finally { gifLoading = false; }
-	}
-
-	function onGifInput() {
-		if (gifTimer) clearTimeout(gifTimer);
-		gifTimer = setTimeout(() => searchGifs(gifQuery), 400);
-	}
-
-	function sendGif(url: string) {
-		if (!s || !selectedChannel) return;
-		// Only allow https GIF URLs — prevents data:/javascript: injection in img src
-		if (!/^https:\/\//i.test(url)) return;
-		const safeUrl = url.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-		const content = `<img src="${safeUrl}" alt="" style="max-width:360px;border-radius:8px;">`;
-		s.emit('chat:send', { channelId: selectedChannel.id, content });
-		showGifPicker = false;
-		gifQuery = '';
-		gifResults = [];
 	}
 
 	// ── Mobile long-press ─────────────────────────────────────────────────────
@@ -1570,67 +1510,6 @@
 					</div>
 				{/if}
 
-				<!-- GIF picker popup -->
-				{#if showGifPicker}
-					<div data-gif-picker class="relative mb-2">
-						<div class="absolute bottom-full left-0 mb-1 w-80 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-30 overflow-hidden">
-							{#if !gifProvider}
-								<!-- No key configured — setup instructions -->
-								<div class="p-4 space-y-3">
-									<p class="text-xs font-semibold text-white">{tFn('chat.gif_not_configured')}</p>
-									<p class="text-xs text-gray-400 leading-relaxed">
-										{tFn('chat.gif_add_key_pre')} <code class="bg-gray-800 px-1 rounded text-indigo-300">/var/www/nexus/nodyx-frontend/.env</code> {tFn('chat.gif_add_key_post')}
-									</p>
-									<div class="space-y-1.5 text-xs text-gray-500">
-										<div class="bg-gray-800 rounded p-2 font-mono">
-											<span class="text-green-400"># Tenor (Google)</span><br>
-											<span class="text-amber-300">PUBLIC_TENOR_KEY</span>={tFn('chat.your_key')}<br>
-											<span class="text-gray-600 text-[10px]">console.cloud.google.com → Tenor API v2</span>
-										</div>
-										<div class="bg-gray-800 rounded p-2 font-mono">
-											<span class="text-green-400"># Giphy (Meta)</span><br>
-											<span class="text-amber-300">PUBLIC_GIPHY_KEY</span>={tFn('chat.your_key')}<br>
-											<span class="text-gray-600 text-[10px]">developers.giphy.com → Create App</span>
-										</div>
-									</div>
-									<p class="text-[10px] text-gray-600">{tFn('chat.gif_both_free')}</p>
-								</div>
-							{:else}
-								<div class="p-2 border-b border-gray-800">
-									<input
-										type="text"
-										placeholder={tFn('chat.gif_search')}
-										bind:value={gifQuery}
-										oninput={onGifInput}
-										class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-500 outline-hidden focus:border-indigo-600"
-									/>
-								</div>
-								<div class="p-2 grid grid-cols-3 gap-1.5 max-h-56 overflow-y-auto" style="scrollbar-width:thin;">
-									{#if gifLoading}
-										<div class="col-span-3 text-center py-4 text-xs text-gray-500">{tFn('chat.gif_searching')}</div>
-									{:else if gifResults.length === 0 && gifQuery}
-										<div class="col-span-3 text-center py-4 text-xs text-gray-500">{tFn('chat.gif_no_results')}</div>
-									{:else if gifResults.length === 0}
-										<div class="col-span-3 text-center py-4 text-xs text-gray-500">{tFn('chat.gif_type_to_search')}</div>
-									{:else}
-										{#each gifResults as gif (gif.id)}
-											<button
-												onclick={() => sendGif(gif.url)}
-												class="rounded-lg overflow-hidden hover:ring-2 hover:ring-indigo-500 transition-all aspect-square"
-											>
-												<img src={gif.preview} alt={tFn('chat.gif')} class="w-full h-full object-cover" loading="lazy" />
-											</button>
-										{/each}
-									{/if}
-								</div>
-								<div class="px-3 py-1.5 border-t border-gray-800 text-[10px] text-gray-600 text-right capitalize">
-									{tFn('chat.gif_powered_by', { provider: gifProvider })}
-								</div>
-							{/if}
-						</div>
-					</div>
-				{/if}
-
 				<!-- Reply preview bar -->
 				{#if replyTo}
 					<div class="flex items-center gap-2.5 px-3 py-1.5 mb-2 text-xs" style="background: rgb(var(--nx-accent-2-rgb) / .08); border-left: 2px solid var(--nx-accent-2-strong)">
@@ -1697,38 +1576,41 @@
 					></textarea>
 					<!-- Toolbar -->
 					<div class="flex items-center gap-0.5 shrink-0 pb-0.5">
-						<!-- Emoji -->
-						<div class="relative" data-emoji-picker>
-							<button onclick={() => showComposerEmoji = !showComposerEmoji} title={tFn('chat.emoji')}
+						<!-- Menu (hambúrguer): editor rico, emoji e enquete num lugar só -->
+						<div class="relative" data-composer-menu>
+							<button onclick={() => { showComposerMenu = !showComposerMenu; showComposerEmoji = false; }}
+							        title={tFn('editor.more_options')} aria-label={tFn('editor.more_options')}
+							        aria-haspopup="menu" aria-expanded={showComposerMenu}
 							        class="w-7 h-7 flex items-center justify-center transition-colors"
-							        style="color: {showComposerEmoji ? 'var(--nx-accent-2-soft)' : '#4b5563'}">
-								<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path stroke-linecap="round" stroke-linejoin="round" d="M9 10h.01M15 10h.01M8.5 14.5c.9.8 2.1 1.3 3.5 1.3s2.6-.5 3.5-1.3"/></svg>
+							        style="color: {showComposerMenu || showComposerEmoji ? 'var(--nx-accent-2-soft)' : '#4b5563'}">
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
 							</button>
+							{#if showComposerMenu}
+								<div role="menu" class="absolute bottom-full right-0 mb-2 z-50 min-w-48 py-1 shadow-2xl"
+								     style="background: #111827; border: 1px solid rgba(255,255,255,.08)">
+									<button role="menuitem" onclick={() => { showComposerMenu = false; openRichCompose(); }}
+									        class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left text-gray-300 hover:bg-white/[0.06] transition-colors">
+										<svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+										{tFn('chat.rich_editor')}
+									</button>
+									<button role="menuitem" onclick={() => { showComposerMenu = false; showComposerEmoji = true; }}
+									        class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left text-gray-300 hover:bg-white/[0.06] transition-colors">
+										<svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path stroke-linecap="round" stroke-linejoin="round" d="M9 10h.01M15 10h.01M8.5 14.5c.9.8 2.1 1.3 3.5 1.3s2.6-.5 3.5-1.3"/></svg>
+										{tFn('chat.emoji')}
+									</button>
+									<button role="menuitem" onclick={() => { showComposerMenu = false; showPollCreator = true; }}
+									        class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left text-gray-300 hover:bg-white/[0.06] transition-colors">
+										<svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+										{tFn('chat.new_poll')}
+									</button>
+								</div>
+							{/if}
 							{#if showComposerEmoji}
 								<div class="absolute bottom-full right-0 mb-2 z-50">
 									<EmojiPicker onselect={(e) => { insertIntoInput(e); showComposerEmoji = false; }} />
 								</div>
 							{/if}
 						</div>
-						<!-- GIF -->
-						<button data-gif-picker onclick={() => { showGifPicker = !showGifPicker; if (showGifPicker && gifProvider) gifQuery = ''; }}
-						        title={tFn('chat.gif')}
-						        class="w-7 h-7 flex items-center justify-center text-[10px] font-black uppercase tracking-wide transition-colors"
-						        style="color: {showGifPicker ? 'var(--nx-accent-2-soft)' : '#4b5563'}; background: {showGifPicker ? 'rgb(var(--nx-accent-2-rgb) / .12)' : 'transparent'}">GIF</button>
-						<!-- Poll -->
-						<button onclick={() => showPollCreator = true} title={tFn('chat.new_poll')}
-						        class="w-7 h-7 flex items-center justify-center transition-colors" style="color: #4b5563"
-						        onmouseenter={(e) => (e.currentTarget as HTMLElement).style.color = 'var(--nx-accent-2-soft)'}
-						        onmouseleave={(e) => (e.currentTarget as HTMLElement).style.color = '#4b5563'}>
-							<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
-						</button>
-						<!-- Rich editor -->
-						<button onclick={openRichCompose} title={tFn('chat.rich_editor')}
-						        class="w-7 h-7 flex items-center justify-center transition-colors" style="color: #4b5563"
-						        onmouseenter={(e) => (e.currentTarget as HTMLElement).style.color = 'var(--nx-accent-2-soft)'}
-						        onmouseleave={(e) => (e.currentTarget as HTMLElement).style.color = '#4b5563'}>
-							<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-						</button>
 						<!-- Divider -->
 						<span class="w-px h-4 mx-1" style="background: rgba(255,255,255,.07)"></span>
 						<!-- Send -->

@@ -204,6 +204,10 @@ RAMO=""
 FAZER_BACKUP=1
 DRY_RUN=0
 INSTALAR_COMANDO=0
+CORRIGIR_REMOTO=0
+FORCAR=0
+MARCADOR="${MARCADOR:-$NODYX_DIR/.git/update-deployed-head}"
+REMOTO_FORK="${REMOTO_FORK:-https://github.com/Instituto-Kairos/trik-nodyx.git}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -211,6 +215,8 @@ while [[ $# -gt 0 ]]; do
     --sem-backup)  FAZER_BACKUP=0; shift ;;
     --dry-run)     DRY_RUN=1; shift ;;
     --instalar-comando) INSTALAR_COMANDO=1; shift ;;
+    --corrigir-remoto)  CORRIGIR_REMOTO=1; shift ;;
+    --forcar)           FORCAR=1; shift ;;
     -h|--help)
       awk 'NR>1 && /^#/ { sub(/^# ?/,""); print; next } NR>1 { exit }' "$0"
       echo
@@ -219,6 +225,8 @@ while [[ $# -gt 0 ]]; do
       echo "  --sem-backup         pula o backup do banco (NÃO recomendado)"
       echo "  --dry-run            mostra o que mudaria e sai, sem tocar em nada"
       echo "  --instalar-comando   faz 'sudo nodyx-update' passar a chamar ESTE script, e sai"
+      echo "  --corrigir-remoto    aponta o origin de /opt/nodyx para o fork trik-nodyx (se estiver em outro)"
+      echo "  --forcar             rebuilda e reinicia mesmo com o código já na versão do remoto"
       exit 0 ;;
     *) die "Opção desconhecida: $1 (use --help)" ;;
   esac
@@ -287,6 +295,33 @@ OLD_HEAD="$("${GIT[@]}" rev-parse HEAD)"
 [[ -n "$RAMO" ]] || RAMO="$("${GIT[@]}" rev-parse --abbrev-ref HEAD)"
 [[ "$RAMO" != "HEAD" ]] || die "O repo está em HEAD solto. Informe o ramo: --ramo main"
 
+# O `nodyx-update` original do install.sh faz `git pull` como ROOT e deixa objetos
+# do .git e arquivos rastreados com dono root; aí o fetch/merge como nodyx morre com
+# "insufficient permission for adding an object to repository database". Devolve o
+# dono (só metadado; pula node_modules, que é grande e não é do git).
+BAD_OWNER="$(find "$NODYX_DIR" -path '*/node_modules' -prune -o ! -user nodyx -print 2>/dev/null | head -1)"
+if [[ -n "$BAD_OWNER" ]]; then
+  warn "há arquivos de $NODYX_DIR com dono diferente de nodyx (ex.: $BAD_OWNER) — corrigindo com chown"
+  find "$NODYX_DIR" -path '*/node_modules' -prune -o ! -user nodyx -exec chown nodyx:nodyx {} + 2>/dev/null || true
+  ok "dono dos arquivos devolvido ao nodyx"
+fi
+
+# De ONDE o servidor puxa. O install.sh clona o upstream (Pokled/nodyx); o código do
+# trik só existe no fork. Se o origin ainda for o upstream, o update "funciona" e diz
+# "Já está atualizado" sem trazer nada do trik. Sempre mostra o remoto e exige o fork.
+ORIGIN_URL="$("${GIT[@]}" remote get-url origin 2>/dev/null || echo "?")"
+info "origin de $NODYX_DIR: $ORIGIN_URL"
+if [[ "${ORIGIN_URL,,}" != *instituto-kairos/trik-nodyx* ]]; then
+  if [[ "$CORRIGIR_REMOTO" -eq 1 && "$DRY_RUN" -eq 0 ]]; then
+    runuser -u nodyx -- git -c safe.directory='*' -C "$NODYX_DIR" remote set-url origin "$REMOTO_FORK"
+    ok "origin agora aponta para $REMOTO_FORK"
+  else
+    die "o origin de $NODYX_DIR NÃO é o fork trik-nodyx ($ORIGIN_URL).
+   Rode:  sudo bash $0 --corrigir-remoto      (troca o origin para $REMOTO_FORK)
+   e depois o update normal. Se o histórico divergir, o ff-only vai avisar."
+  fi
+fi
+
 # O fetch também roda como nodyx: se o remoto for privado, são as credenciais
 # do nodyx que valem, e é nelas que o próximo update vai reincidir.
 runuser -u nodyx -- git -c safe.directory='*' -C "$NODYX_DIR" fetch --prune origin "$RAMO" \
@@ -295,10 +330,24 @@ runuser -u nodyx -- git -c safe.directory='*' -C "$NODYX_DIR" fetch --prune orig
 NEW_HEAD="$("${GIT[@]}" rev-parse "origin/$RAMO")"
 ok "local ${OLD_HEAD:0:7} · remoto ${NEW_HEAD:0:7} (ramo $RAMO)"
 
+# "Código já na versão do remoto" NÃO prova que o servidor roda essa versão: o
+# `nodyx-update` original faz o pull e depois o build pode morrer (OOM) — o código
+# fica novo em disco e o site na versão velha. Por isso a última implantação que
+# TERMINOU (build + PM2 + verificação) grava o commit em $MARCADOR; só sai daqui se
+# o marcador for este commit.
+REBUILD_ONLY=0
 if [[ "$OLD_HEAD" == "$NEW_HEAD" ]]; then
-  ok "Já está atualizado — nada a fazer."
-  "${PM2[@]}" list
-  exit 0
+  DEPLOYED="$(cat "$MARCADOR" 2>/dev/null || true)"
+  if [[ "$DEPLOYED" == "$NEW_HEAD" && "$FORCAR" -eq 0 ]]; then
+    ok "Já está atualizado e implantado (${NEW_HEAD:0:7}) — nada a fazer. (--forcar rebuilda mesmo assim)"
+    "${PM2[@]}" list
+    exit 0
+  fi
+  REBUILD_ONLY=1
+  if [[ "$FORCAR" -eq 1 ]]; then warn "--forcar: reconstruindo ${NEW_HEAD:0:7} mesmo sem commits novos."
+  else warn "O código já está em ${NEW_HEAD:0:7}, mas a última implantação concluída registrada é ${DEPLOYED:-nenhuma}."
+       warn "(build interrompido antes?) Reconstruindo e reiniciando."
+  fi
 fi
 
 # Fast-forward obrigatório: um merge ou rebase automático em produção é como se
@@ -322,6 +371,8 @@ MUDOU_CORE=0;  mudou nodyx-core                        && MUDOU_CORE=1
 MUDOU_FRONT=0; mudou nodyx-frontend                    && MUDOU_FRONT=1
 MUDOU_MIGR=0;  mudou nodyx-core/src/migrations         && MUDOU_MIGR=1
 MUDOU_CSP=0;   mudou install.sh install_tunnel.sh      && MUDOU_CSP=1
+# Sem commits novos (só reconstruir): não há diff pra decidir, então rebuilda tudo.
+if [[ "$REBUILD_ONLY" -eq 1 ]]; then MUDOU_CORE=1; MUDOU_FRONT=1; MUDOU_MIGR=1; MUDOU_CSP=1; fi
 
 echo
 echo "     backend: $([[ $MUDOU_CORE  == 1 ]] && echo 'rebuild' || echo 'sem mudança')"
@@ -551,5 +602,7 @@ fi
 
 echo
 "${PM2[@]}" list
+# Só aqui — build, PM2 e verificação passaram — o commit conta como implantado.
+"${GIT[@]}" rev-parse HEAD > "$MARCADOR" && chown nodyx:nodyx "$MARCADOR"
 echo
 ok "Update concluído: ${OLD_HEAD:0:7} → $("${GIT[@]}" rev-parse --short HEAD)"
