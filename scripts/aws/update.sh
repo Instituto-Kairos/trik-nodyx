@@ -299,7 +299,9 @@ OLD_HEAD="$("${GIT[@]}" rev-parse HEAD)"
 # do .git e arquivos rastreados com dono root; aí o fetch/merge como nodyx morre com
 # "insufficient permission for adding an object to repository database". Devolve o
 # dono (só metadado; pula node_modules, que é grande e não é do git).
-BAD_OWNER="$(find "$NODYX_DIR" -path '*/node_modules' -prune -o ! -user nodyx -print 2>/dev/null | head -1)"
+# -print -quit, e não `| head -1`: com pipefail, o head fecha o cano, o find morre
+# de SIGPIPE (141) e o script abortava calado quando havia MAIS de um arquivo.
+BAD_OWNER="$(find "$NODYX_DIR" -path '*/node_modules' -prune -o ! -user nodyx -print -quit 2>/dev/null || true)"
 if [[ -n "$BAD_OWNER" ]]; then
   warn "há arquivos de $NODYX_DIR com dono diferente de nodyx (ex.: $BAD_OWNER) — corrigindo com chown"
   find "$NODYX_DIR" -path '*/node_modules' -prune -o ! -user nodyx -exec chown nodyx:nodyx {} + 2>/dev/null || true
