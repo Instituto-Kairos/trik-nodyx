@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte'
 	import { replyCount } from '$lib/forumCounts';
 	import { t, locale } from '$lib/i18n'
 
@@ -8,8 +7,10 @@
 
 	interface Thread {
 		id:                   string
+		slug?:                string | null
 		title:                string
 		category_id:          string
+		category_slug?:       string | null
 		category_name:        string
 		author_username:      string
 		author_avatar?:       string
@@ -43,23 +44,27 @@
 	let threads = $state<Thread[]>([])
 	let loading = $state(true)
 
-	onMount(async () => {
-		try {
-			const res = await fetch('/api/v1/instance/threads/recent')
-			if (res.ok) {
-				const { threads: data } = await res.json() as { threads: Thread[] }
-				let filtered = data
-				if (categoryId) {
-					filtered = data.filter(t =>
-						t.category_id === categoryId ||
-						(t as any).category_slug === categoryId
-					)
-				}
-				threads = filtered.slice(0, limit)
-			}
-		} catch { /* skip */ }
-		loading = false
+	// Filtre et limite appliqués côté API : filtrer ici après le LIMIT global
+	// laissait vide toute catégorie absente des 10 derniers fils du forum.
+	// $effect (et non onMount) : le builder relance la requête quand l'admin
+	// change la limite ou la catégorie.
+	$effect(() => {
+		const params = new URLSearchParams({ limit: String(limit) })
+		const cat = categoryId.trim()
+		if (cat) params.set('category', cat)
+
+		let stale = false
+		fetch(`/api/v1/instance/threads/recent?${params}`)
+			.then(res => res.ok ? res.json() as Promise<{ threads: Thread[] }> : null)
+			.then(data => { if (!stale && data) threads = data.threads })
+			.catch(() => { /* skip */ })
+			.finally(() => { if (!stale) loading = false })
+		return () => { stale = true }
 	})
+
+	function threadUrl(t: Thread): string {
+		return `/forum/${t.category_slug ?? t.category_id}/${t.slug ?? t.id}`
+	}
 
 	function timeAgo(dateStr: string): string {
 		const min = (new Date(dateStr).getTime() - Date.now()) / 60000 // négatif = passé
@@ -95,7 +100,7 @@
 	{:else if style === 'cards'}
 		<div class="rt-cards">
 			{#each threads as t}
-				<a class="rt-card" href="/forum/{t.category_id}/{t.id}">
+				<a class="rt-card" href={threadUrl(t)}>
 					{#if showCat}
 						<span class="rt-card-cat">{t.category_name}</span>
 					{/if}
@@ -133,7 +138,7 @@
 		<!-- Style liste (défaut) -->
 		<div class="rt-list">
 			{#each threads as t, i}
-				<a class="rt-item" href="/forum/{t.category_id}/{t.id}">
+				<a class="rt-item" href={threadUrl(t)}>
 					{#if showAvatar}
 						<div class="rt-avatar">
 							{#if t.last_poster_avatar ?? t.author_avatar}

@@ -234,17 +234,41 @@ export default async function instanceRoutes(app: FastifyInstance) {
   })
 
   // GET /api/v1/instance/threads/recent
-  // Returns the 10 most recent threads across all categories
-  app.get('/threads/recent', { preHandler: [rateLimit] }, async (_request, reply) => {
+  // Returns the most recent threads across all categories.
+  // Query params: ?limit=1-10 (default 10), ?category=slug-or-uuid (optional,
+  // sous-catégories incluses). Le filtre DOIT se faire ici : filtré côté client
+  // après un LIMIT 10 global, une catégorie absente des 10 derniers fils
+  // renvoyait une liste vide.
+  app.get('/threads/recent', { preHandler: [rateLimit] }, async (request, reply) => {
     const communityId = await getCommunityId()
     if (!communityId) {
       return reply.send({ threads: [] })
     }
 
+    const query       = request.query as { limit?: string; category?: string }
+    const limit       = Math.min(10, Math.max(1, parseInt(query.limit ?? '10', 10) || 10))
+    const categoryRaw = (query.category ?? '').trim()
+
+    const params: unknown[] = [communityId, limit]
+    let categoryFilter = ''
+    if (categoryRaw) {
+      params.push(categoryRaw)
+      categoryFilter = `AND c.id IN (
+         WITH RECURSIVE sub(id) AS (
+           SELECT id FROM categories
+           WHERE community_id = $1 AND (id::text = $3 OR slug = $3)
+           UNION
+           SELECT ch.id FROM categories ch JOIN sub ON ch.parent_id = sub.id
+         )
+         SELECT id FROM sub
+       )`
+    }
+
     const { rows } = await db.query(
       `SELECT
-         t.id, t.title, t.views, t.is_locked, t.created_at,
+         t.id, t.slug, t.title, t.views, t.is_locked, t.created_at,
          c.id   AS category_id,
+         c.slug AS category_slug,
          c.name AS category_name,
          u.username AS author_username,
          u.avatar   AS author_avatar,
@@ -262,12 +286,13 @@ export default async function instanceRoutes(app: FastifyInstance) {
          -- public que s'il a été explicitement mis en avant : un brouillon
          -- d'annonce ne doit pas fuiter avant publication.
          AND (c.post_min_role = 'member' OR t.is_featured = true)
+         ${categoryFilter}
        ORDER BY COALESCE(
          (SELECT MAX(p3.created_at) FROM posts p3 WHERE p3.thread_id = t.id),
          t.created_at
        ) DESC
-       LIMIT 10`,
-      [communityId]
+       LIMIT $2`,
+      params
     )
 
     return reply.send({ threads: rows })
