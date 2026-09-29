@@ -343,6 +343,11 @@ select option {
 .nodyx-content .tiptap p {
     margin-bottom: 0.75rem;
 }
+/* Linha em branco: o editor mostra um parágrafo vazio com a altura de uma
+   linha, mas o `<p></p>` publicado tinha altura zero e o espaçamento sumia. */
+.nodyx-prose p:empty::before {
+    content: '\00a0';
+}
 
 /* ── Formatage inline ─────────────────────────────────────────────────────── */
 .nodyx-prose strong,
