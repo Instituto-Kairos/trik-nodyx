@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { t } from '$lib/i18n';
-	import { datetime } from '$lib/datetime';
+	import { datetime, calendarDay } from '$lib/datetime';
 	const tFn = $derived($t);
 	// Formatação pelo idioma do app, com hora em 24h. Antes daqui saía
 	// `toLocale*([])`, que segue o idioma do NAVEGADOR: num Chrome em
@@ -11,28 +11,30 @@
 
 	let { data }: { data: PageData } = $props();
 
-	const formatDate = (iso: string) => dt.dateLong(iso);
+	// Dia inteiro é gravado em meia-noite UTC e lido em UTC (`allDay`), senão
+	// o dia 6 aparece como dia 5 em qualquer fuso a oeste de Greenwich.
+	const formatDate = (iso: string, allDay = false) => dt.dateLong(iso, allDay);
 	const formatTime = (iso: string) => dt.time(iso);
 	function formatDateRange(ev: any): string {
-		if (ev.is_all_day) return formatDate(ev.starts_at);
+		if (ev.is_all_day) {
+			const start = formatDate(ev.starts_at, true);
+			if (!ev.ends_at || calendarDay(ev.starts_at, true) === calendarDay(ev.ends_at, true)) return start;
+			return `${start} → ${formatDate(ev.ends_at, true)}`;
+		}
 		const start = tFn('event.at', { date: formatDate(ev.starts_at), time: formatTime(ev.starts_at) });
 		if (!ev.ends_at) return start;
-		const sameDay = new Date(ev.starts_at).toDateString() === new Date(ev.ends_at).toDateString();
+		const sameDay = calendarDay(ev.starts_at) === calendarDay(ev.ends_at);
 		return sameDay ? `${start} - ${formatTime(ev.ends_at)}` : `${start} → ${formatDate(ev.ends_at)}`;
 	}
 
 	function isToday(ev: any): boolean {
-		const now = new Date();
-		const d   = new Date(ev.starts_at);
-		return d.getDate() === now.getDate() &&
-		       d.getMonth() === now.getMonth() &&
-		       d.getFullYear() === now.getFullYear();
+		return calendarDay(ev.starts_at, ev.is_all_day) === calendarDay(new Date());
 	}
 
 	const grouped = $derived(() => {
 		const map = new Map<string, any[]>();
 		for (const ev of data.events) {
-			const key = dt.monthYear(ev.starts_at);
+			const key = dt.monthYear(ev.starts_at, ev.is_all_day);
 			if (!map.has(key)) map.set(key, []);
 			map.get(key)!.push(ev);
 		}
@@ -101,10 +103,10 @@
 							<!-- Date badge -->
 							<div class="cal-date-badge {isToday(ev) ? 'cal-date-badge--today' : ''}">
 								<span class="cal-date-month">
-									{dt.monthShort(ev.starts_at)}
+									{dt.monthShort(ev.starts_at, ev.is_all_day)}
 								</span>
 								<span class="cal-date-day">
-									{new Date(ev.starts_at).getDate()}
+									{dt.dayNum(ev.starts_at, ev.is_all_day)}
 								</span>
 							</div>
 

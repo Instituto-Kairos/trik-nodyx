@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { t } from '$lib/i18n';
-	import { datetime } from '$lib/datetime';
+	import { datetime, calendarDay, eventStart } from '$lib/datetime';
 	const tFn = $derived($t);
 	// Antes daqui os formatos tinham 'fr-FR' fixo: numa instância em
 	// português os nomes de mês e de dia da semana saíam em francês.
@@ -17,12 +17,16 @@
 	let deleting = $state(false);
 
 	// ── Formatage dates ────────────────────────────────────────────────────────
-	const fDate      = (iso: string) => dt.dateLong(iso);
+	// Dia inteiro é gravado em meia-noite UTC e lido em UTC, senão o dia 6
+	// aparece como dia 5 no Brasil. Ver `valueToIso` em $lib/dateMask.
+	const allDay     = $derived(!!ev.is_all_day);
+	const fDate      = (iso: string) => dt.dateLong(iso, allDay);
 	const fTime      = (iso: string) => dt.time(iso);
-	const fDateShort = (iso: string) => dt.dateShort(iso);
-	const dayNum     = (iso: string) => dt.dayNum(iso);
-	const monthShort = (iso: string) => dt.monthShort(iso);
-	function isPast(iso: string) { return new Date(iso) < new Date(); }
+	const fDateShort = (iso: string) => dt.dateShort(iso, allDay);
+	const dayNum     = (iso: string) => dt.dayNum(iso, allDay);
+	const monthShort = (iso: string) => dt.monthShort(iso, allDay);
+	// Já começou? `eventStart` põe o dia inteiro na meia-noite LOCAL do dia.
+	const started    = $derived(eventStart(ev) < new Date());
 
 	// ── OSM embed ─────────────────────────────────────────────────────────────
 	const osmEmbedUrl = $derived(() => {
@@ -83,7 +87,7 @@
 			<div class="flex items-center gap-2 mb-2 flex-wrap">
 				{#if ev.is_cancelled}
 					<span class="text-xs px-2.5 py-1 rounded-full bg-red-900/80 text-red-300 border border-red-700/50 font-medium backdrop-blur-sm">{tFn('event.badge_cancelled')}</span>
-				{:else if !isPast(ev.starts_at)}
+				{:else if !started}
 					<span class="text-xs px-2.5 py-1 rounded-full bg-emerald-900/80 text-emerald-300 border border-emerald-700/50 font-medium backdrop-blur-sm">{tFn('event.badge_upcoming')}</span>
 				{/if}
 				{#if !ev.is_public}
@@ -112,7 +116,7 @@
 			<div class="flex items-center gap-2 mb-1 flex-wrap">
 				{#if ev.is_cancelled}
 					<span class="text-xs px-2 py-0.5 rounded-full bg-red-900/40 text-red-400 border border-red-800/40 font-medium">{tFn('event.badge_cancelled')}</span>
-				{:else if !isPast(ev.starts_at)}
+				{:else if !started}
 					<span class="text-xs px-2 py-0.5 rounded-full bg-emerald-900/40 text-emerald-400 border border-emerald-800/40 font-medium">{tFn('event.badge_upcoming')}</span>
 				{/if}
 			</div>
@@ -251,7 +255,7 @@
 					{:else}
 						<p class="text-emerald-300 text-xs mt-0.5">{tFn('event.all_day')}</p>
 					{/if}
-					{#if ev.ends_at && new Date(ev.starts_at).toDateString() !== new Date(ev.ends_at).toDateString()}
+					{#if ev.ends_at && calendarDay(ev.starts_at, allDay) !== calendarDay(ev.ends_at, allDay)}
 						<p class="text-gray-400 text-xs mt-1">→ {fDateShort(ev.ends_at)}</p>
 					{/if}
 				</div>
@@ -303,7 +307,7 @@
 						{formatPrice(ev.ticket_price, ev.ticket_currency ?? 'EUR')}
 					</span>
 				</div>
-				{#if ev.ticket_url && ev.ticket_price > 0 && !isPast(ev.starts_at) && !ev.is_cancelled}
+				{#if ev.ticket_url && ev.ticket_price > 0 && !started && !ev.is_cancelled}
 					<a href={ev.ticket_url} target="_blank" rel="noopener"
 					   class="block w-full py-3 text-center rounded-xl bg-emerald-600 hover:bg-emerald-500
 					          text-white font-semibold text-sm transition-colors">
@@ -316,7 +320,7 @@
 		{/if}
 
 		<!-- RSVP -->
-		{#if ev.rsvp_enabled && !isPast(ev.starts_at) && !ev.is_cancelled && data.token}
+		{#if ev.rsvp_enabled && !started && !ev.is_cancelled && data.token}
 			<div class="rounded-2xl border border-gray-800 bg-gray-900/60 px-5 py-4">
 				<h3 class="text-sm font-semibold text-gray-300 mb-3">{tFn('event.my_rsvp')}</h3>
 

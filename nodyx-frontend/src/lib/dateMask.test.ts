@@ -2,7 +2,7 @@
 
 import { describe, it, expect } from 'vitest'
 import {
-	onlyDigits, mask, maskedToValue, valueToMasked, isoToValue, isIncomplete,
+	onlyDigits, mask, maskedToValue, valueToMasked, isoToValue, valueToIso, isIncomplete,
 } from './dateMask'
 
 describe('mask — modo date', () => {
@@ -198,5 +198,30 @@ describe('isIncomplete', () => {
 	it('é falso quando a data fecha', () => {
 		expect(isIncomplete('24/09/2026', 'date')).toBe(false)
 		expect(isIncomplete('24/09/2026 19:30', 'datetime')).toBe(false)
+	})
+})
+
+describe('valueToIso — a conversão que tem de rodar no navegador', () => {
+	it('dia inteiro vira meia-noite UTC do mesmo dia, sem depender do fuso', () => {
+		expect(valueToIso('2026-10-06', 'date')).toBe('2026-10-06T00:00:00.000Z')
+		// O campo guarda os dígitos da hora ao alternar o modo; eles são ignorados.
+		expect(valueToIso('2026-10-06T19:00', 'date')).toBe('2026-10-06T00:00:00.000Z')
+	})
+
+	it('hora é interpretada como hora LOCAL de quem digitou', () => {
+		expect(valueToIso('2026-10-06T19:00', 'datetime'))
+			.toBe(new Date(2026, 9, 6, 19, 0).toISOString())
+	})
+
+	it('faz ida e volta com isoToValue', () => {
+		expect(isoToValue(valueToIso('2026-10-06T19:00', 'datetime'), 'datetime')).toBe('2026-10-06T19:00')
+		expect(isoToValue(valueToIso('2026-10-06', 'date'), 'date', { utc: true })).toBe('2026-10-06')
+	})
+
+	it('devolve vazio para vazio e texto inválido', () => {
+		for (const ruim of ['', null, undefined, 'nao-e-data']) {
+			expect(valueToIso(ruim as any, 'date'), String(ruim)).toBe('')
+			expect(valueToIso(ruim as any, 'datetime'), String(ruim)).toBe('')
+		}
 	})
 })

@@ -93,7 +93,7 @@
 		navegar({ offset: String(Math.max(0, offset + delta * limite)) })
 		// Uma nova página é um novo conjunto; manter o visualizador aberto
 		// mostraria uma imagem que já não está na lista navegável por setas.
-		aberta = null
+		fecharVisualizador()
 	}
 
 	// ── Visualizador ──────────────────────────────────────────────────────────
@@ -101,6 +101,9 @@
 
 	function aoTeclar(e: KeyboardEvent) {
 		if (!aberta) return
+		// Editando, as setas movem o cursor nos campos — trocar de imagem aqui
+		// jogaria fora o que foi digitado. Esc só fecha a edição.
+		if (editando) { if (e.key === 'Escape') editando = false; return }
 		if (e.key === 'Escape') { aberta = null; return }
 		const i = images.findIndex((x) => x.id === aberta!.id)
 		if (e.key === 'ArrowRight' && i < images.length - 1) aberta = images[i + 1]
@@ -192,6 +195,65 @@
 			headers: { Authorization: `Bearer ${data.token}` },
 		})
 		if (res.ok) { aberta = null; await invalidateAll() }
+	}
+
+	// ── Edição ────────────────────────────────────────────────────────────────
+	// Título, descrição, álbum e tags; o arquivo em si não se troca (para isso,
+	// apaga e envia de novo). Quem pode editar é decidido pelo backend — autor
+	// ou admin/owner —, e um 403 aparece como erro no formulário.
+	let editando    = $state(false)
+	let edTitulo    = $state('')
+	let edDescricao = $state('')
+	let edAlbum     = $state('')
+	let edTags      = $state('')
+	let salvando    = $state(false)
+	let erroEdicao  = $state('')
+
+	function abrirEdicao() {
+		if (!aberta) return
+		edTitulo    = aberta.title
+		edDescricao = aberta.description ?? ''
+		edAlbum     = aberta.album_id ?? ''
+		edTags      = aberta.tags.join(', ')
+		erroEdicao  = ''
+		editando    = true
+	}
+
+	function fecharVisualizador() {
+		aberta = null
+		editando = false
+	}
+
+	async function salvarEdicao() {
+		if (!aberta || !edTitulo.trim() || salvando) return
+		salvando   = true
+		erroEdicao = ''
+		const id = aberta.id
+		try {
+			const res = await apiFetch(fetch, `/galeria/images/${id}`, {
+				method: 'PATCH',
+				headers: { Authorization: `Bearer ${data.token}` },
+				body: JSON.stringify({
+					title:       edTitulo.trim(),
+					description: edDescricao.trim() ? edDescricao : null,
+					album_id:    edAlbum || null,
+					tags:        edTags.split(',').map((s) => s.trim()).filter(Boolean).slice(0, 12),
+				}),
+			})
+			if (!res.ok) {
+				const j = await res.json().catch(() => ({}))
+				throw new Error(j.error ?? tFn('galeria.save_error'))
+			}
+			await invalidateAll()
+			// Reaponta para a versão recarregada: ela já vem com o nome do álbum
+			// e a descrição sanitizada pelo servidor.
+			aberta   = images.find((x) => x.id === id) ?? null
+			editando = false
+		} catch (e) {
+			erroEdicao = e instanceof Error ? e.message : tFn('galeria.save_error')
+		} finally {
+			salvando = false
+		}
 	}
 </script>
 
@@ -359,10 +421,48 @@
 {#if aberta}
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<div class="gal-viewer" role="dialog" aria-modal="true" tabindex="-1" aria-label={aberta.title}
-	     onclick={(e) => { if (e.target === e.currentTarget) aberta = null }}>
+	     onclick={(e) => { if (e.target === e.currentTarget && !editando) fecharVisualizador() }}>
 		<div class="gal-viewer-box">
 			<img src={urlCheia(aberta)} alt={aberta.title} class="gal-viewer-img" />
 			<div class="gal-viewer-side">
+			{#if editando}
+				<input type="text" bind:value={edTitulo} maxlength="160"
+				       placeholder={tFn('galeria.title_ph')} class="gal-input gal-input--full" />
+
+				<div class="gal-editor">
+					<!-- `{#key}`: o editor só lê `initialContent` ao montar. -->
+					{#key aberta.id}
+						<NodyxEditor
+							compact={true}
+							initialContent={aberta.description ?? ''}
+							placeholder={tFn('galeria.description_ph')}
+							onchange={(v) => (edDescricao = v)}
+						/>
+					{/key}
+				</div>
+
+				<select bind:value={edAlbum} class="gal-input gal-input--full">
+					<option value="">{tFn('galeria.no_album')}</option>
+					{#each albums as a}
+						<option value={a.id}>{a.name}</option>
+					{/each}
+				</select>
+				<input type="text" bind:value={edTags}
+				       placeholder={tFn('galeria.tags_ph')} class="gal-input gal-input--full" />
+
+				{#if erroEdicao}<p class="gal-error">{erroEdicao}</p>{/if}
+
+				<div class="gal-row gal-row--end gal-viewer-actions">
+					<button type="button" class="gal-btn-ghost" onclick={() => (editando = false)}>
+						{tFn('common.cancel')}
+					</button>
+					<button type="button" class="gal-btn-primary"
+					        disabled={!edTitulo.trim() || salvando}
+					        onclick={salvarEdicao}>
+						{salvando ? tFn('galeria.saving') : tFn('common.save')}
+					</button>
+				</div>
+			{:else}
 				<h2 class="gal-viewer-title">{aberta.title}</h2>
 				<p class="gal-viewer-meta">
 					{aberta.uploader_username ?? '—'}
@@ -376,18 +476,22 @@
 					<p class="gal-card-tags">
 						{#each aberta.tags as tg}
 							<button type="button" class="gal-tag gal-tag--btn"
-							        onclick={() => { aberta = null; aplicarFiltro({ tag: tg, album: '' }) }}>#{tg}</button>
+							        onclick={() => { fecharVisualizador(); aplicarFiltro({ tag: tg, album: '' }) }}>#{tg}</button>
 						{/each}
 					</p>
 				{/if}
-				<div class="gal-row gal-row--end gal-viewer-actions">
+				<div class="gal-row gal-row--end gal-row--wrap gal-viewer-actions">
 					<a href={urlCheia(aberta)} target="_blank" rel="noopener" class="gal-btn-ghost">
 						{tFn('galeria.open_full')}
 					</a>
+					<button type="button" class="gal-btn-ghost" onclick={abrirEdicao}>
+						{tFn('common.edit')}
+					</button>
 					<button type="button" class="gal-btn-danger" onclick={() => apagarImagem(aberta!.id)}>
 						{tFn('common.delete')}
 					</button>
 				</div>
+			{/if}
 			</div>
 		</div>
 	</div>
@@ -436,6 +540,10 @@
 
 .gal-row { display: flex; gap: 0.5rem; align-items: center; }
 .gal-row--end { justify-content: flex-end; }
+.gal-row--wrap { flex-wrap: wrap; }
+/* No painel do visualizador os campos empilham; `flex: 1` num container em
+   coluna esticaria a altura, então aqui a largura é explícita. */
+.gal-input--full { flex: 0 0 auto; width: 100%; }
 
 /* ── Envio ─────────────────────────────────────────────────────────────────── */
 .gal-upload {

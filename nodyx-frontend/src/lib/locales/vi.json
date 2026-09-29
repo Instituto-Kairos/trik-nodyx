@@ -1013,6 +1013,8 @@
   "galeria.empty_hint": "Hãy thêm ảnh đầu tiên.",
   "galeria.open_full": "Mở kích thước đầy đủ",
   "galeria.filtering_tag": "Lọc theo thẻ",
+  "galeria.saving": "Đang lưu…",
+  "galeria.save_error": "Không thể lưu.",
   "galeria.module_off": "Mô-đun Thư viện ảnh đang bị tắt.",
   "galeria.module_off_hint": "Quản trị viên có thể bật nó trong trình quản lý mô-đun.",
   "common.avatar_alt": "Ảnh đại diện",

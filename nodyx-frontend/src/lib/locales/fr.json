@@ -4620,6 +4620,8 @@
   "galeria.empty_hint": "Ajoute la première.",
   "galeria.open_full": "Ouvrir en grand",
   "galeria.filtering_tag": "Filtré par étiquette",
+  "galeria.saving": "Enregistrement…",
+  "galeria.save_error": "Impossible d'enregistrer.",
   "galeria.module_off": "Le module Galerie est désactivé.",
   "galeria.module_off_hint": "Un administrateur peut l'activer dans le gestionnaire de modules.",
   "calendar.page_title": "Calendrier",

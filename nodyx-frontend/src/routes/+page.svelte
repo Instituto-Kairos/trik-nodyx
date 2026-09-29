@@ -769,8 +769,8 @@
 				     instância não-francesa no formato americano, e a hora vinha do
 				     locale do navegador (12h num Chrome en-US). Agora é o idioma do
 				     app, com hora sempre em 24h. -->
-				{@const day = dt.dayNum(d)}
-				{@const mon = dt.monthShort(d)}
+				{@const day = dt.dayNum(d, ev.is_all_day)}
+				{@const mon = dt.monthShort(d, ev.is_all_day)}
 				{@const time = ev.is_all_day ? tFn('home.all_day') : dt.time(d)}
 				<a href="/calendar" class="group relative flex flex-col rounded-2xl overflow-hidden transition-all duration-200"
 					style="background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.07);"

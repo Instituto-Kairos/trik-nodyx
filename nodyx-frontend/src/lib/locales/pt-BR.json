@@ -4551,6 +4551,8 @@
   "galeria.empty_hint": "Adicione a primeira.",
   "galeria.open_full": "Abrir em tamanho real",
   "galeria.filtering_tag": "Filtrando pela tag",
+  "galeria.saving": "Salvando…",
+  "galeria.save_error": "Não foi possível salvar.",
   "galeria.module_off": "O módulo Galeria está desativado.",
   "galeria.module_off_hint": "Um administrador pode ativá-lo no gerenciador de módulos.",
   "calendar.page_title": "Calendário",

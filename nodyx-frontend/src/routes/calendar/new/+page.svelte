@@ -5,7 +5,7 @@
 	import { PUBLIC_API_URL } from '$env/static/public';
 	import NodyxEditor from '$lib/components/editor/NodyxEditor.svelte';
 	import DateInput from '$lib/components/DateInput.svelte';
-	import { isoToValue } from '$lib/dateMask';
+	import { isoToValue, valueToIso } from '$lib/dateMask';
 	import type { PageData, ActionData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -25,6 +25,8 @@
 	const defaultStart = isoToValue(tomorrow, 'datetime');
 	const defaultEnd   = isoToValue(new Date(tomorrow.getTime() + 2 * 3600_000), 'datetime');
 
+	let startVal    = $state(defaultStart);
+	let endVal      = $state(defaultEnd);
 	let isAllDay    = $state(false);
 	let rsvpEnabled = $state(false);
 	let isPublic    = $state(true);
@@ -171,21 +173,26 @@
 				              focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/40 transition-colors"/>
 			</div>
 
+			<!-- A conversão para ISO é feita aqui, no navegador, e não na action:
+			     só o navegador conhece o fuso de quem digitou. Ver `valueToIso`. -->
+			<input type="hidden" name="starts_at" value={valueToIso(startVal, isAllDay ? 'date' : 'datetime')}/>
+			<input type="hidden" name="ends_at"   value={valueToIso(endVal,   isAllDay ? 'date' : 'datetime')}/>
+
 			<!-- Dates -->
 			<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 				<div>
 					<label for="starts_at" class="block text-sm font-medium text-gray-300 mb-1.5">{tFn('event.field_start')} <span class="text-red-400">*</span></label>
-					<DateInput id="starts_at" name="starts_at" required
+					<DateInput id="starts_at" required
 					       mode={isAllDay ? 'date' : 'datetime'}
-					       value={defaultStart}
+					       bind:value={startVal}
 					       class="w-full bg-gray-800/80 border border-gray-700 rounded-xl px-4 py-3 text-white text-sm
 					              focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/40 transition-colors [color-scheme:dark]" />
 				</div>
 				<div>
 					<label for="ends_at" class="block text-sm font-medium text-gray-300 mb-1.5">Fin <span class="text-gray-600 text-xs font-normal">(optionnel)</span></label>
-					<DateInput id="ends_at" name="ends_at"
+					<DateInput id="ends_at"
 					       mode={isAllDay ? 'date' : 'datetime'}
-					       value={defaultEnd}
+					       bind:value={endVal}
 					       class="w-full bg-gray-800/80 border border-gray-700 rounded-xl px-4 py-3 text-white text-sm
 					              focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/40 transition-colors [color-scheme:dark]" />
 				</div>

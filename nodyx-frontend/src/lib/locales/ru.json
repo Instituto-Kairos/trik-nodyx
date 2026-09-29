@@ -1013,6 +1013,8 @@
   "galeria.empty_hint": "Добавьте первое.",
   "galeria.open_full": "Открыть в полном размере",
   "galeria.filtering_tag": "Фильтр по тегу",
+  "galeria.saving": "Сохранение…",
+  "galeria.save_error": "Не удалось сохранить.",
   "galeria.module_off": "Модуль «Галерея» отключён.",
   "galeria.module_off_hint": "Администратор может включить его в менеджере модулей.",
   "common.avatar_alt": "Аватар",

@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest'
 import {
 	fmtTime, fmtDate, fmtDateLong, fmtDateShort,
 	fmtMonthYear, fmtMonthShort, fmtDayNum, fmtDateTime,
+	calendarDay, eventStart,
 } from './datetime'
 
 // Construídos em hora LOCAL de propósito. Com uma string ISO em `Z` o
@@ -103,5 +104,37 @@ describe('entrada inválida', () => {
 	it('aceita string ISO e número, não só Date', () => {
 		expect(fmtDateTime(TARDE.toISOString(), 'pt-BR')).toBe(fmtDateTime(TARDE, 'pt-BR'))
 		expect(fmtDate(TARDE.getTime(), 'pt-BR')).toBe('24/09/2026')
+	})
+})
+
+describe('evento de dia inteiro — data de calendário, não instante', () => {
+	// Dia inteiro é gravado em meia-noite UTC (ver `valueToIso`). Lido no fuso
+	// local, o dia 6 virava dia 5 a oeste de Greenwich — era o bug.
+	const DIA_6 = '2026-10-06T00:00:00.000Z'
+
+	it('com allDay, mostra o dia gravado em qualquer fuso', () => {
+		expect(fmtDate(DIA_6, 'pt-BR', true)).toBe('06/10/2026')
+		expect(fmtDayNum(DIA_6, 'pt-BR', true)).toBe('6')
+		expect(fmtMonthShort(DIA_6, 'pt-BR', true)).toBe('OUT')
+		expect(fmtDateLong(DIA_6, 'pt-BR', true)).toMatch(/^terça-feira/)
+	})
+
+	it('sem allDay, continua no fuso local (o comportamento de evento com hora)', () => {
+		const local = new Date(DIA_6)
+		expect(fmtDate(DIA_6, 'pt-BR')).toBe(
+			`${String(local.getDate()).padStart(2, '0')}/${String(local.getMonth() + 1).padStart(2, '0')}/${local.getFullYear()}`,
+		)
+	})
+
+	it('calendarDay compara o dia certo', () => {
+		expect(calendarDay(DIA_6, true)).toBe('2026-10-06')
+		expect(calendarDay(new Date(2026, 9, 6, 23, 59))).toBe('2026-10-06')
+		expect(calendarDay('nao-e-data')).toBe('')
+	})
+
+	it('eventStart põe o dia inteiro na meia-noite LOCAL do dia gravado', () => {
+		expect(eventStart({ starts_at: DIA_6, is_all_day: true }).getTime())
+			.toBe(new Date(2026, 9, 6).getTime())
+		expect(eventStart({ starts_at: DIA_6, is_all_day: false }).toISOString()).toBe(DIA_6)
 	})
 })

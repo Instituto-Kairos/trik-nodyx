@@ -1025,6 +1025,8 @@
   "galeria.empty_hint": "Añade la primera.",
   "galeria.open_full": "Abrir a tamaño real",
   "galeria.filtering_tag": "Filtrando por etiqueta",
+  "galeria.saving": "Guardando…",
+  "galeria.save_error": "No se pudo guardar.",
   "galeria.module_off": "El módulo Galería está desactivado.",
   "galeria.module_off_hint": "Un administrador puede activarlo en el gestor de módulos.",
   "common.avatar_alt": "Avatar",

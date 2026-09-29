@@ -20,7 +20,7 @@
 
 	<!-- Breadcrumb -->
 	<div class="flex items-center gap-2 text-sm text-gray-500 mb-6">
-		<a href="/wiki" class="hover:text-gray-300 transition-colors">Wiki</a>
+		<a href="/wiki" class="hover:text-gray-300 transition-colors">{tFn('nav.wiki')}</a>
 		<span>/</span>
 		<a href="/wiki/{pg?.slug}" class="hover:text-gray-300 transition-colors truncate max-w-48">{pg?.title}</a>
 		<span>/</span>

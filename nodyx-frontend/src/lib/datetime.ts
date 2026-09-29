@@ -46,11 +46,17 @@ function formatter(loc: string, opts: Intl.DateTimeFormatOptions): Intl.DateTime
 	return fmt
 }
 
-function format(value: DateLike, loc: string, opts: Intl.DateTimeFormatOptions): string {
+/**
+ * `allDay`: evento de dia inteiro é uma data de calendário guardada como
+ * meia-noite UTC (ver `valueToIso` em $lib/dateMask). Formatado no fuso local,
+ * o dia 6 às 00:00Z sai "5 de outubro" em qualquer fuso a oeste de Greenwich —
+ * então ele é lido em UTC, que devolve exatamente o dia gravado.
+ */
+function format(value: DateLike, loc: string, opts: Intl.DateTimeFormatOptions, allDay = false): string {
 	const d = toDate(value)
 	// Data inválida formataria como "Invalid Date" no meio da tela.
 	if (Number.isNaN(d.getTime())) return '—'
-	return formatter(loc, opts).format(d)
+	return formatter(loc, allDay ? { ...opts, timeZone: 'UTC' } : opts).format(d)
 }
 
 /** 24h sempre, em qualquer idioma: `19:30`. */
@@ -59,23 +65,23 @@ export function fmtTime(value: DateLike, loc: string): string {
 }
 
 /** Numérica curta: `24/09/2026` em pt-BR, `09/24/2026` em en. */
-export function fmtDate(value: DateLike, loc: string): string {
-	return format(value, loc, { day: '2-digit', month: '2-digit', year: 'numeric' })
+export function fmtDate(value: DateLike, loc: string, allDay = false): string {
+	return format(value, loc, { day: '2-digit', month: '2-digit', year: 'numeric' }, allDay)
 }
 
 /** Por extenso com dia da semana: `quarta-feira, 24 de setembro de 2026`. */
-export function fmtDateLong(value: DateLike, loc: string): string {
-	return format(value, loc, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+export function fmtDateLong(value: DateLike, loc: string, allDay = false): string {
+	return format(value, loc, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }, allDay)
 }
 
 /** Sem ano, para listas do mês corrente: `24 de set.`. */
-export function fmtDateShort(value: DateLike, loc: string): string {
-	return format(value, loc, { day: 'numeric', month: 'short' })
+export function fmtDateShort(value: DateLike, loc: string, allDay = false): string {
+	return format(value, loc, { day: 'numeric', month: 'short' }, allDay)
 }
 
 /** Cabeçalho de agrupamento: `setembro de 2026`. */
-export function fmtMonthYear(value: DateLike, loc: string): string {
-	return format(value, loc, { month: 'long', year: 'numeric' })
+export function fmtMonthYear(value: DateLike, loc: string, allDay = false): string {
+	return format(value, loc, { month: 'long', year: 'numeric' }, allDay)
 }
 
 /**
@@ -85,13 +91,13 @@ export function fmtMonthYear(value: DateLike, loc: string): string {
  * abreviam mês com ponto (pt, fr, es) ou sem (en). Num quadradinho de 9px o
  * ponto só come espaço, então ele sai.
  */
-export function fmtMonthShort(value: DateLike, loc: string): string {
-	return format(value, loc, { month: 'short' }).replace(/\.+$/, '').toLocaleUpperCase(loc)
+export function fmtMonthShort(value: DateLike, loc: string, allDay = false): string {
+	return format(value, loc, { month: 'short' }, allDay).replace(/\.+$/, '').toLocaleUpperCase(loc)
 }
 
 /** Só o número do dia, para o bloco de data dos cartões: `24`. */
-export function fmtDayNum(value: DateLike, loc: string): string {
-	return format(value, loc, { day: 'numeric' })
+export function fmtDayNum(value: DateLike, loc: string, allDay = false): string {
+	return format(value, loc, { day: 'numeric' }, allDay)
 }
 
 /** Data e hora juntas: `24/09/2026 19:30`. */
@@ -100,6 +106,31 @@ export function fmtDateTime(value: DateLike, loc: string): string {
 		day: '2-digit', month: '2-digit', year: 'numeric',
 		hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
 	})
+}
+
+/**
+ * O dia de calendário de um instante, `yyyy-mm-dd`, para comparar "mesmo dia"
+ * e "hoje" sem `toDateString`/`getDate`, que são sempre locais. Com `allDay`
+ * lê em UTC, pelo mesmo motivo de `format`.
+ */
+export function calendarDay(value: DateLike, allDay = false): string {
+	const d = toDate(value)
+	if (Number.isNaN(d.getTime())) return ''
+	const pad = (n: number) => String(n).padStart(2, '0')
+	return allDay
+		? `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`
+		: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+/**
+ * Quando o evento começa para quem está olhando. Para dia inteiro é a
+ * meia-noite LOCAL do dia gravado — não a meia-noite UTC guardada, que em
+ * Brasília cai às 21:00 da véspera e fecharia o RSVP 3 horas antes.
+ */
+export function eventStart(ev: { starts_at: DateLike; is_all_day?: boolean | null }): Date {
+	const d = toDate(ev.starts_at)
+	if (!ev.is_all_day) return d
+	return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
 }
 
 /**
@@ -112,11 +143,11 @@ export function fmtDateTime(value: DateLike, loc: string): string {
  */
 export const datetime = derived(locale, ($locale) => ({
 	time:       (v: DateLike) => fmtTime(v, $locale),
-	date:       (v: DateLike) => fmtDate(v, $locale),
-	dateLong:   (v: DateLike) => fmtDateLong(v, $locale),
-	dateShort:  (v: DateLike) => fmtDateShort(v, $locale),
-	monthYear:  (v: DateLike) => fmtMonthYear(v, $locale),
-	monthShort: (v: DateLike) => fmtMonthShort(v, $locale),
-	dayNum:     (v: DateLike) => fmtDayNum(v, $locale),
+	date:       (v: DateLike, allDay = false) => fmtDate(v, $locale, allDay),
+	dateLong:   (v: DateLike, allDay = false) => fmtDateLong(v, $locale, allDay),
+	dateShort:  (v: DateLike, allDay = false) => fmtDateShort(v, $locale, allDay),
+	monthYear:  (v: DateLike, allDay = false) => fmtMonthYear(v, $locale, allDay),
+	monthShort: (v: DateLike, allDay = false) => fmtMonthShort(v, $locale, allDay),
+	dayNum:     (v: DateLike, allDay = false) => fmtDayNum(v, $locale, allDay),
 	dateTime:   (v: DateLike) => fmtDateTime(v, $locale),
 }))

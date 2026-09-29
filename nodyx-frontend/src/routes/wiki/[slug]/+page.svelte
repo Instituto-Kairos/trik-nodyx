@@ -33,7 +33,7 @@
 </script>
 
 <svelte:head>
-	<title>{pg?.title ?? 'Wiki'} · {data.communityName}</title>
+	<title>{pg?.title ?? tFn('nav.wiki')} · {data.communityName}</title>
 	<meta name="description" content={pg?.excerpt ?? ''} />
 </svelte:head>
 
@@ -41,7 +41,7 @@
 
 	<!-- Breadcrumb -->
 	<div class="flex items-center gap-2 text-sm text-gray-500 mb-6">
-		<a href="/wiki" class="hover:text-gray-300 transition-colors">Wiki</a>
+		<a href="/wiki" class="hover:text-gray-300 transition-colors">{tFn('nav.wiki')}</a>
 		{#if pg?.category}
 			<span>/</span>
 			<a href="/wiki?category={encodeURIComponent(pg.category)}"

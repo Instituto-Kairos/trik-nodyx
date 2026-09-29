@@ -16,14 +16,14 @@
 </script>
 
 <svelte:head>
-	<title>Wiki · {data.communityName}</title>
+	<title>{tFn('nav.wiki')} · {data.communityName}</title>
 </svelte:head>
 
 <!-- ── Header ──────────────────────────────────────────────────────────────── -->
 <div class="wiki-header">
 	<div class="wiki-header-row">
 		<div class="wiki-title-block">
-			<h1 class="wiki-title">Wiki</h1>
+			<h1 class="wiki-title">{tFn('nav.wiki')}</h1>
 			<p class="wiki-subtitle">{tFn('wiki.subtitle')}</p>
 		</div>
 

@@ -4620,6 +4620,8 @@
   "galeria.empty_hint": "Add the first one.",
   "galeria.open_full": "Open full size",
   "galeria.filtering_tag": "Filtering by tag",
+  "galeria.saving": "Saving…",
+  "galeria.save_error": "Could not save.",
   "galeria.module_off": "The Gallery module is disabled.",
   "galeria.module_off_hint": "An administrator can enable it in the Module Manager.",
   "calendar.page_title": "Calendar",

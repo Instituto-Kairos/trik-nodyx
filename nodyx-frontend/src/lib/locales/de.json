@@ -1025,6 +1025,8 @@
   "galeria.empty_hint": "Füge das erste hinzu.",
   "galeria.open_full": "In Originalgröße öffnen",
   "galeria.filtering_tag": "Gefiltert nach Tag",
+  "galeria.saving": "Wird gespeichert…",
+  "galeria.save_error": "Speichern fehlgeschlagen.",
   "galeria.module_off": "Das Galerie-Modul ist deaktiviert.",
   "galeria.module_off_hint": "Ein Administrator kann es im Modulmanager aktivieren.",
   "common.avatar_alt": "Avatar",

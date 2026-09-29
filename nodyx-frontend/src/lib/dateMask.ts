@@ -105,15 +105,54 @@ export function valueToMasked(value: string | null | undefined, mode: DateMode):
  * `datetime-local` interpreta o texto como hora LOCAL. Num fuso UTC-4 isso
  * mostrava 22:00 onde o evento era 18:00, e salvar de novo deslocava o
  * registro outras 4 horas, a cada edição.
+ *
+ * `utc: true` é para evento de dia inteiro, que é guardado ancorado em
+ * meia-noite UTC (ver `valueToIso`): lido com os getters locais, o dia 6 às
+ * 00:00Z vira dia 5 às 21:00 em Brasília.
  */
-export function isoToValue(source: string | number | Date | null | undefined, mode: DateMode): string {
+export function isoToValue(
+	source: string | number | Date | null | undefined,
+	mode: DateMode,
+	{ utc = false }: { utc?: boolean } = {},
+): string {
 	if (source === null || source === undefined || source === '') return ''
 	const d = source instanceof Date ? source : new Date(source)
 	if (Number.isNaN(d.getTime())) return ''
 
 	const pad = (n: number) => String(n).padStart(2, '0')
-	const data = `${String(d.getFullYear()).padStart(4, '0')}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-	return mode === 'date' ? data : `${data}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+	const year   = utc ? d.getUTCFullYear() : d.getFullYear()
+	const month  = utc ? d.getUTCMonth()    : d.getMonth()
+	const day    = utc ? d.getUTCDate()     : d.getDate()
+	const hour   = utc ? d.getUTCHours()    : d.getHours()
+	const minute = utc ? d.getUTCMinutes()  : d.getMinutes()
+	const data = `${String(year).padStart(4, '0')}-${pad(month + 1)}-${pad(day)}`
+	return mode === 'date' ? data : `${data}T${pad(hour)}:${pad(minute)}`
+}
+
+/**
+ * Valor do campo → o ISO que vai para a API. O inverso de `isoToValue`, e
+ * precisa rodar NO NAVEGADOR.
+ *
+ * - `yyyy-mm-ddThh:mm` é hora de parede de quem digitou, e só o navegador
+ *   sabe o fuso dessa pessoa. Antes a conversão era feita na action do
+ *   SvelteKit, que roda no servidor (UTC na AWS): 19:00 digitado em Brasília
+ *   era gravado como 19:00Z e aparecia como 16:00.
+ * - `yyyy-mm-dd` (dia inteiro) não é um instante, é uma data de calendário:
+ *   o dia 6 é o dia 6 em qualquer fuso. Fica ancorado em meia-noite UTC, e
+ *   quem exibe usa `timeZone: 'UTC'` (ver `$lib/datetime`) para ler de volta
+ *   o mesmo dia.
+ *
+ * Vazio ou inválido → ''.
+ */
+export function valueToIso(value: string | null | undefined, mode: DateMode): string {
+	if (!value) return ''
+	if (mode === 'date') {
+		const m = /^(\d{4}-\d{2}-\d{2})/.exec(value)
+		return m ? `${m[1]}T00:00:00.000Z` : ''
+	}
+	if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) return ''
+	const d = new Date(value)
+	return Number.isNaN(d.getTime()) ? '' : d.toISOString()
 }
 
 /** Texto começado mas ainda não válido — o que acende o aviso no campo. */

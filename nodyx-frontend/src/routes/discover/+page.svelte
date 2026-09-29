@@ -19,9 +19,12 @@
 		upcoming = data.upcoming === 'true';
 	});
 
-	function formatDate(iso: string) {
+	// `allDay`: evento de dia inteiro é gravado em meia-noite UTC e tem de ser
+	// lido em UTC, senão o dia 6 aparece como dia 5 a oeste de Greenwich.
+	function formatDate(iso: string, allDay = false) {
 		return new Date(iso).toLocaleDateString([], {
-			day: '2-digit', month: 'short', year: 'numeric'
+			day: '2-digit', month: 'short', year: 'numeric',
+			...(allDay ? { timeZone: 'UTC' } : {}),
 		});
 	}
 	function formatTime(iso: string) {
@@ -165,7 +168,7 @@
 
 						<span class="disc-date">
 							{#if result.content_type === 'event' && result.starts_at}
-								{formatDate(result.starts_at)}{#if !result.is_all_day} {tFn('discover.at_time')} {formatTime(result.starts_at)}{/if}
+								{formatDate(result.starts_at, result.is_all_day)}{#if !result.is_all_day} {tFn('discover.at_time')} {formatTime(result.starts_at)}{/if}
 							{:else}
 								{formatDate(result.updated_at)}
 							{/if}
