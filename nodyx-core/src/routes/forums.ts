@@ -67,15 +67,18 @@ async function mencionadosEm(html: string, threadId: string): Promise<string[]> 
   return resolveMentions(html, rows[0].community_id)
 }
 
+// Devolve quem foi notificado, para notificarCategoria() não mandar uma
+// segunda notificação do mesmo post a essas pessoas.
 async function notificarMencoes(opts: {
   html:        string
   actorId:     string
   threadId:    string
   postId:      string
   jaNotificados?: string[]
-}): Promise<void> {
+}): Promise<string[]> {
   const anteriores = new Set(opts.jaNotificados ?? [])
   const mencionados = await mencionadosEm(opts.html, opts.threadId)
+  const notificados: string[] = []
 
   for (const mentionedId of mencionados) {
     if (mentionedId === opts.actorId) continue
@@ -87,10 +90,35 @@ async function notificarMencoes(opts: {
       thread_id: opts.threadId,
       post_id:   opts.postId,
     })
+    notificados.push(mentionedId)
     if (io) {
       const count = await NotificationModel.getUnreadCount(mentionedId)
       io.to(`user:${mentionedId}`).emit('notification:new', { unreadCount: count })
     }
+  }
+  return notificados
+}
+
+// Módulo RPG (trik): categoria marcada em /admin/trik/notificacoes avisa todos
+// os membros a cada post. O INSERT em massa fica no model; aqui só se emite o
+// novo contador, com UM COUNT agrupado em vez de um por destinatário.
+async function notificarCategoria(opts: {
+  threadId: string
+  postId:   string
+  actorId:  string
+  exclude:  string[]
+}): Promise<void> {
+  const novos = await TrikModel.notifyCategoryPost(opts)
+  if (!io || novos.length === 0) return
+  const { rows } = await db.query<{ user_id: string; count: number }>(
+    `SELECT user_id, COUNT(*)::int AS count
+     FROM notifications
+     WHERE user_id = ANY($1::uuid[]) AND is_read = false
+     GROUP BY user_id`,
+    [novos]
+  )
+  for (const r of rows) {
+    io.to(`user:${r.user_id}`).emit('notification:new', { unreadCount: r.count })
   }
 }
 
@@ -382,11 +410,17 @@ app.get('/threads', {
     // falha de notificação não derruba a criação do tópico.
     ;(async () => {
       try {
-        await notificarMencoes({
+        const mencionados = await notificarMencoes({
           html:     sanitizedContent,
           actorId:  request.user!.userId,
           threadId: thread.id,
           postId:   post.id,
+        })
+        await notificarCategoria({
+          threadId: thread.id,
+          postId:   post.id,
+          actorId:  request.user!.userId,
+          exclude:  mencionados,
         })
       } catch {
         // Never block the response for notification failures
@@ -511,11 +545,19 @@ app.get('/threads', {
           }
         }
         // Notify mentioned users (scopé à la communauté du fil : cf resolveMentions)
-        await notificarMencoes({
+        const mencionados = await notificarMencoes({
           html:     sanitized,
           actorId:  userId,
           threadId: thread.id,
           postId:   post.id,
+        })
+        // Categoria marcada no módulo RPG: todos os membros. O autor do tópico
+        // já recebeu thread_reply e os citados, mention — não duplica.
+        await notificarCategoria({
+          threadId: thread.id,
+          postId:   post.id,
+          actorId:  userId,
+          exclude:  [thread.author_id, ...mencionados],
         })
       } catch {
         // Never block the response for notification failures

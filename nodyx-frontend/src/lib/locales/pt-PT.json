@@ -554,6 +554,7 @@
   "auth.demo.description": "Explore o Nodyx livremente com uma das contas abaixo.\nTodos os dados são repostos todas as noites à meia-noite.",
   "notifications.unread_count": "({{n}} por ler)",
   "notifications.thread_reply_label": "respondeu ao seu tópico",
+  "notifications.category_post_label": "publicou no tópico",
   "notifications.post_thanks_label": "agradeceu a sua mensagem",
   "notifications.mention_label": "mencionou-o",
   "notifications.wave_label": "acenou para si",

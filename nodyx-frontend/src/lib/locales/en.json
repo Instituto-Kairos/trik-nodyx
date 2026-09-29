@@ -570,6 +570,7 @@
   "auth.hero.forgot_desc": "No worries. Enter your email and we'll send you a secure link to reset your password.",
   "notifications.unread_count": "({{n}} unread)",
   "notifications.thread_reply_label": "replied to your topic",
+  "notifications.category_post_label": "posted in the topic",
   "notifications.post_thanks_label": "thanked your message",
   "notifications.mention_label": "mentioned you",
   "notifications.wave_label": "waved at you",

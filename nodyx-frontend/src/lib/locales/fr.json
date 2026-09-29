@@ -570,6 +570,7 @@
   "auth.hero.forgot_desc": "Pas de souci. Entrez votre email et nous vous enverrons un lien sécurisé pour réinitialiser votre mot de passe.",
   "notifications.unread_count": "({{n}} non lue{{s}})",
   "notifications.thread_reply_label": "a répondu à votre sujet",
+  "notifications.category_post_label": "a publié dans le sujet",
   "notifications.post_thanks_label": "a remercié votre message",
   "notifications.mention_label": "vous a mentionné",
   "notifications.wave_label": "vous a fait signe",

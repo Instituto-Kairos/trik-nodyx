@@ -564,6 +564,7 @@
   "auth.hero.forgot_desc": "Keine Sorge. Gib deine E-Mail-Adresse ein und wir senden dir einen sicheren Link zum Zurücksetzen deines Passworts.",
   "notifications.unread_count": "({{n}} ungelesen)",
   "notifications.thread_reply_label": "hat auf dein Thema geantwortet",
+  "notifications.category_post_label": "hat im Thema gepostet",
   "notifications.post_thanks_label": "hat sich für deine Nachricht bedankt",
   "notifications.mention_label": "hat dich erwähnt",
   "notifications.wave_label": "hat dir zugewinkt",

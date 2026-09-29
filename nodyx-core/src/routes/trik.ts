@@ -213,6 +213,11 @@ const BonusBody = z.object({
 })
 const BonusIdParams = z.object({ id: z.string().uuid() })
 
+// Categorias que notificam todos os membros a cada post — substituição total.
+const NotifyCategoriesBody = z.object({
+  categoryIds: z.array(z.string().uuid()).max(500),
+})
+
 // ═══════════════════════════════════════════════════════════════════════════
 // PLAYER PLUGIN — préfixe /api/v1/trik (requireAuth)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -528,6 +533,26 @@ export async function trikAdminPlugin(app: FastifyInstance) {
     const { id } = request.params as z.infer<typeof BonusIdParams>
     if (!await TrikModel.deleteBonus(id)) return reply.code(404).send({ error: 'Item não encontrado', code: 'NOT_FOUND' })
     return reply.code(204).send()
+  })
+
+  // ── Categorias que notificam todos os membros (trik_notify_categories) ─────
+  // Devolve a lista plana com parent_id; a árvore é montada na tela. O
+  // disparo em si é em routes/forums.ts (notificarCategoria).
+
+  app.get('/notify-categories', async (_request, reply) => {
+    const communityId = await getCommunityId()
+    if (!communityId) return reply.code(503).send({ error: 'Community not configured' })
+    return reply.send({ categories: await TrikModel.listNotifyCategories(communityId) })
+  })
+
+  app.put('/notify-categories', {
+    preHandler: validate({ body: NotifyCategoriesBody }),
+  }, async (request, reply) => {
+    const communityId = await getCommunityId()
+    if (!communityId) return reply.code(503).send({ error: 'Community not configured' })
+    const { categoryIds } = request.body as z.infer<typeof NotifyCategoriesBody>
+    await TrikModel.setNotifyCategories(categoryIds, communityId, request.user!.userId)
+    return reply.send({ ok: true })
   })
 
   // GET /admin/trik/threads/:id — estado de XP de um tópico do fórum.

@@ -788,6 +788,126 @@ export async function setXpThread(threadId: string, enabled: boolean, adminId: s
   }
 }
 
+// ─── Categorias que notificam todos os membros a cada post ─────────────────
+// Ver migrations/trik_003_notify_categories.sql. Sem herança: cada
+// subcategoria é marcada à parte (é o "filtro de subcategoria" da tela admin).
+
+export interface TrikNotifyCategory {
+  id:        string
+  name:      string
+  parent_id: string | null
+  position:  number
+  enabled:   boolean
+}
+
+export async function listNotifyCategories(communityId: string): Promise<TrikNotifyCategory[]> {
+  const { rows } = await db.query<TrikNotifyCategory>(
+    `SELECT c.id, c.name, c.parent_id, c.position,
+            (nc.category_id IS NOT NULL) AS enabled
+     FROM categories c
+     LEFT JOIN trik_notify_categories nc ON nc.category_id = c.id
+     WHERE c.community_id = $1
+     ORDER BY c.position ASC, c.name ASC`,
+    [communityId]
+  )
+  return rows
+}
+
+// Substituição total, mesmo padrão de setChannelPurposes. O filtro por
+// comunidade no INSERT descarta id de categoria alheia em vez de gravá-lo.
+export async function setNotifyCategories(
+  categoryIds: string[],
+  communityId: string,
+  adminId: string
+): Promise<void> {
+  const client = await (db as any).connect()
+  try {
+    await client.query('BEGIN')
+    await client.query(
+      `DELETE FROM trik_notify_categories nc
+       USING categories c
+       WHERE c.id = nc.category_id AND c.community_id = $1`,
+      [communityId]
+    )
+    await client.query(
+      `INSERT INTO trik_notify_categories (category_id, enabled_by)
+       SELECT c.id, $3 FROM categories c
+       WHERE c.id = ANY($1::uuid[]) AND c.community_id = $2`,
+      [categoryIds, communityId, adminId]
+    )
+    await client.query('COMMIT')
+  } catch (err) {
+    await client.query('ROLLBACK')
+    throw err
+  } finally {
+    client.release()
+  }
+}
+
+// Notifica todos os membros da comunidade de um post num tópico cuja
+// categoria está em trik_notify_categories. Não faz nada se não estiver.
+//
+// Um único statement, porque a lista de destinatários é a comunidade
+// inteira: um INSERT por membro faria de cada post N idas ao banco.
+//
+// Deduplicação por tópico: se o membro já tem uma notificação `category_post`
+// NÃO LIDA deste tópico, ela é atualizada para o post mais recente em vez de
+// empilhar outra. Numa cena ativa, dez respostas seguidas viram uma entrada
+// no sino, não dez.
+//
+// Fora da lista: o autor do post, contas de sistema (bots), banidos da
+// comunidade e `exclude` — quem já recebeu uma notificação mais específica
+// deste mesmo post (autor do tópico → thread_reply, citados → mention).
+//
+// Devolve só quem ganhou notificação NOVA: para os atualizados o contador de
+// não lidas não muda, então não há o que emitir.
+export async function notifyCategoryPost(opts: {
+  threadId: string
+  postId:   string
+  actorId:  string
+  exclude?: string[]
+}): Promise<string[]> {
+  const { rows } = await db.query<{ user_id: string }>(
+    `WITH alvo AS (
+       SELECT cat.community_id
+       FROM threads t
+       JOIN categories cat ON cat.id = t.category_id
+       JOIN trik_notify_categories nc ON nc.category_id = cat.id
+       WHERE t.id = $1
+     ),
+     membros AS (
+       SELECT cm.user_id
+       FROM community_members cm
+       JOIN alvo  ON alvo.community_id = cm.community_id
+       JOIN users u ON u.id = cm.user_id
+       WHERE u.is_system = false
+         AND cm.user_id <> $3
+         AND NOT (cm.user_id = ANY($4::uuid[]))
+         AND NOT EXISTS (
+           SELECT 1 FROM community_bans cb
+           WHERE cb.community_id = cm.community_id AND cb.user_id = cm.user_id
+         )
+     ),
+     atualizadas AS (
+       UPDATE notifications n
+       SET post_id = $2, actor_id = $3, created_at = NOW()
+       FROM membros m
+       WHERE n.user_id = m.user_id
+         AND n.thread_id = $1
+         AND n.type = 'category_post'
+         AND n.is_read = false
+       RETURNING n.user_id
+     )
+     INSERT INTO notifications (user_id, type, actor_id, thread_id, post_id)
+     SELECT m.user_id, 'category_post', $3, $1, $2
+     FROM membros m
+     WHERE NOT EXISTS (SELECT 1 FROM atualizadas a WHERE a.user_id = m.user_id)
+     RETURNING user_id`,
+    [opts.threadId, opts.postId, opts.actorId, opts.exclude ?? []]
+  )
+  return rows.map(r => r.user_id)
+}
+
 // ─── Fase 2: catálogos e bônus do /levelup ─────────────────────────────────
 // Sem Aptidões nesta fase (orçamento ainda não definido — ver
 // plans/fase-dois-passo-a-passo.md, passo 0): listAptitudes existe porque o

@@ -564,6 +564,7 @@
   "auth.hero.forgot_desc": "No te preocupes. Ingresa tu correo electrónico y te enviaremos un enlace seguro para restablecer tu contraseña.",
   "notifications.unread_count": "({{n}} sin leer)",
   "notifications.thread_reply_label": "ha respondido a tu tema",
+  "notifications.category_post_label": "publicó en el tema",
   "notifications.post_thanks_label": "ha agradecido tu mensaje",
   "notifications.mention_label": "te ha mencionado",
   "notifications.wave_label": "te ha saludado",

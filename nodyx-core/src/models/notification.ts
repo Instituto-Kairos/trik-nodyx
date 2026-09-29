@@ -1,6 +1,8 @@
 import { db } from '../config/database'
 
-export type NotificationType = 'thread_reply' | 'post_thanks' | 'mention' | 'wave'
+// category_post: módulo RPG (trik), post numa categoria marcada em
+// /admin/trik/notificacoes — ver TrikModel.notifyCategoryPost.
+export type NotificationType = 'thread_reply' | 'post_thanks' | 'mention' | 'wave' | 'category_post'
 
 export interface Notification {
   id:         string

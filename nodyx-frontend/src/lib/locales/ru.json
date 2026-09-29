@@ -554,6 +554,7 @@
   "auth.demo.description": "Свободно изучайте Nodyx с одним из аккаунтов ниже.\nВсе данные сбрасываются каждую ночь в полночь.",
   "notifications.unread_count": "({{n}} непрочит.)",
   "notifications.thread_reply_label": "ответил(а) в вашей теме",
+  "notifications.category_post_label": "написал(а) в теме",
   "notifications.post_thanks_label": "поблагодарил(а) за ваше сообщение",
   "notifications.mention_label": "упомянул(а) вас",
   "notifications.wave_label": "помахал(а) вам",

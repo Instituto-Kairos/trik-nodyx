@@ -43,6 +43,7 @@
 		post_thanks:  '🙏',
 		mention:      '@',
 		wave:         '👋',
+		category_post: '📢',
 		canvas_access_request: '🎨',
 		canvas_access_granted: '🎨',
 	};
@@ -52,6 +53,7 @@
 		post_thanks:  tFn('notifications.post_thanks_label'),
 		mention:      tFn('notifications.mention_label'),
 		wave:         tFn('notifications.wave_label'),
+		category_post: tFn('notifications.category_post_label'),
 		canvas_access_request: tFn('notifications.canvas_access_request_label'),
 		canvas_access_granted: tFn('notifications.canvas_access_granted_label'),
 	});

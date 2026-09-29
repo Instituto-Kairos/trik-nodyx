@@ -554,6 +554,7 @@
   "auth.demo.description": "Thoải mái khám phá với tài khoản bên dưới. Data reset mỗi đêm.",
   "notifications.unread_count": "({{n}} chưa đọc)",
   "notifications.thread_reply_label": "đã trả lời chủ đề của bạn",
+  "notifications.category_post_label": "đã đăng trong chủ đề",
   "notifications.post_thanks_label": "cảm ơn tin nhắn của bạn",
   "notifications.mention_label": "đã nhắc đến bạn",
   "notifications.wave_label": "đã vẫy tay chào bạn",

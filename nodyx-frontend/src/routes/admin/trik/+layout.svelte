@@ -10,6 +10,7 @@
 		{ href: '/admin/trik/xp-levels', label: 'Curva de XP' },
 		{ href: '/admin/trik/catalogo',  label: 'Armas & Aulas' },
 		{ href: '/admin/trik/bonus',     label: 'Bônus' },
+		{ href: '/admin/trik/notificacoes', label: 'Notificações' },
 		{ href: '/admin/trik/bot',       label: 'Bot' },
 	]
 </script>

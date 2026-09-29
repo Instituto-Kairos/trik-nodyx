@@ -567,6 +567,7 @@
   "auth.hero.forgot_desc": "Sem problemas. Acesse seu e-mail e nós vamos enviar para você um link para redefinir sua senha.",
   "notifications.unread_count": "({{n}} por ler)",
   "notifications.thread_reply_label": "respondeu ao seu tópico",
+  "notifications.category_post_label": "postou no tópico",
   "notifications.post_thanks_label": "agradeceu a sua mensagem",
   "notifications.mention_label": "mencionou você",
   "notifications.wave_label": "acenou para você",
