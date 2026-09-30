@@ -214,8 +214,10 @@ const CreateThreadBody = z.object({
 })
 
 const CreatePostBody = z.object({
-  thread_id: z.string().min(1), // accepts UUID or slug — resolved server-side
-  content:   z.string().min(1).max(500_000),
+  thread_id:   z.string().min(1), // accepts UUID or slug — resolved server-side
+  content:     z.string().min(1).max(500_000),
+  // Módulo RPG (trik): post que esta resposta continua na cena (trik_004).
+  reply_to_id: z.string().uuid().optional(),
 })
 
 const ReactionBody = z.object({
@@ -478,7 +480,7 @@ app.get('/threads', {
   app.post('/posts', {
     preHandler: [rateLimit, requireAuth, validate({ body: CreatePostBody })],
   }, async (request, reply) => {
-    const { thread_id, content } = request.body as z.infer<typeof CreatePostBody>
+    const { thread_id, content, reply_to_id } = request.body as z.infer<typeof CreatePostBody>
     const userId = request.user!.userId
 
     const thread = await ThreadModel.findById(thread_id)
@@ -504,6 +506,13 @@ app.get('/threads', {
       return reply.code(403).send({ error: 'You are banned from this community', code: 'BANNED' })
     }
 
+    // Fio de cena (trik): o post continuado tem de existir e ser DESTE tópico —
+    // senão o breadcrumb levaria para outro tópico (ou para lugar nenhum).
+    const replyTarget = reply_to_id ? await PostModel.getReplyTarget(reply_to_id) : null
+    if (reply_to_id && replyTarget?.thread_id !== resolvedThreadId) {
+      return reply.code(422).send({ error: 'Reply target not found in this thread', code: 'REPLY_TARGET_INVALID' })
+    }
+
     // Rehost les <img> externes avant sanitize (cf POST /threads).
     const rehostReply = await rehostExternalImages(content)
     const sanitized = sanitize(rehostReply.html)
@@ -513,9 +522,10 @@ app.get('/threads', {
     }
 
     const post = await PostModel.create({
-      thread_id: resolvedThreadId,
-      author_id: userId,
-      content:   sanitized,
+      thread_id:   resolvedThreadId,
+      author_id:   userId,
+      content:     sanitized,
+      reply_to_id: replyTarget?.id ?? null,
     })
     bumpThreadsCache()
     // Réputation : répondre = +2
@@ -530,34 +540,50 @@ app.get('/threads', {
     // Notifications (fire-and-forget)
     ;(async () => {
       try {
+        // Fio de cena (trik): quem teve a mensagem continuada é avisado com
+        // post_reply (tópico comum) ou scene_reply (tópico de RPG) — mais
+        // específico que thread_reply, então se for também o autor do tópico
+        // recebe só este, não os dois.
+        const continuado = replyTarget && replyTarget.author_id !== userId ? replyTarget.author_id : null
+        const avisar: Array<{ user: string; type: string }> = []
+        if (continuado) {
+          const cena = await Promise.resolve().then(() => TrikModel.isXpThread(thread.id)).catch(() => false)
+          avisar.push({ user: continuado, type: cena ? 'scene_reply' : 'post_reply' })
+        }
         // Notify thread author of a reply (if different user)
-        if (thread.author_id !== userId) {
+        if (thread.author_id !== userId && thread.author_id !== continuado) {
+          avisar.push({ user: thread.author_id, type: 'thread_reply' })
+        }
+        for (const a of avisar) {
           await NotificationModel.create({
-            user_id:   thread.author_id,
-            type:      'thread_reply',
+            user_id:   a.user,
+            type:      a.type,
             actor_id:  userId,
             thread_id: thread.id,
             post_id:   post.id,
           })
           if (io) {
-            const count = await NotificationModel.getUnreadCount(thread.author_id)
-            io.to(`user:${thread.author_id}`).emit('notification:new', { unreadCount: count })
+            const count = await NotificationModel.getUnreadCount(a.user)
+            io.to(`user:${a.user}`).emit('notification:new', { unreadCount: count })
           }
         }
         // Notify mentioned users (scopé à la communauté du fil : cf resolveMentions)
+        // Quem já foi avisado acima não recebe uma menção duplicada.
         const mencionados = await notificarMencoes({
           html:     sanitized,
           actorId:  userId,
           threadId: thread.id,
           postId:   post.id,
+          jaNotificados: avisar.map(a => a.user),
         })
         // Categoria marcada no módulo RPG: todos os membros. O autor do tópico
-        // já recebeu thread_reply e os citados, mention — não duplica.
+        // já recebeu thread_reply, o continuado post_reply e os citados,
+        // mention — não duplica.
         await notificarCategoria({
           threadId: thread.id,
           postId:   post.id,
           actorId:  userId,
-          exclude:  [thread.author_id, ...mencionados],
+          exclude:  [thread.author_id, ...avisar.map(a => a.user), ...mencionados],
         })
       } catch {
         // Never block the response for notification failures

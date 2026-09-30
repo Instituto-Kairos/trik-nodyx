@@ -95,11 +95,14 @@ export const actions: Actions = {
 
 		const form    = await request.formData();
 		const content = form.get('content') as string;
+		// Fio de cena (trik) : post que esta resposta continua. Vazio = resposta
+		// ao tópico, sem vínculo.
+		const replyTo = (form.get('reply_to_id') as string | null) || undefined;
 
 		const res  = await apiFetch(fetch, '/forums/posts', {
 			method: 'POST',
 			headers: { Authorization: `Bearer ${token}` },
-			body: JSON.stringify({ thread_id: params.thread, content })
+			body: JSON.stringify({ thread_id: params.thread, content, reply_to_id: replyTo })
 		});
 
 		if (!res.ok) {

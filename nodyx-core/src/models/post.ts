@@ -9,6 +9,8 @@ export interface Post {
   thread_id:  string
   author_id:  string
   content:    string
+  // Módulo RPG (trik): post que este continua na cena (mesmo tópico) — trik_004.
+  reply_to_id: string | null
   is_edited:  boolean
   created_at: Date
   updated_at: Date
@@ -33,7 +35,33 @@ export interface PostWithAuthor extends Post {
   reactions:    ReactionSummary[]
   thanks_count: number
   user_thanked: boolean
+  // Fio de cena (trik): de onde este post vem e quem o continua.
+  scene: SceneLinks
 }
+
+// Referência a outro post do tópico. `post_index` = quantos posts vêm antes
+// dele (a página é floor(post_index / POSTS_PER_PAGE) + 1, como nas
+// notificações), então o frontend monta o link sem nova consulta.
+export interface ScenePostRef {
+  id:              string
+  author_username: string
+  post_index:      number
+}
+
+export interface SceneLinks {
+  // Ancestrais do mais antigo ao mais próximo. Cena longa vem aparada: o
+  // primeiro post da cena + os SCENE_TRAIL_TAIL mais próximos; `chain_length`
+  // diz quantos há ao todo, para o frontend marcar o trecho omitido.
+  chain:        ScenePostRef[]
+  chain_length: number
+  // Posts que continuam este diretamente, em ordem cronológica.
+  replies:      ScenePostRef[]
+}
+
+const SCENE_TRAIL_TAIL = 3
+// Teto da recursão. reply_to_id só aponta para um post que já existia, então
+// ciclo não se forma — o teto é só para uma cena absurda não custar caro.
+const SCENE_MAX_DEPTH  = 1000
 
 // ── Queries ──────────────────────────────────────────────────
 
@@ -96,7 +124,7 @@ export async function listByThread(threadId: string, opts: {
      LEFT JOIN community_members cm ON cm.community_id = cat.community_id AND cm.user_id = p.author_id
      LEFT JOIN community_grades cg ON cg.id = cm.grade_id
      WHERE p.thread_id = $1
-     ORDER BY p.created_at ASC
+     ORDER BY p.created_at ASC, p.id ASC
      LIMIT $2 OFFSET $3`,
     [threadId, limit, offset]
   )
@@ -104,9 +132,10 @@ export async function listByThread(threadId: string, opts: {
   if (rows.length === 0) return rows
 
   const postIds = rows.map(p => p.id)
-  const [reactionsMap, thanksMap] = await Promise.all([
+  const [reactionsMap, thanksMap, sceneMap] = await Promise.all([
     getReactionsForPosts(postIds, opts.viewerId),
     getThanksForPosts(postIds, opts.viewerId),
+    getSceneLinks(threadId, postIds),
   ])
 
   return rows.map(p => ({
@@ -114,19 +143,102 @@ export async function listByThread(threadId: string, opts: {
     reactions:    reactionsMap.get(p.id) ?? [],
     thanks_count: thanksMap.get(p.id)?.count        ?? 0,
     user_thanked: thanksMap.get(p.id)?.user_thanked ?? false,
+    scene:        sceneMap.get(p.id) ?? { chain: [], chain_length: 0, replies: [] },
   }))
 }
 
+// Breadcrumb e continuações dos posts de UMA página do tópico, em duas
+// consultas para a página inteira (nunca uma por post).
+//
+// `idx` numera o tópico todo numa passada só, na mesma ordenação da listagem
+// (created_at, id): contar "posts anteriores" com subconsulta por ancestral
+// custaria uma varredura do tópico para cada elo de cada cena.
+export async function getSceneLinks(threadId: string, postIds: string[]): Promise<Map<string, SceneLinks>> {
+  const out = new Map<string, SceneLinks>()
+  if (postIds.length === 0) return out
+
+  const idxCte = `
+    idx AS (
+      SELECT id, (ROW_NUMBER() OVER (ORDER BY created_at, id) - 1)::int AS post_index
+      FROM posts WHERE thread_id = $1
+    )`
+
+  const [chains, replies] = await Promise.all([
+    db.query<{ origin_id: string; depth: number; total: number } & ScenePostRef>(
+      `WITH RECURSIVE chain AS (
+         SELECT p.id AS origin_id, p.reply_to_id AS ancestor_id, 1 AS depth
+         FROM posts p
+         WHERE p.id = ANY($2::uuid[]) AND p.reply_to_id IS NOT NULL
+         UNION ALL
+         SELECT c.origin_id, a.reply_to_id, c.depth + 1
+         FROM chain c
+         JOIN posts a ON a.id = c.ancestor_id
+         WHERE a.reply_to_id IS NOT NULL AND c.depth < ${SCENE_MAX_DEPTH}
+       ),
+       ranked AS (
+         SELECT c.*, MAX(c.depth) OVER (PARTITION BY c.origin_id) AS total
+         FROM chain c
+       ),
+       ${idxCte}
+       SELECT r.origin_id, r.depth, r.total::int AS total,
+              a.id, u.username AS author_username, i.post_index
+       FROM ranked r
+       JOIN posts a ON a.id = r.ancestor_id
+       JOIN users u ON u.id = a.author_id
+       JOIN idx   i ON i.id = a.id
+       WHERE r.depth <= ${SCENE_TRAIL_TAIL} OR r.depth = r.total
+       ORDER BY r.origin_id, r.depth DESC`,
+      [threadId, postIds]
+    ),
+    db.query<{ parent_id: string } & ScenePostRef>(
+      `WITH ${idxCte}
+       SELECT c.reply_to_id AS parent_id, c.id, u.username AS author_username, i.post_index
+       FROM posts c
+       JOIN users u ON u.id = c.author_id
+       JOIN idx   i ON i.id = c.id
+       WHERE c.reply_to_id = ANY($2::uuid[])
+       ORDER BY i.post_index`,
+      [threadId, postIds]
+    ),
+  ])
+
+  const entry = (id: string): SceneLinks => {
+    let e = out.get(id)
+    if (!e) { e = { chain: [], chain_length: 0, replies: [] }; out.set(id, e) }
+    return e
+  }
+  for (const r of chains.rows) {
+    const e = entry(r.origin_id)
+    e.chain.push({ id: r.id, author_username: r.author_username, post_index: r.post_index })
+    e.chain_length = r.total
+  }
+  for (const r of replies.rows) {
+    entry(r.parent_id).replies.push({ id: r.id, author_username: r.author_username, post_index: r.post_index })
+  }
+  return out
+}
+
+// Alvo de uma resposta encadeada: só o necessário para validar (mesmo tópico)
+// e notificar o autor.
+export async function getReplyTarget(id: string): Promise<{ id: string; thread_id: string; author_id: string } | null> {
+  const { rows } = await db.query<{ id: string; thread_id: string; author_id: string }>(
+    `SELECT id, thread_id, author_id FROM posts WHERE id = $1`,
+    [id]
+  )
+  return rows[0] ?? null
+}
+
 export async function create(data: {
-  thread_id: string
-  author_id: string
-  content:   string
+  thread_id:    string
+  author_id:    string
+  content:      string
+  reply_to_id?: string | null
 }): Promise<Post> {
   const { rows } = await db.query<Post>(
-    `INSERT INTO posts (thread_id, author_id, content)
-     VALUES ($1, $2, $3)
+    `INSERT INTO posts (thread_id, author_id, content, reply_to_id)
+     VALUES ($1, $2, $3, $4)
      RETURNING *`,
-    [data.thread_id, data.author_id, data.content]
+    [data.thread_id, data.author_id, data.content, data.reply_to_id ?? null]
   )
   return rows[0]
 }
@@ -161,9 +273,28 @@ export async function updateContent(id: string, content: string): Promise<Post |
 }
 
 // Mod-level: delete without author restriction
+// Apagar um post do meio de uma cena religa quem o continuava ao post que ELE
+// continuava: o fio pula o buraco em vez de partir em dois (o ON DELETE SET
+// NULL de trik_004 deixaria as continuações órfãs). Transação: religar sem
+// apagar, ou o contrário, deixaria a cena num estado que ninguém pediu.
 export async function removeById(id: string): Promise<boolean> {
-  const { rowCount } = await db.query(`DELETE FROM posts WHERE id = $1`, [id])
-  return (rowCount ?? 0) > 0
+  const client = await db.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query(
+      `UPDATE posts SET reply_to_id = (SELECT reply_to_id FROM posts WHERE id = $1)
+       WHERE reply_to_id = $1`,
+      [id]
+    )
+    const { rowCount } = await client.query(`DELETE FROM posts WHERE id = $1`, [id])
+    await client.query('COMMIT')
+    return (rowCount ?? 0) > 0
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {})
+    throw err
+  } finally {
+    client.release()
+  }
 }
 
 // Get minimal post info (for auth checks)

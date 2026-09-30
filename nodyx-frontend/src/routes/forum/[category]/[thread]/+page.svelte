@@ -43,7 +43,7 @@
 
 	const tFn = $derived($t)
 
-	let { data }: { data: PageData } = $props();
+	let { data, form }: { data: PageData; form?: { replyError?: string } | null } = $props();
 
 	// ── Réactivité ────────────────────────────────────────────────────────
 	const thread = $derived(data.thread);
@@ -133,6 +133,61 @@
 			// le défaut d'origine.
 			flashShare('failed');
 		}
+	}
+
+	// ── Lien vers un message précis ───────────────────────────────────────
+	// L'ancre #post-… n'existe que sur la page qui porte le message : le lien
+	// doit donc embarquer ?page=N, sinon il ouvrirait la page 1 sans rien
+	// trouver où sauter.
+	let postLinkState = $state<{ id: string; state: 'copied' | 'failed' } | null>(null);
+	let postLinkTimer: ReturnType<typeof setTimeout> | null = null;
+
+	async function copyPostLink(postId: string) {
+		const query = data.page > 1 ? `?page=${data.page}` : '';
+		const url = `${page.url.origin}${page.url.pathname}${query}#post-${postId}`;
+		let next: 'copied' | 'failed' = 'copied';
+		try {
+			await navigator.clipboard.writeText(url);
+		} catch {
+			next = 'failed';
+		}
+		postLinkState = { id: postId, state: next };
+		if (postLinkTimer) clearTimeout(postLinkTimer);
+		postLinkTimer = setTimeout(() => { postLinkState = null }, 2500);
+	}
+
+	// ── Fio de cena (módulo RPG trik) ─────────────────────────────────────
+	// Dois jogadores podem cenar no mesmo tópico sem estarem juntos : cada
+	// resposta pode apontar a mensagem que ela continua. « Responder » numa
+	// mensagem arma o vínculo na caixa de resposta ; a API devolve em
+	// `post.scene` o breadcrumb (para trás) e as continuações (para frente).
+	// Vale para QUALQUER tópico ; só o vocabulário muda : « cena » num tópico
+	// marcado para XP, « conversa / resposta » num tópico comum.
+	const isScene = $derived(data.xpEnabled === true);
+	type SceneRef = { id: string; author_username: string; post_index: number };
+	let replyTo = $state<(SceneRef & { excerpt: string }) | null>(null);
+
+	// A página de um post vem do seu rang global, como nas notificações. Na
+	// página atual basta a âncora : nada de recarregar.
+	function postHref(ref: { id: string; post_index: number }): string {
+		const target = Math.floor(ref.post_index / POSTS_PER_PAGE) + 1;
+		if (target === data.page) return `#post-${ref.id}`;
+		return `${page.url.pathname}${target > 1 ? `?page=${target}` : ''}#post-${ref.id}`;
+	}
+
+	function excerptOf(html: string): string {
+		const text = html.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+		return text.length > 140 ? `${text.slice(0, 140)}…` : text;
+	}
+
+	function startReply(post: any, postIndex: number) {
+		replyTo = {
+			id:              post.id,
+			author_username: post.author_username,
+			post_index:      postIndex,
+			excerpt:         excerptOf(post.content ?? ''),
+		};
+		document.getElementById('reply-box')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 	}
 
 	// Repli des actions de modération sur mobile : quatre boutons de plus sur
@@ -592,6 +647,24 @@
 
 			<!-- Contenu du post -->
 			<div class="flex-1 min-w-0">
+				<!-- Fio de cena : de onde esta mensagem vem (mais antiga → mais próxima) -->
+				{#if post.scene?.chain?.length}
+					<nav aria-label={isScene ? tFn('forum.scene_trail') : tFn('forum.thread_trail')} class="mb-2 flex flex-wrap items-center gap-x-1 gap-y-0.5 text-xs text-gray-500">
+						<span aria-hidden="true">{isScene ? '🎭' : '💬'}</span>
+						{#each post.scene.chain as ref, i (ref.id)}
+							{#if i === 1 && post.scene.chain_length > post.scene.chain.length}
+								<span title={isScene
+									? tFn('forum.scene_trail_omitted', { n: String(post.scene.chain_length - post.scene.chain.length) })
+									: tFn('forum.thread_trail_omitted', { n: String(post.scene.chain_length - post.scene.chain.length) })}>…</span>
+								<span aria-hidden="true" class="text-gray-700">›</span>
+							{/if}
+							<a href={postHref(ref)} class="hover:text-indigo-400 transition-colors">#{ref.post_index + 1} @{ref.author_username}</a>
+							<span aria-hidden="true" class="text-gray-700">›</span>
+						{/each}
+						<span class="text-gray-400">#{pageOffset + index + 1}</span>
+					</nav>
+				{/if}
+
 				<!-- Méta + actions -->
 				<div class="flex items-center justify-between mb-3 gap-2">
 					<div class="flex items-center gap-2">
@@ -600,13 +673,38 @@
 							<span class="text-xs text-gray-600 italic">{tFn('forum.edited')}</span>
 						{/if}
 						
-						<!-- Numéro de post pour référence -->
-						<span class="text-xs text-gray-700 ml-2">#{index + 1}</span>
+						<!-- Numéro de post pour référence (rang global, pas celui de la page) -->
+						<a href="#post-{post.id}" class="text-xs text-gray-700 hover:text-indigo-400 ml-2">#{pageOffset + index + 1}</a>
 					</div>
+
+					<div class="flex items-center gap-1">
+						<!-- Continuar a cena a partir desta mensagem -->
+						{#if user && !thread.is_locked}
+							<button type="button"
+								onclick={() => startReply(post, pageOffset + index)}
+								class="px-2 py-1 text-xs text-gray-500 hover:text-indigo-400 hover:bg-indigo-900/20 transition-colors"
+								title={isScene ? tFn('forum.scene_reply_title') : tFn('forum.thread_reply_title')}
+								aria-label={isScene ? tFn('forum.scene_reply_title') : tFn('forum.thread_reply_title')}>
+								↩ <span class="hidden sm:inline">{tFn('forum.scene_reply')}</span>
+							</button>
+						{/if}
+
+						<!-- Lien vers ce message (visible de tous) -->
+						{#if postLinkState && postLinkState.id === post.id}
+							<span role="status" class="text-xs {postLinkState.state === 'copied' ? 'text-indigo-400' : 'text-amber-400'}">
+								{postLinkState.state === 'copied' ? tFn('forum.share_copied') : tFn('forum.share_failed')}
+							</span>
+						{/if}
+						<button type="button"
+							onclick={() => copyPostLink(post.id)}
+							class="px-2 py-1 text-xs text-gray-500 hover:text-indigo-400 hover:bg-indigo-900/20 transition-colors"
+							title={tFn('forum.copy_post_link_title')}
+							aria-label={tFn('forum.copy_post_link_title')}>
+							🔗 <span class="hidden sm:inline">{tFn('forum.copy_post_link')}</span>
+						</button>
 
 					<!-- Boutons Edit / Delete (auteur ou mod) -->
 					{#if canEdit(post) || canDelete(post)}
-						<div class="flex items-center gap-1">
 							{#if canEdit(post) && editingPostId !== post.id}
 								<button type="button"
 									onclick={() => { editingPostId = post.id; deletingPostId = null }}
@@ -644,8 +742,8 @@
 									</form>
 								{/if}
 							{/if}
-						</div>
 					{/if}
+					</div>
 				</div>
 
 				<!-- Mode édition inline -->
@@ -692,6 +790,15 @@
 						isLoggedIn={!!user}
 						token={data.token}
 					/>
+					<!-- Fio de cena : quem continua esta mensagem -->
+					{#if post.scene?.replies?.length}
+						<div class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-gray-500">
+							<span>{isScene ? tFn('forum.scene_continued_in') : tFn('forum.thread_replied_in')}</span>
+							{#each post.scene.replies as ref (ref.id)}
+								<a href={postHref(ref)} class="hover:text-indigo-400 transition-colors">↳ #{ref.post_index + 1} @{ref.author_username}</a>
+							{/each}
+						</div>
+					{/if}
 				{/if}
 			</div>
 		</article>
@@ -705,7 +812,7 @@
 <!-- ── Formulaire de réponse (inchangé) ───────────────────────────────────── -->
 {#if !thread.is_locked}
 	{#if user}
-		<div class="mt-8 border-t border-gray-800 pt-6">
+		<div id="reply-box" class="mt-8 border-t border-gray-800 pt-6">
 			<h2 class="text-sm font-semibold text-gray-400 mb-3 flex items-center gap-2">
 				<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
 					<path stroke-linecap="round" stroke-linejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
@@ -715,14 +822,40 @@
 			<form method="POST" action="?/reply"
 				use:enhance={() => {
 					submitting = true
-					return async ({ update }) => {
+					return async ({ result, update }) => {
 						submitting = false
-						replyKey++    // Vide l'éditeur en le remontant
-						await update()
+						// Só limpa em caso de sucesso : numa falha (vínculo recusado,
+						// conteúdo bloqueado) o texto escrito e a cena armada ficam.
+						if (result.type === 'redirect' || result.type === 'success') {
+							replyKey++    // Vide l'éditeur en le remontant
+							replyTo = null
+						}
+						await update({ reset: false })
 					}
 				}}
 				class="space-y-3"
 			>
+				{#if replyTo}
+					<input type="hidden" name="reply_to_id" value={replyTo.id} />
+					<div class="flex items-start gap-2 border-l-2 border-indigo-500 bg-indigo-950/30 px-3 py-2 text-xs">
+						<div class="flex-1 min-w-0">
+							<div class="text-gray-400">
+								↩ {isScene ? tFn('forum.scene_continuing') : tFn('forum.thread_replying_to')}
+								<a href={postHref(replyTo)} class="text-indigo-400 hover:underline">#{replyTo.post_index + 1} @{replyTo.author_username}</a>
+							</div>
+							{#if replyTo.excerpt}
+								<p class="mt-0.5 text-gray-500 truncate">{replyTo.excerpt}</p>
+							{/if}
+						</div>
+						<button type="button" onclick={() => replyTo = null}
+							class="px-1 text-gray-500 hover:text-red-400"
+							title={tFn('forum.scene_cancel')}
+							aria-label={tFn('forum.scene_cancel')}>✕</button>
+					</div>
+				{/if}
+				{#if form?.replyError}
+					<p role="alert" class="text-xs text-amber-400">{form.replyError}</p>
+				{/if}
 				{#key replyKey}
 					<NodyxEditor mentions
 						name="content"

@@ -676,8 +676,14 @@
 		const distFromBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight;
 		isAtBottom = distFromBottom < 80;
 		if (isAtBottom) unreadWhileScrolled = 0;
-		if (isLoadingOld || noMoreHistory || messages.length === 0) return;
 		if (messagesEl.scrollTop > 80) return;
+		await loadOlder();
+	}
+
+	// Uma página de histórico acima das mensagens carregadas, mantendo o que
+	// está na tela no mesmo lugar. Devolve se algo foi carregado.
+	async function loadOlder(): Promise<boolean> {
+		if (!messagesEl || isLoadingOld || noMoreHistory || messages.length === 0) return false;
 
 		isLoadingOld = true;
 		const before    = messages[0]?.created_at;
@@ -697,11 +703,42 @@
 					messages = [...older.map(normalizeMsg), ...messages];
 					await tick();
 					if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight - prevHeight;
+					return true;
 				}
 			}
 		} catch { /* ignore */ }
 		finally { isLoadingOld = false; }
+		return false;
 	}
+
+	// ── Salto para a mensagem respondida ──────────────────────────────────────
+	// Clicar na citação leva à mensagem original e a destaca. Se ela for antiga
+	// e ainda não estiver carregada, busca o histórico página a página — com
+	// teto, para uma resposta a algo de meses atrás não baixar o canal inteiro.
+	const JUMP_MAX_PAGES = 20;
+	let flashMsgId = $state<string | null>(null);
+	let flashTimer: ReturnType<typeof setTimeout> | null = null;
+
+	async function jumpToMessage(id: string) {
+		const channelId = selectedChannel?.id;
+		let el = document.getElementById(`msg-${id}`);
+		for (let i = 0; !el && i < JUMP_MAX_PAGES; i++) {
+			if (!(await loadOlder()) || selectedChannel?.id !== channelId) break;
+			el = document.getElementById(`msg-${id}`);
+		}
+		if (!el) {
+			jumpNotFound = true;
+			setTimeout(() => { jumpNotFound = false }, 2500);
+			return;
+		}
+		el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+		flashMsgId = null;
+		await tick();
+		flashMsgId = id;
+		if (flashTimer) clearTimeout(flashTimer);
+		flashTimer = setTimeout(() => { flashMsgId = null }, 1800);
+	}
+	let jumpNotFound = $state(false);
 
 	// ── Slash commands ────────────────────────────────────────────────────────
 	const EIGHT_BALL = $derived(Array.from({ length: 17 }, (_, i) => tFn(`chat.cmd.8ball_${i + 1}`)));
@@ -1192,7 +1229,8 @@
 					{@const shouldGroup = isSameAuthor && timeDiff < 5 && !msg.is_deleted && !prevMsg.is_deleted}
 					{@const actionsVisible = pickerMsgId === msg.id || longPressMsg === msg.id}
 					<div
-						class="group message-row relative flex items-start gap-3 px-4 transition-all {shouldGroup ? 'py-px' : 'pt-2.5 pb-px'}"
+						id="msg-{msg.id}"
+						class="group message-row relative flex items-start gap-3 px-4 transition-all {shouldGroup ? 'py-px' : 'pt-2.5 pb-px'} {flashMsgId === msg.id ? 'msg-flash' : ''}"
 						style="background: transparent"
 						role="listitem"
 						onmouseenter={(e) => (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,.018)'}
@@ -1245,10 +1283,15 @@
 
 							<!-- Reply quote -->
 							{#if msg.reply_to_id && !msg.is_deleted}
-								<div class="flex items-center gap-2 mb-1.5 pl-2 py-0.5 opacity-70" style="border-left: 2px solid var(--nx-accent-2-strong)">
+								{@const replyToId = msg.reply_to_id}
+								<button type="button"
+									onclick={() => jumpToMessage(replyToId)}
+									title={tFn('chat.jump_to_reply')}
+									class="flex w-full min-w-0 items-center gap-2 mb-1.5 pl-2 py-0.5 text-left opacity-70 hover:opacity-100 transition-opacity cursor-pointer"
+									style="border-left: 2px solid var(--nx-accent-2-strong)">
 									<span class="text-[10px] font-bold shrink-0" style="color: var(--nx-accent-2-soft)">{msg.reply_to_username}</span>
 									<span class="text-[10px] truncate" style="color: #4b5563">{msg.reply_to_content?.replace(/<[^>]*>/g, '').slice(0, 100) ?? tFn('chat.deleted')}</span>
-								</div>
+								</button>
 							{/if}
 
 							{#if msg.is_deleted}
@@ -1656,6 +1699,12 @@
 	/>
 {/if}
 
+{#if jumpNotFound}
+	<div role="status" class="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 px-3 py-2 text-xs text-amber-300 bg-gray-900 border border-amber-500/30 shadow-xl">
+		{tFn('chat.jump_not_found')}
+	</div>
+{/if}
+
 <!-- ── P2P fallback toast ──────────────────────────────────────────────────── -->
 {#if $p2pFallback}
 	<div
@@ -1737,6 +1786,13 @@
 {/if}
 
 <style>
+	.msg-flash {
+		animation: msg-flash 1.8s ease-out;
+	}
+	@keyframes msg-flash {
+		0%, 30% { background: rgba(124, 58, 237, .18); box-shadow: inset 3px 0 0 #7c3aed; }
+		100%    { background: transparent;              box-shadow: inset 3px 0 0 transparent; }
+	}
 
 	/* ── Twitch chat badges (bridged via Streamer Hub) ────────────────────── */
 	/* Inserted into message HTML by services/streamer/badges.ts as

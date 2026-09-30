@@ -40,6 +40,8 @@
 	// palavra crua « wave ». O tipo é criado desde sempre em routes/members.ts.
 	const TYPE_ICON: Record<string, string> = {
 		thread_reply: '💬',
+		post_reply:   '↩️',
+		scene_reply:  '🎭',
 		post_thanks:  '🙏',
 		mention:      '@',
 		wave:         '👋',
@@ -50,6 +52,8 @@
 
 	const TYPE_LABEL = $derived<Record<string, string>>({
 		thread_reply: tFn('notifications.thread_reply_label'),
+		post_reply:   tFn('notifications.post_reply_label'),
+		scene_reply:  tFn('notifications.scene_reply_label'),
 		post_thanks:  tFn('notifications.post_thanks_label'),
 		mention:      tFn('notifications.mention_label'),
 		wave:         tFn('notifications.wave_label'),

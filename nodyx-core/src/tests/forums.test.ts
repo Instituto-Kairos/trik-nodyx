@@ -32,6 +32,7 @@ vi.mock('../models/post', () => ({
   removeById:        vi.fn(),
   updateContent:     vi.fn(),
   getAuthorAndThread: vi.fn(),
+  getReplyTarget:    vi.fn().mockResolvedValue(null),
 }))
 
 vi.mock('../models/community', () => ({
@@ -86,6 +87,7 @@ vi.mock('../services/trik/bot', () => ({
 
 import * as ThreadModel from '../models/thread'
 import * as PostModel   from '../models/post'
+import * as NotificationModel from '../models/notification'
 import * as TrikModel   from '../models/trik'
 import { redis, db }    from '../config/database'
 import forumRoutes      from '../routes/forums'
@@ -315,6 +317,111 @@ describe('POST /api/v1/forums/posts', () => {
     })
 
     expect(res.statusCode).toBe(201)
+  })
+})
+
+// ── Fio de cena (trik_004) ─────────────────────────────────────
+//
+// Dois jogadores cenando no mesmo tópico sem estarem juntos: cada resposta
+// aponta o post que continua. O alvo tem de ser DESTE tópico.
+
+describe('POST /api/v1/forums/posts — reply_to_id (fio de cena)', () => {
+  let app: Awaited<ReturnType<typeof buildApp>>
+
+  const OTHER_USER    = '9b2f5e3a-1c4d-4e8f-9a0b-1c2d3e4f5a6b'
+  const PARENT_UUID   = '3f2504e0-4f89-41d3-9a0c-0305e82c3301'
+  const OTHER_THREAD  = '7c9e6679-7425-40de-944b-e07fc1f90ae7'
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    vi.mocked(redis.exists).mockImplementation((key: string) => Promise.resolve(key.startsWith('banned:') ? 0 : 1))
+    vi.mocked(redis.incr).mockResolvedValue(1 as any)
+    vi.mocked(redis.expire).mockResolvedValue(1 as any)
+    app = await buildApp(a => a.register(forumRoutes, { prefix: '/api/v1/forums' }))
+  })
+
+  const send = (reply_to_id: string) => app.inject({
+    method:  'POST',
+    url:     '/api/v1/forums/posts',
+    headers: { authorization: `Bearer ${makeToken()}` },
+    payload: { thread_id: THREAD_UUID, content: '<p>Reply</p>', reply_to_id },
+  })
+
+  it('recusa com 422 um alvo de OUTRO tópico', async () => {
+    vi.mocked(ThreadModel.findById).mockResolvedValueOnce(FAKE_THREAD as any)
+    vi.mocked(PostModel.getReplyTarget).mockResolvedValueOnce({ id: PARENT_UUID, thread_id: OTHER_THREAD, author_id: OTHER_USER })
+
+    const res = await send(PARENT_UUID)
+
+    expect(res.statusCode).toBe(422)
+    expect(JSON.parse(res.body).code).toBe('REPLY_TARGET_INVALID')
+    expect(PostModel.create).not.toHaveBeenCalled()
+  })
+
+  it('recusa com 422 um alvo que não existe', async () => {
+    vi.mocked(ThreadModel.findById).mockResolvedValueOnce(FAKE_THREAD as any)
+    vi.mocked(PostModel.getReplyTarget).mockResolvedValueOnce(null)
+
+    const res = await send(PARENT_UUID)
+
+    expect(res.statusCode).toBe(422)
+    expect(PostModel.create).not.toHaveBeenCalled()
+  })
+
+  it('grava o vínculo e avisa o autor continuado com post_reply', async () => {
+    vi.mocked(ThreadModel.findById).mockResolvedValueOnce(FAKE_THREAD as any)
+    vi.mocked(PostModel.getReplyTarget).mockResolvedValueOnce({ id: PARENT_UUID, thread_id: THREAD_UUID, author_id: OTHER_USER })
+    vi.mocked(PostModel.create).mockResolvedValueOnce(FAKE_POST as any)
+
+    const res = await send(PARENT_UUID)
+
+    expect(res.statusCode).toBe(201)
+    expect(PostModel.create).toHaveBeenCalledWith(expect.objectContaining({ reply_to_id: PARENT_UUID }))
+    await vi.waitFor(() => expect(NotificationModel.create).toHaveBeenCalledWith(
+      expect.objectContaining({ user_id: OTHER_USER, type: 'post_reply', post_id: FAKE_POST.id }),
+    ))
+  })
+
+  it('em tópico de RPG (XP ativo) o aviso é scene_reply', async () => {
+    vi.mocked(ThreadModel.findById).mockResolvedValueOnce(FAKE_THREAD as any)
+    vi.mocked(PostModel.getReplyTarget).mockResolvedValueOnce({ id: PARENT_UUID, thread_id: THREAD_UUID, author_id: OTHER_USER })
+    vi.mocked(PostModel.create).mockResolvedValueOnce(FAKE_POST as any)
+    vi.mocked(TrikModel.isXpThread).mockResolvedValue(true)
+
+    try {
+      await send(PARENT_UUID)
+      await vi.waitFor(() => expect(NotificationModel.create).toHaveBeenCalledWith(
+        expect.objectContaining({ user_id: OTHER_USER, type: 'scene_reply' }),
+      ))
+    } finally {
+      vi.mocked(TrikModel.isXpThread).mockResolvedValue(false)
+    }
+  })
+
+  it('autor do tópico que é também o continuado recebe só post_reply', async () => {
+    vi.mocked(ThreadModel.findById).mockResolvedValueOnce({ ...FAKE_THREAD, author_id: OTHER_USER } as any)
+    vi.mocked(PostModel.getReplyTarget).mockResolvedValueOnce({ id: PARENT_UUID, thread_id: THREAD_UUID, author_id: OTHER_USER })
+    vi.mocked(PostModel.create).mockResolvedValueOnce(FAKE_POST as any)
+
+    await send(PARENT_UUID)
+
+    await vi.waitFor(() => expect(NotificationModel.create).toHaveBeenCalled())
+    const tipos = vi.mocked(NotificationModel.create).mock.calls
+      .filter(([n]) => n.user_id === OTHER_USER)
+      .map(([n]) => n.type)
+    expect(tipos).toEqual(['post_reply'])
+  })
+
+  it('continuar o próprio post não gera notificação para si mesmo', async () => {
+    vi.mocked(ThreadModel.findById).mockResolvedValueOnce(FAKE_THREAD as any)
+    vi.mocked(PostModel.getReplyTarget).mockResolvedValueOnce({ id: PARENT_UUID, thread_id: THREAD_UUID, author_id: USER_UUID })
+    vi.mocked(PostModel.create).mockResolvedValueOnce(FAKE_POST as any)
+
+    const res = await send(PARENT_UUID)
+
+    expect(res.statusCode).toBe(201)
+    await new Promise(r => setTimeout(r, 20))
+    expect(NotificationModel.create).not.toHaveBeenCalled()
   })
 })
 
