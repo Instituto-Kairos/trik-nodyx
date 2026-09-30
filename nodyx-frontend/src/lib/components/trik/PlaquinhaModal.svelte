@@ -13,6 +13,8 @@
 	interface Character {
 		id: string;
 		name: string;
+		template_name: string | null;
+		template_signature: string | null;
 	}
 
 	let loading = $state(true);
@@ -25,6 +27,18 @@
 	let templateName = $state('');
 	let templateSignature = $state('');
 
+	const selectedCharacter = $derived(characters.find((c) => c.id === selectedCharacterId));
+	const hasExisting = $derived(
+		!!selectedCharacter?.template_name && !!selectedCharacter?.template_signature
+	);
+
+	// Preenche com a plaquinha já salva do personagem (ou limpa, se não houver),
+	// pra quem só quer corrigir um detalhe não ter que redigitar tudo.
+	function fillFromSelected() {
+		templateName = selectedCharacter?.template_name ?? '';
+		templateSignature = selectedCharacter?.template_signature ?? '';
+	}
+
 	async function load() {
 		loading = true;
 		try {
@@ -35,6 +49,7 @@
 				const data = await res.json();
 				characters = data.characters ?? [];
 				selectedCharacterId = characters[0]?.id ?? '';
+				fillFromSelected();
 			}
 		} finally {
 			loading = false;
@@ -117,7 +132,9 @@
 			{#if loading}
 				<p class="text-sm text-gray-500">Carregando…</p>
 			{:else if done}
-				<p class="text-sm text-emerald-400">Plaquinha salva com sucesso.</p>
+				<p class="text-sm text-emerald-400">
+					{hasExisting ? 'Plaquinha atualizada com sucesso.' : 'Plaquinha salva com sucesso.'}
+				</p>
 			{:else if characters.length === 0}
 				<p class="text-sm text-gray-500">
 					Você ainda não tem nenhum personagem. Use /registro primeiro.
@@ -138,6 +155,7 @@
 					</p>
 					<select
 						bind:value={selectedCharacterId}
+						onchange={fillFromSelected}
 						class="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-white"
 					>
 						{#each characters as c (c.id)}
@@ -145,6 +163,15 @@
 						{/each}
 					</select>
 				</div>
+
+				{#if hasExisting}
+					<div
+						class="rounded-lg px-4 py-3 text-sm text-amber-300"
+						style="background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.3);"
+					>
+						Este personagem já tem uma plaquinha registrada. Salvar vai substituí-la.
+					</div>
+				{/if}
 
 				<div>
 					<p class="text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-1.5">
@@ -177,7 +204,7 @@
 					class="w-full py-2.5 rounded-xl font-semibold text-sm text-white transition-all"
 					style="background: {saving ? 'rgba(55,65,81,1)' : 'rgb(79,70,229)'};"
 				>
-					{saving ? 'Salvando…' : 'Salvar'}
+					{saving ? 'Salvando…' : hasExisting ? 'Atualizar plaquinha' : 'Salvar'}
 				</button>
 			</div>
 		{/if}

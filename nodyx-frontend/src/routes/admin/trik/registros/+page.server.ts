@@ -90,5 +90,21 @@ export const actions: Actions = {
 		});
 		if (error) return fail(400, { error });
 		return { ok: true, saved: 'personagem' };
+	},
+
+	deleteCharacter: async ({ request, fetch, cookies }) => {
+		const form = await request.formData();
+		const characterId = String(form.get('characterId') ?? '');
+		if (!characterId) return fail(400, { error: 'Personagem inválido' });
+
+		const res = await apiFetch(fetch, `/admin/trik/registros/characters/${characterId}`, {
+			method: 'DELETE',
+			headers: { Authorization: `Bearer ${cookies.get('token')}` }
+		});
+		if (!res.ok) {
+			const json = await res.json().catch(() => ({}));
+			return fail(400, { error: json.error ?? 'Erro ao excluir' });
+		}
+		return { ok: true, deleted: String(form.get('name') ?? 'Personagem') };
 	}
 };

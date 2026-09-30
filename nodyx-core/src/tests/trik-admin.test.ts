@@ -28,6 +28,7 @@ vi.mock('../models/trik', () => ({
   listRegistros:      vi.fn(),
   updateRegistroPlayer:    vi.fn(),
   updateRegistroCharacter: vi.fn(),
+  deleteRegistroCharacter: vi.fn(),
   listXpLevels:       vi.fn(),
   setXpLevels:        vi.fn().mockResolvedValue(undefined),
 }))
@@ -234,6 +235,37 @@ describe('trikAdminPlugin', () => {
 
       expect(res.statusCode).toBe(409)
       expect(res.json().code).toBe('DUPLICATE_NAME')
+    })
+  })
+
+  describe('DELETE /registros/characters/:id', () => {
+    const del = (id: string, auth = 'Bearer admin') => app.inject({
+      method: 'DELETE', url: `/api/v1/admin/trik/registros/characters/${id}`,
+      headers: { Authorization: auth },
+    })
+
+    it('retorna 403 pra não-admin', async () => {
+      expect((await del(PLAYER_ID, 'Bearer notadmin')).statusCode).toBe(403)
+      expect(TrikModel.deleteRegistroCharacter).not.toHaveBeenCalled()
+    })
+
+    it('retorna 400 com id que não é UUID', async () => {
+      expect((await del('nao-e-uuid')).statusCode).toBe(400)
+      expect(TrikModel.deleteRegistroCharacter).not.toHaveBeenCalled()
+    })
+
+    it('exclui o personagem → 204', async () => {
+      vi.mocked(TrikModel.deleteRegistroCharacter).mockResolvedValue(true)
+      const res = await del(PLAYER_ID)
+      expect(res.statusCode).toBe(204)
+      expect(TrikModel.deleteRegistroCharacter).toHaveBeenCalledWith(PLAYER_ID)
+    })
+
+    it('retorna 404 quando o personagem não existe', async () => {
+      vi.mocked(TrikModel.deleteRegistroCharacter).mockResolvedValue(false)
+      const res = await del(PLAYER_ID)
+      expect(res.statusCode).toBe(404)
+      expect(res.json().code).toBe('NOT_FOUND')
     })
   })
 

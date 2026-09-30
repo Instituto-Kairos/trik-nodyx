@@ -273,7 +273,7 @@
 	<meta property="og:description" content="Discussions dans {categoryName}, forum {page.data.communityName ?? 'Nodyx'}" />
 	<meta property="og:type"        content="website" />
 	<meta property="og:url"         content={page.url.href} />
-	<meta property="og:image"       content={page.data.communityBannerUrl ?? page.data.communityLogoUrl ?? `${page.url.origin}/default-og-image.png`} />
+	<meta property="og:image"       content={page.data.communityBannerUrl ?? page.data.communityLogoUrl ?? `${page.url.origin}/og-image.jpg`} />
 	<meta property="og:site_name"   content={page.data.communityName ?? 'Nodyx'} />
 </svelte:head>
 

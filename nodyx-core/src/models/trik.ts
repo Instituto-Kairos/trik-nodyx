@@ -696,6 +696,14 @@ export async function updateRegistroCharacter(
   return rows[0] ?? null
 }
 
+/** Exclusão pelo admin. Progresso, XP das cenas (trik_scene_awards),
+ *  maestrias e bônus saem junto por ON DELETE CASCADE (trik_002_xp.sql); os
+ *  posts das cenas ficam, só perdem o vínculo com o personagem. */
+export async function deleteRegistroCharacter(id: string): Promise<boolean> {
+  const { rowCount } = await db.query(`DELETE FROM trik_characters WHERE id = $1`, [id])
+  return (rowCount ?? 0) > 0
+}
+
 // ─── Fase 2: curva de XP (editável via admin, GET/PUT /admin/trik/xp-levels) ──
 // Consumida por applyXpInTx a cada cena que gera xp. Migration
 // só popula um seed placeholder (níveis 1-3) — sem editar aqui, personagens

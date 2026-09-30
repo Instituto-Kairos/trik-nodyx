@@ -419,6 +419,16 @@ export async function trikAdminPlugin(app: FastifyInstance) {
     }
   })
 
+  app.delete('/registros/characters/:id', {
+    preHandler: validate({ params: RegistroIdParams }),
+  }, async (request, reply) => {
+    const { id } = request.params as z.infer<typeof RegistroIdParams>
+    if (!await TrikModel.deleteRegistroCharacter(id)) {
+      return reply.code(404).send({ error: 'Personagem não encontrado', code: 'NOT_FOUND' })
+    }
+    return reply.code(204).send()
+  })
+
   app.get('/channels', async (_request, reply) => {
     const communityId = await getCommunityId()
     if (!communityId) return reply.code(503).send({ error: 'Community not configured' })

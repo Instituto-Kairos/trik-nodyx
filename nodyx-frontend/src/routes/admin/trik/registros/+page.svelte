@@ -96,6 +96,17 @@
 		if (result.type === 'success') editing = null;
 	};
 
+	// Exclusão não tem volta (progresso e XP saem junto no banco), então pede
+	// confirmação nomeando o personagem antes de mandar o form.
+	function confirmDelete(e: SubmitEvent, name: string) {
+		const ok = confirm(
+			`Excluir o personagem "${name}"?
+
+Isso apaga também o nível, o XP, as maestrias e os bônus dele. Não dá para desfazer.`
+		);
+		if (!ok) e.preventDefault();
+	}
+
 	// DATE vem como 'YYYY-MM-DD' (texto): formata na mão pra não passar por Date e deslocar o dia.
 	function fmtDate(d: string | null): string {
 		if (!d) return '—';
@@ -179,8 +190,9 @@
 		<p class="text-sm text-gray-500">
 			O que o <code class="text-gray-400">/registro</code> e o <code class="text-gray-400">/plaquinha</code>
 			gravaram, em duas tabelas: jogadores (identidade OOC, uma linha por pessoa) e personagens
-			(uma linha cada, com a plaquinha e o nível). Clique numa linha para ver os detalhes, ou em
-			<strong class="text-gray-400">Editar</strong> para corrigir. Conduta, Princípios, plaquinha e XP
+			(uma linha cada, com a plaquinha e o nível). Clique numa linha para ver os detalhes, em
+			<strong class="text-gray-400">Editar</strong> para corrigir ou em
+			<strong class="text-gray-400">Excluir</strong> para apagar um personagem. Conduta, Princípios, plaquinha e XP
 			não se editam aqui: são resultado do <code class="text-gray-400">/levelup</code> e do
 			<code class="text-gray-400">/plaquinha</code>, que têm orçamento de pontos próprio.
 		</p>
@@ -189,6 +201,10 @@
 	{#if form?.error}
 		<div class="rounded-lg border border-red-800 bg-red-900/30 px-4 py-3 text-sm text-red-300">
 			{form.error}
+		</div>
+	{:else if form && 'deleted' in form}
+		<div class="rounded-lg border border-emerald-800 bg-emerald-900/30 px-4 py-3 text-sm text-emerald-300">
+			Personagem “{form.deleted}” excluído.
 		</div>
 	{:else if form?.saved}
 		<div class="rounded-lg border border-emerald-800 bg-emerald-900/30 px-4 py-3 text-sm text-emerald-300">
@@ -378,7 +394,22 @@
 							</td>
 							<td class="px-4 py-2 text-gray-500">{fmtDateTime(character.created_at)}</td>
 							<td class="px-4 py-2">
-								<div class="flex justify-end">{@render rowActions(key)}</div>
+								<div class="flex justify-end gap-2">
+									{@render rowActions(key)}
+									<form
+										method="POST"
+										action="?/deleteCharacter"
+										use:enhance
+										onsubmit={(e) => confirmDelete(e, character.name)}
+									>
+										<input type="hidden" name="characterId" value={character.id} />
+										<input type="hidden" name="name" value={character.name} />
+										<button
+											type="submit"
+											class="rounded-lg border border-gray-700 px-2.5 py-1 text-xs text-gray-400 hover:border-red-600 hover:text-red-400 transition-colors"
+										>Excluir</button>
+									</form>
+								</div>
 							</td>
 						</tr>
 
@@ -396,7 +427,7 @@
 											{@render field({ label: 'Ficha (link)', name: 'fichaLink', value: character.ficha_link, type: 'url', required: true })}
 											{@render field({ label: 'Panteão', name: 'pantheon', value: character.pantheon })}
 											{@render field({ label: 'Vínculo divino', name: 'divineBond', value: character.divine_bond })}
-											{@render field({ label: 'Dádiva', name: 'divineGift', value: character.divine_gift })}
+											{@render field({ label: 'Presente Divino', name: 'divineGift', value: character.divine_gift })}
 										</div>
 										{@render formButtons()}
 									</form>
