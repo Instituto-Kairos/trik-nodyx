@@ -32,11 +32,9 @@ const bonusIdOf = (form: FormData) => String(form.get('bonusId') ?? '') || null;
 export const actions: Actions = {
 	createPantheon: async ({ request, fetch, cookies }) => {
 		const form = await request.formData();
-		const category = String(form.get('category') ?? '').trim();
 		const name = String(form.get('name') ?? '').trim();
-		if (!category) return fail(400, { error: 'Digite a categoria do panteão' });
 		if (!name) return fail(400, { error: 'Digite o nome do panteão' });
-		return (await send(fetch, cookies.get('token'), '/admin/trik/pantheons', 'POST', { category, name, bonusId: bonusIdOf(form) })) ?? { ok: true, created: name };
+		return (await send(fetch, cookies.get('token'), '/admin/trik/pantheons', 'POST', { name, bonusId: bonusIdOf(form) })) ?? { ok: true, created: name };
 	},
 
 	setPantheonBonus: async ({ request, fetch, cookies }) => {

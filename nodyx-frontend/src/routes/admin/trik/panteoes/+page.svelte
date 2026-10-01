@@ -12,7 +12,6 @@
 	}
 	interface Pantheon {
 		id: string;
-		category: string;
 		name: string;
 		bonus_id: string | null;
 		deities: Deity[];
@@ -25,7 +24,6 @@
 
 	const pantheons = $derived((data.pantheons ?? []) as Pantheon[]);
 	const bonuses = $derived((data.bonuses ?? []) as Bonus[]);
-	const categories = $derived([...new Set(pantheons.map((p) => p.category))].sort());
 	const bonusLabel = (b: Bonus) => `${b.bonus_type} (${b.bonus_value})`;
 
 	// Limpa o formulário que deu certo (panteão novo ou "+ divindade").
@@ -85,23 +83,6 @@
 
 	<form method="POST" action="?/createPantheon" use:enhance={resetOnSuccess} class="flex flex-wrap items-end gap-3">
 		<div class="space-y-1">
-			<label for="pantheonCategory" class="block text-xs text-gray-500">Categoria</label>
-			<input
-				id="pantheonCategory"
-				type="text"
-				name="category"
-				list="pantheonCategories"
-				required
-				maxlength="50"
-				placeholder="Ex.: Olimpiano"
-				autocomplete="off"
-				class="w-48 rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-white placeholder-gray-600"
-			/>
-			<datalist id="pantheonCategories">
-				{#each categories as c (c)}<option value={c}></option>{/each}
-			</datalist>
-		</div>
-		<div class="space-y-1">
 			<label for="pantheonName" class="block text-xs text-gray-500">Novo panteão</label>
 			<input
 				id="pantheonName"
@@ -141,11 +122,8 @@
 	<div class="grid gap-4 md:grid-cols-2">
 		{#each pantheons as p (p.id)}
 			<div class="rounded-xl border border-gray-800 bg-gray-900/40 p-4 space-y-3">
-				<div class="flex items-start justify-between gap-3">
-					<div>
-						<p class="text-[10px] font-bold uppercase tracking-widest text-gray-500">{p.category}</p>
-						<h2 class="text-base font-semibold text-white">{p.name}</h2>
-					</div>
+				<div class="flex items-center justify-between gap-3">
+					<h2 class="text-base font-semibold text-white">{p.name}</h2>
 					<form
 						method="POST"
 						action="?/deletePantheon"

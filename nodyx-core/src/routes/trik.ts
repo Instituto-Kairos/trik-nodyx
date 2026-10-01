@@ -215,9 +215,8 @@ const BonusIdParams = z.object({ id: z.string().uuid() })
 
 // Catálogo de panteões/divindades (trik_005) — dropdowns do /registro.
 const PantheonBody = z.object({
-  category: z.string().trim().min(1).max(50),
-  name:     z.string().trim().min(1).max(100),
-  bonusId:  z.string().uuid().nullable().default(null),
+  name:    z.string().trim().min(1).max(100),
+  bonusId: z.string().uuid().nullable().default(null),
 })
 const DeityBody = z.object({
   name:    z.string().trim().min(1).max(100),
@@ -575,9 +574,9 @@ export async function trikAdminPlugin(app: FastifyInstance) {
   app.post('/pantheons', {
     preHandler: validate({ body: PantheonBody }),
   }, async (request, reply) => {
-    const { category, name, bonusId } = request.body as z.infer<typeof PantheonBody>
+    const { name, bonusId } = request.body as z.infer<typeof PantheonBody>
     try {
-      return reply.code(201).send({ pantheon: await TrikModel.createPantheon(category, name, bonusId) })
+      return reply.code(201).send({ pantheon: await TrikModel.createPantheon(name, bonusId) })
     } catch (err: any) {
       if (err?.code === '23505') return reply.code(409).send({ error: 'Esse panteão já existe', code: 'DUPLICATE_NAME' })
       if (err?.code === '23503') return reply.code(400).send(BAD_BONUS)

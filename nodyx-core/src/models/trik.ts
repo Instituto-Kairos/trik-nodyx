@@ -990,7 +990,7 @@ export async function deleteBonus(id: string): Promise<boolean> {
 
 // ─── Catálogo de panteões e divindades (trik_005) ──────────────────────────
 // Cadastro em /admin/trik/panteoes; o modal de /registro lista daqui. Mesmo
-// formato de trik_aptitudes: category + bonus_id (trik_bonus).
+// formato de trik_aptitudes, mas sem categoria: name + bonus_id (trik_bonus).
 
 export interface TrikDeity {
   id:       string
@@ -1000,7 +1000,6 @@ export interface TrikDeity {
 
 export interface TrikPantheon {
   id:       string
-  category: string
   name:     string
   bonus_id: string | null
   deities:  TrikDeity[]
@@ -1008,23 +1007,23 @@ export interface TrikPantheon {
 
 export async function listPantheons(): Promise<TrikPantheon[]> {
   const { rows } = await db.query<TrikPantheon>(
-    `SELECT p.id, p.category, p.name, p.bonus_id,
+    `SELECT p.id, p.name, p.bonus_id,
             COALESCE(json_agg(json_build_object('id', d.id, 'name', d.name, 'bonus_id', d.bonus_id)
                               ORDER BY d.name)
                      FILTER (WHERE d.id IS NOT NULL), '[]') AS deities
        FROM trik_pantheons p
        LEFT JOIN trik_deities d ON d.pantheon_id = p.id
       GROUP BY p.id
-      ORDER BY p.category, p.name`
+      ORDER BY p.name`
   )
   return rows
 }
 
-export async function createPantheon(category: string, name: string, bonusId: string | null): Promise<TrikPantheon> {
+export async function createPantheon(name: string, bonusId: string | null): Promise<TrikPantheon> {
   const { rows } = await db.query<Omit<TrikPantheon, 'deities'>>(
-    `INSERT INTO trik_pantheons (category, name, bonus_id) VALUES ($1, $2, $3)
-     RETURNING id, category, name, bonus_id`,
-    [category.trim(), name.trim(), bonusId]
+    `INSERT INTO trik_pantheons (name, bonus_id) VALUES ($1, $2)
+     RETURNING id, name, bonus_id`,
+    [name.trim(), bonusId]
   )
   return { ...rows[0], deities: [] }
 }

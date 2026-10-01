@@ -3,8 +3,7 @@
 -- do modelo de dados do TRIK-PROJECT), cadastrado em /admin/trik/panteoes e
 -- consumido pelos dropdowns do modal de /registro.
 --
--- Mesmo formato de trik_aptitudes/preferences/goals: category + bonus_id
--- (trik_bonus, ON DELETE SET NULL — apagar um tipo de bônus não apaga o
+-- Os dois têm bonus_id (trik_bonus, ON DELETE SET NULL — apagar um tipo de bônus não apaga o
 -- panteão/divindade, só perde a referência).
 --
 -- A escolha do personagem fica em trik_character_bonuses.pantheon_id /
@@ -18,7 +17,6 @@ BEGIN;
 
 CREATE TABLE IF NOT EXISTS trik_pantheons (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  category    VARCHAR(50) NOT NULL,
   name        VARCHAR(100) NOT NULL UNIQUE,
   bonus_id    UUID REFERENCES trik_bonus(id) ON DELETE SET NULL,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
