@@ -29,6 +29,7 @@ vi.mock('../models/trik', () => ({
   updateRegistroPlayer:    vi.fn(),
   updateRegistroCharacter: vi.fn(),
   deleteRegistroCharacter: vi.fn(),
+  resolvePantheonChoice:   vi.fn(),
   listXpLevels:       vi.fn(),
   setXpLevels:        vi.fn().mockResolvedValue(undefined),
 }))
@@ -235,6 +236,66 @@ describe('trikAdminPlugin', () => {
 
       expect(res.statusCode).toBe(409)
       expect(res.json().code).toBe('DUPLICATE_NAME')
+    })
+  })
+
+  // Panteão/vínculo: só pelo catálogo (ids), nunca texto — senão o nome
+  // exibido e o pantheon_id de trik_character_bonuses divergem.
+  describe('PATCH /registros/characters/:id — panteão e vínculo', () => {
+    const PANTHEON_ID = '44444444-4444-4444-8444-444444444444'
+    const DEITY_ID    = '55555555-5555-4555-8555-555555555555'
+
+    it('recusa panteão/vínculo em texto livre', async () => {
+      for (const payload of [{ pantheon: 'Grego' }, { divineBond: 'Atena' }]) {
+        const res = await patch(PATCH_CHAR, payload)
+        expect(res.statusCode, JSON.stringify(payload)).toBe(400)
+      }
+      expect(TrikModel.updateRegistroCharacter).not.toHaveBeenCalled()
+    })
+
+    it('recusa vínculo sem panteão', async () => {
+      for (const payload of [{ divineBondId: DEITY_ID }, { pantheonId: null, divineBondId: DEITY_ID }]) {
+        const res = await patch(PATCH_CHAR, payload)
+        expect(res.statusCode, JSON.stringify(payload)).toBe(400)
+      }
+      expect(TrikModel.updateRegistroCharacter).not.toHaveBeenCalled()
+    })
+
+    it('recusa escolha fora do catálogo', async () => {
+      vi.mocked(TrikModel.resolvePantheonChoice).mockResolvedValue(null)
+      const res = await patch(PATCH_CHAR, { pantheonId: PANTHEON_ID, divineBondId: DEITY_ID })
+      expect(res.statusCode).toBe(400)
+      expect(TrikModel.updateRegistroCharacter).not.toHaveBeenCalled()
+    })
+
+    it('grava ids e a cópia dos nomes juntos', async () => {
+      vi.mocked(TrikModel.resolvePantheonChoice).mockResolvedValue({ pantheon: 'Grego', deity: 'Atena' })
+      vi.mocked(TrikModel.updateRegistroCharacter).mockResolvedValue({ id: PLAYER_ID } as any)
+
+      const res = await patch(PATCH_CHAR, { name: 'Jahzell', pantheonId: PANTHEON_ID, divineBondId: DEITY_ID })
+
+      expect(res.statusCode).toBe(200)
+      expect(TrikModel.resolvePantheonChoice).toHaveBeenCalledWith(PANTHEON_ID, DEITY_ID)
+      expect(TrikModel.updateRegistroCharacter).toHaveBeenCalledWith(PLAYER_ID, { name: 'Jahzell' }, {
+        pantheonId: PANTHEON_ID, divineBondId: DEITY_ID, pantheon: 'Grego', divineBond: 'Atena',
+      })
+    })
+
+    it('pantheonId null limpa os dois', async () => {
+      vi.mocked(TrikModel.updateRegistroCharacter).mockResolvedValue({ id: PLAYER_ID } as any)
+      const res = await patch(PATCH_CHAR, { pantheonId: null, divineBondId: null })
+      expect(res.statusCode).toBe(200)
+      expect(TrikModel.resolvePantheonChoice).not.toHaveBeenCalled()
+      expect(TrikModel.updateRegistroCharacter).toHaveBeenCalledWith(PLAYER_ID, {}, {
+        pantheonId: null, divineBondId: null, pantheon: null, divineBond: null,
+      })
+    })
+
+    it('sem pantheonId não mexe no panteão (texto antigo fica)', async () => {
+      vi.mocked(TrikModel.updateRegistroCharacter).mockResolvedValue({ id: PLAYER_ID } as any)
+      const res = await patch(PATCH_CHAR, { name: 'Jahzell' })
+      expect(res.statusCode).toBe(200)
+      expect(TrikModel.updateRegistroCharacter).toHaveBeenCalledWith(PLAYER_ID, { name: 'Jahzell' }, undefined)
     })
   })
 

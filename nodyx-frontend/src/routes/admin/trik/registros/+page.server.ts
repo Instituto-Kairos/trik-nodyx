@@ -3,12 +3,16 @@ import { apiFetch } from '$lib/api';
 import { fail } from '@sveltejs/kit';
 
 export const load: PageServerLoad = async ({ fetch, cookies }) => {
-	const token = cookies.get('token');
-	const res = await apiFetch(fetch, '/admin/trik/registros', {
-		headers: { Authorization: `Bearer ${token}` }
-	});
+	const headers = { Authorization: `Bearer ${cookies.get('token')}` };
+	// O catálogo alimenta os dropdowns de panteão/vínculo do "Editar" — os
+	// mesmos do modal de /registro.
+	const [res, pRes] = await Promise.all([
+		apiFetch(fetch, '/admin/trik/registros', { headers }),
+		apiFetch(fetch, '/admin/trik/pantheons', { headers })
+	]);
 	const players = res.ok ? ((await res.json()).players ?? []) : [];
-	return { players, failed: !res.ok };
+	const pantheons = pRes.ok ? ((await pRes.json()).pantheons ?? []) : [];
+	return { players, pantheons, failed: !res.ok };
 };
 
 /** Campo de texto opcional: vazio vira null (apagar o valor), não string vazia. */
@@ -77,17 +81,24 @@ export const actions: Actions = {
 		const fichaLink = opt(form, 'fichaLink');
 		if (!fichaLink) return fail(400, { error: 'O link da ficha não pode ficar vazio' });
 
-		const error = await patch(fetch, cookies.get('token'), `/admin/trik/registros/characters/${characterId}`, {
+		const body: Record<string, unknown> = {
 			name,
 			pronouns: opt(form, 'pronouns'),
 			birthDate: opt(form, 'birthDate'),
 			faceclaimName: opt(form, 'faceclaimName'),
 			faceclaimBirthDate: opt(form, 'faceclaimBirthDate'),
 			fichaLink,
-			pantheon: opt(form, 'pantheon'),
-			divineBond: opt(form, 'divineBond'),
 			divineGift: opt(form, 'divineGift')
-		});
+		};
+		// Panteão/vínculo só vão se o admin mexeu nos dropdowns: reenviar sem
+		// mudança apagaria o texto livre de registros antigos (sem id no
+		// catálogo), que o dropdown não tem como representar.
+		if (form.get('divineChanged') === '1') {
+			body.pantheonId = opt(form, 'pantheonId');
+			body.divineBondId = opt(form, 'divineBondId');
+		}
+
+		const error = await patch(fetch, cookies.get('token'), `/admin/trik/registros/characters/${characterId}`, body);
 		if (error) return fail(400, { error });
 		return { ok: true, saved: 'personagem' };
 	},

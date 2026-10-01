@@ -108,10 +108,23 @@ const RegistroCharacterPatch = naoVazio({
   fichaLink:          z.string().url().max(500)
     .refine(u => /^https?:\/\//i.test(u), 'O link da ficha precisa começar com http:// ou https://')
     .optional(),
-  pantheon:           z.string().max(100).nullable().optional(),
-  divineBond:         z.string().max(100).nullable().optional(),
+  // Panteão e vínculo vêm do catálogo (trik_005), como no /registro: o texto
+  // em trik_characters é só a cópia do nome, então não se edita direto —
+  // senão o nome exibido e o pantheon_id de trik_character_bonuses divergem.
+  // Os dois andam juntos: ausentes = não mexe (registro antigo de texto livre
+  // fica como está); pantheonId null = limpa os dois.
+  pantheonId:         z.string().uuid().nullable().optional(),
+  divineBondId:       z.string().uuid().nullable().optional(),
   divineGift:         z.string().max(240).nullable().optional(),
 })
+  .refine(
+    body => !('divineBondId' in body) || 'pantheonId' in body,
+    'divineBondId precisa vir junto de pantheonId',
+  )
+  .refine(
+    body => !body.divineBondId || !!body.pantheonId,
+    'Escolha o panteão do vínculo divino',
+  )
 
 const RegistroIdParams = z.object({ id: z.string().uuid() })
 
@@ -424,9 +437,21 @@ export async function trikAdminPlugin(app: FastifyInstance) {
     preHandler: validate({ params: RegistroIdParams, body: RegistroCharacterPatch }),
   }, async (request, reply) => {
     const { id } = request.params as z.infer<typeof RegistroIdParams>
-    const patch = request.body as z.infer<typeof RegistroCharacterPatch>
+    const { pantheonId, divineBondId, ...patch } = request.body as z.infer<typeof RegistroCharacterPatch>
+
+    // Mesma validação do /registro (services/trik/registro): a divindade
+    // precisa ser desse panteão, e os dois precisam existir no catálogo.
+    let divine: TrikModel.DivineChoice | undefined
+    if (pantheonId === null) {
+      divine = { pantheonId: null, divineBondId: null, pantheon: null, divineBond: null }
+    } else if (pantheonId) {
+      const choice = await TrikModel.resolvePantheonChoice(pantheonId, divineBondId ?? null)
+      if (!choice) return reply.code(400).send({ error: 'Panteão ou divindade fora do catálogo', code: 'VALIDATION' })
+      divine = { pantheonId, divineBondId: divineBondId ?? null, pantheon: choice.pantheon, divineBond: choice.deity }
+    }
+
     try {
-      const character = await TrikModel.updateRegistroCharacter(id, patch)
+      const character = await TrikModel.updateRegistroCharacter(id, patch, divine)
       if (!character) return reply.code(404).send({ error: 'Personagem não encontrado', code: 'NOT_FOUND' })
       return reply.send({ character })
     } catch (err: any) {

@@ -497,6 +497,10 @@ export interface TrikRegistroCharacter {
   pantheon:             string | null
   divine_bond:          string | null
   divine_gift:          string | null
+  /** Escolha no catálogo (trik_character_bonuses); null em registro antigo de
+   *  texto livre ou se a entrada foi removida do catálogo. */
+  pantheon_id:          string | null
+  divine_bond_id:       string | null
   conduct_presenca:     number
   conduct_proposito:    number
   conduct_sangue:       number
@@ -584,6 +588,7 @@ export async function listRegistros(): Promise<TrikRegistroPlayer[]> {
       `SELECT c.id, c.player_id, c.name, c.pronouns, c.birth_date::text AS birth_date,
               c.faceclaim_name, c.faceclaim_birth_date::text AS faceclaim_birth_date,
               c.ficha_link, c.pantheon, c.divine_bond, c.divine_gift,
+              cb.pantheon_id, cb.divine_bond_id,
               c.conduct_presenca, c.conduct_proposito, c.conduct_sangue,
               c.principles_mente, c.principles_coracao, c.principles_corpo,
               c.template_name, c.template_signature, c.created_at, c.last_active_at,
@@ -592,6 +597,7 @@ export async function listRegistros(): Promise<TrikRegistroPlayer[]> {
               pr.goal_xp
          FROM trik_characters c
          LEFT JOIN trik_character_progress g ON g.character_id = c.id
+         LEFT JOIN trik_character_bonuses cb ON cb.character_id = c.id
          LEFT JOIN trik_progression pr
                 ON pr.type = 'character' AND pr.level = COALESCE(g.level, 1)
         ORDER BY c.created_at`
@@ -682,29 +688,62 @@ export async function updateRegistroPlayer(
   return rows[0] ?? null
 }
 
+/** Escolha de panteão/vínculo já resolvida no catálogo (resolvePantheonChoice):
+ *  os ids vão para trik_character_bonuses, os nomes para a cópia em texto de
+ *  trik_characters — sempre os dois juntos, como no createCharacter. */
+export interface DivineChoice {
+  pantheonId:   string | null
+  divineBondId: string | null
+  pantheon:     string | null
+  divineBond:   string | null
+}
+
 /** null = personagem inexistente. Colisão de nome (UNIQUE player_id+name)
- *  sobe como erro 23505 — quem chama traduz pra 409. */
+ *  sobe como erro 23505 — quem chama traduz pra 409. Sem `divine`, panteão e
+ *  vínculo ficam como estão (inclusive o texto livre de registros antigos). */
 export async function updateRegistroCharacter(
   id: string,
   patch: RegistroCharacterPatch,
+  divine?: DivineChoice,
 ): Promise<TrikCharacter | null> {
-  const { sets, values } = buildSet(REGISTRO_CHARACTER_COLUMNS, patch)
+  const full: RegistroCharacterPatch = divine
+    ? { ...patch, pantheon: divine.pantheon, divineBond: divine.divineBond }
+    : patch
+  const { sets, values } = buildSet(REGISTRO_CHARACTER_COLUMNS, full)
   if (!sets.length) {
     const { rows } = await db.query<TrikCharacter>(`SELECT * FROM trik_characters WHERE id = $1`, [id])
     return rows[0] ?? null
   }
+
+  // Um statement só: o texto e os ids não podem ficar um sem o outro.
+  const params = [id, ...values]
+  let bonusCte = ''
+  if (divine) {
+    params.push(divine.pantheonId, divine.divineBondId)
+    const p = params.length - 1, d = params.length
+    bonusCte = `, b AS (
+       INSERT INTO trik_character_bonuses (character_id, pantheon_id, divine_bond_id)
+       SELECT id, $${p}::uuid, $${d}::uuid FROM c
+       ON CONFLICT (character_id) DO UPDATE
+         SET pantheon_id = EXCLUDED.pantheon_id, divine_bond_id = EXCLUDED.divine_bond_id
+     )`
+  }
+
   const { rows } = await db.query<TrikCharacter>(
-    `UPDATE trik_characters
-        SET ${sets.join(', ')}, updated_at = NOW()
-      WHERE id = $1
-      RETURNING id, player_id, name, pronouns, birth_date::text AS birth_date,
-                faceclaim_name, faceclaim_birth_date::text AS faceclaim_birth_date,
-                ficha_link, pantheon, divine_bond, divine_gift,
-                conduct_presenca, conduct_proposito, conduct_sangue,
-                principles_mente, principles_coracao, principles_corpo,
-                template_name, template_signature,
-                created_at, updated_at, last_active_at`,
-    [id, ...values],
+    `WITH c AS (
+       UPDATE trik_characters
+          SET ${sets.join(', ')}, updated_at = NOW()
+        WHERE id = $1
+        RETURNING id, player_id, name, pronouns, birth_date::text AS birth_date,
+                  faceclaim_name, faceclaim_birth_date::text AS faceclaim_birth_date,
+                  ficha_link, pantheon, divine_bond, divine_gift,
+                  conduct_presenca, conduct_proposito, conduct_sangue,
+                  principles_mente, principles_coracao, principles_corpo,
+                  template_name, template_signature,
+                  created_at, updated_at, last_active_at
+     )${bonusCte}
+     SELECT * FROM c`,
+    params,
   )
   return rows[0] ?? null
 }

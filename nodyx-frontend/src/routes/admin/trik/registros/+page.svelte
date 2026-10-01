@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import DateInput from '$lib/components/DateInput.svelte';
 	import type { PageData, ActionData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -15,6 +16,8 @@
 		pantheon: string | null;
 		divine_bond: string | null;
 		divine_gift: string | null;
+		pantheon_id: string | null;
+		divine_bond_id: string | null;
 		conduct_presenca: number;
 		conduct_proposito: number;
 		conduct_sangue: number;
@@ -41,7 +44,14 @@
 		characters: Character[];
 	}
 
+	interface Pantheon {
+		id: string;
+		name: string;
+		deities: { id: string; name: string }[];
+	}
+
 	const players = $derived((data.players ?? []) as Player[]);
+	const pantheons = $derived((data.pantheons ?? []) as Pantheon[]);
 
 	// O payload vem aninhado (jogador → personagens), mas a tabela de
 	// personagens é plana: cada linha carrega o jogador ao lado só para exibir
@@ -85,6 +95,27 @@
 	function startEdit(key: string) {
 		expanded = null;
 		editing = key;
+	}
+
+	// Panteão/vínculo no "Editar" usam os dropdowns do catálogo, como o modal de
+	// /registro. Registro antigo de texto livre (sem id no catálogo) aparece como
+	// a opção LEGACY: deixá-la selecionada = não mexer. Só um formulário fica
+	// aberto por vez, então um estado só basta.
+	const LEGACY = '__legacy';
+	let initialPantheon = $state('');
+	let initialDeity = $state('');
+	let editPantheon = $state('');
+	let editDeity = $state('');
+	const editDeities = $derived(pantheons.find((p) => p.id === editPantheon)?.deities ?? []);
+	const divineChanged = $derived(editPantheon !== initialPantheon || editDeity !== initialDeity);
+
+	function startEditCharacter(c: Character) {
+		initialPantheon = editPantheon = c.pantheon_id ?? (c.pantheon ? LEGACY : '');
+		initialDeity = editDeity = c.divine_bond_id ?? (c.divine_bond ? LEGACY : '');
+		startEdit(ck(c.id));
+	}
+	function onPantheonChange() {
+		editDeity = editPantheon === initialPantheon ? initialDeity : '';
 	}
 
 	// `update()` reaplica o resultado e recarrega o load, então a linha e o
@@ -142,21 +173,38 @@ Isso apaga também o nível, o XP, as maestrias e os bônus dele. Não dá para 
 {#snippet field(f: { label: string; name: string; value: string | null; type?: string; required?: boolean })}
 	<label class="block">
 		<span class="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-1">{f.label}</span>
-		<input
-			name={f.name}
-			type={f.type ?? 'text'}
-			required={f.required ?? false}
-			value={f.value ?? ''}
-			autocomplete="off"
-			class="w-full rounded-lg bg-gray-800 border border-gray-700 px-2 py-1.5 text-xs text-white placeholder-gray-600"
-		/>
+		{#if f.type === 'date'}
+			<!-- Não é <input type="date">: o nativo segue o idioma do navegador
+			     (mm/dd/yyyy num Chrome em inglês). DateInput é sempre dd/mm/aaaa
+			     e manda AAAA-MM-DD no POST, pelo input escondido com `name`. -->
+			<DateInput
+				name={f.name}
+				value={f.value ?? ''}
+				required={f.required ?? false}
+				placeholder="dd/mm/aaaa"
+				class="w-full rounded-lg bg-gray-800 border border-gray-700 px-2 py-1.5 text-xs text-white placeholder-gray-600"
+			/>
+		{:else}
+			<input
+				name={f.name}
+				type={f.type ?? 'text'}
+				required={f.required ?? false}
+				value={f.value ?? ''}
+				autocomplete="off"
+				class="w-full rounded-lg bg-gray-800 border border-gray-700 px-2 py-1.5 text-xs text-white placeholder-gray-600"
+			/>
+		{/if}
 	</label>
 {/snippet}
 
-{#snippet rowActions(key: string)}
+{#snippet selectLabel(text: string)}
+	<span class="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-1">{text}</span>
+{/snippet}
+
+{#snippet rowActions(key: string, onEdit: () => void = () => startEdit(key))}
 	<button
 		type="button"
-		onclick={() => startEdit(key)}
+		onclick={onEdit}
 		class="rounded-lg border border-gray-700 px-2.5 py-1 text-xs text-gray-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
 	>Editar</button>
 {/snippet}
@@ -395,7 +443,7 @@ Isso apaga também o nível, o XP, as maestrias e os bônus dele. Não dá para 
 							<td class="px-4 py-2 text-gray-500">{fmtDateTime(character.created_at)}</td>
 							<td class="px-4 py-2">
 								<div class="flex justify-end gap-2">
-									{@render rowActions(key)}
+									{@render rowActions(key, () => startEditCharacter(character))}
 									<form
 										method="POST"
 										action="?/deleteCharacter"
@@ -425,8 +473,42 @@ Isso apaga também o nível, o XP, as maestrias e os bônus dele. Não dá para 
 											{@render field({ label: 'Faceclaim', name: 'faceclaimName', value: character.faceclaim_name })}
 											{@render field({ label: 'Faceclaim — nascimento', name: 'faceclaimBirthDate', value: character.faceclaim_birth_date, type: 'date' })}
 											{@render field({ label: 'Ficha (link)', name: 'fichaLink', value: character.ficha_link, type: 'url', required: true })}
-											{@render field({ label: 'Panteão', name: 'pantheon', value: character.pantheon })}
-											{@render field({ label: 'Vínculo divino', name: 'divineBond', value: character.divine_bond })}
+											<!-- Valores pelos hidden: select desabilitado não entra no POST. -->
+											<input type="hidden" name="divineChanged" value={divineChanged ? '1' : '0'} />
+											<input type="hidden" name="pantheonId" value={editPantheon} />
+											<input type="hidden" name="divineBondId" value={editDeity} />
+											<label class="block">
+												{@render selectLabel('Panteão')}
+												<select
+													bind:value={editPantheon}
+													onchange={onPantheonChange}
+													class="w-full rounded-lg bg-gray-800 border border-gray-700 px-2 py-1.5 text-xs text-white"
+												>
+													{#if initialPantheon === LEGACY}
+														<option value={LEGACY}>{character.pantheon} (texto antigo)</option>
+													{/if}
+													<option value="">— nenhum —</option>
+													{#each pantheons as p (p.id)}
+														<option value={p.id}>{p.name}</option>
+													{/each}
+												</select>
+											</label>
+											<label class="block">
+												{@render selectLabel('Vínculo divino')}
+												<select
+													bind:value={editDeity}
+													disabled={editPantheon === '' || editPantheon === LEGACY}
+													class="w-full rounded-lg bg-gray-800 border border-gray-700 px-2 py-1.5 text-xs text-white disabled:opacity-50"
+												>
+													{#if initialDeity === LEGACY && editPantheon === initialPantheon}
+														<option value={LEGACY}>{character.divine_bond} (texto antigo)</option>
+													{/if}
+													<option value="">— nenhum —</option>
+													{#each editDeities as d (d.id)}
+														<option value={d.id}>{d.name}</option>
+													{/each}
+												</select>
+											</label>
 											{@render field({ label: 'Presente Divino', name: 'divineGift', value: character.divine_gift })}
 										</div>
 										{@render formButtons()}
