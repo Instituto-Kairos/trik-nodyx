@@ -10,7 +10,7 @@
 
 import {
   getPlayer, upsertPlayer,
-  getCharactersByPlayer, findCharacterByName, createCharacter,
+  getCharactersByPlayer, findCharacterByName, createCharacter, resolvePantheonChoice,
   type TrikPlayer, type TrikCharacter, type NewCharacterInput,
 } from '../../../models/trik'
 
@@ -30,8 +30,8 @@ export interface RegistroPayload {
     faceclaimName?: string
     faceclaimBirthDate?: string
     fichaLink: string
-    pantheon?: string
-    divineBond?: string
+    pantheonId?: string
+    divineBondId?: string
     divineGift?: string
     principlesPicked: Principle[]
     conductPicked: Conduct[]
@@ -76,6 +76,18 @@ export async function submitRegistro(userId: string, payload: RegistroPayload): 
     return { ok: false, code: 'VALIDATION', message: validationError }
   }
 
+  // Panteão e vínculo divino vêm de dropdowns ligados ao catálogo
+  // (trik_pantheons/trik_deities): vínculo exige panteão, e a divindade
+  // precisa ser desse panteão.
+  const { pantheonId, divineBondId } = payload.character
+  if (divineBondId && !pantheonId) {
+    return { ok: false, code: 'VALIDATION', message: 'Escolha o panteão do vínculo divino' }
+  }
+  const choice = pantheonId ? await resolvePantheonChoice(pantheonId, divineBondId || null) : null
+  if (pantheonId && !choice) {
+    return { ok: false, code: 'VALIDATION', message: 'Panteão ou divindade fora do catálogo' }
+  }
+
   let player = await getPlayer(userId)
   if (!player) {
     if (!payload.player?.name) {
@@ -92,6 +104,8 @@ export async function submitRegistro(userId: string, payload: RegistroPayload): 
   const { principlesPicked, conductPicked, ...rest } = payload.character
   const characterInput: NewCharacterInput = {
     ...rest,
+    pantheon:          choice?.pantheon ?? null,
+    divineBond:        choice?.deity ?? null,
     conductPresenca:   conductPicked.includes('presenca')  ? 1 : 0,
     conductProposito:  conductPicked.includes('proposito') ? 1 : 0,
     conductSangue:     conductPicked.includes('sangue')    ? 1 : 0,

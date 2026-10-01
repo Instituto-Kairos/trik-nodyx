@@ -61,6 +61,10 @@ export interface NewCharacterInput {
   pantheon?:            string | null
   divineBond?:          string | null
   divineGift?:          string | null
+  // Ids do catálogo (trik_005) — gravados em trik_character_bonuses; os
+  // campos pantheon/divineBond acima levam a cópia do nome.
+  pantheonId?:          string | null
+  divineBondId?:        string | null
   conductPresenca:      number
   conductProposito:     number
   conductSangue:        number
@@ -125,21 +129,30 @@ export async function findCharacterByName(playerId: string, name: string): Promi
 }
 
 export async function createCharacter(playerId: string, data: NewCharacterInput): Promise<TrikCharacter> {
+  // Um único statement: personagem + escolha de panteão/vínculo em
+  // trik_character_bonuses entram juntos (ou nenhum).
   const { rows } = await db.query<TrikCharacter>(
-    `INSERT INTO trik_characters (
-       player_id, name, pronouns, birth_date,
-       faceclaim_name, faceclaim_birth_date, ficha_link,
-       pantheon, divine_bond, divine_gift,
-       conduct_presenca, conduct_proposito, conduct_sangue,
-       principles_mente, principles_coracao, principles_corpo
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-     RETURNING *`,
+    `WITH c AS (
+       INSERT INTO trik_characters (
+         player_id, name, pronouns, birth_date,
+         faceclaim_name, faceclaim_birth_date, ficha_link,
+         pantheon, divine_bond, divine_gift,
+         conduct_presenca, conduct_proposito, conduct_sangue,
+         principles_mente, principles_coracao, principles_corpo
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+       RETURNING *
+     ), b AS (
+       INSERT INTO trik_character_bonuses (character_id, pantheon_id, divine_bond_id)
+       SELECT id, $17::uuid, $18::uuid FROM c WHERE $17::uuid IS NOT NULL
+     )
+     SELECT * FROM c`,
     [
       playerId, data.name, data.pronouns ?? null, data.birthDate ?? null,
       data.faceclaimName ?? null, data.faceclaimBirthDate ?? null, data.fichaLink,
       data.pantheon ?? null, data.divineBond ?? null, data.divineGift ?? null,
       data.conductPresenca, data.conductProposito, data.conductSangue,
       data.principlesMente, data.principlesCoracao, data.principlesCorpo,
+      data.pantheonId ?? null, data.divineBondId ?? null,
     ]
   )
   return rows[0]
@@ -975,6 +988,95 @@ export async function deleteBonus(id: string): Promise<boolean> {
   return (rowCount ?? 0) > 0
 }
 
+// ─── Catálogo de panteões e divindades (trik_005) ──────────────────────────
+// Cadastro em /admin/trik/panteoes; o modal de /registro lista daqui. Mesmo
+// formato de trik_aptitudes: category + bonus_id (trik_bonus).
+
+export interface TrikDeity {
+  id:       string
+  name:     string
+  bonus_id: string | null
+}
+
+export interface TrikPantheon {
+  id:       string
+  category: string
+  name:     string
+  bonus_id: string | null
+  deities:  TrikDeity[]
+}
+
+export async function listPantheons(): Promise<TrikPantheon[]> {
+  const { rows } = await db.query<TrikPantheon>(
+    `SELECT p.id, p.category, p.name, p.bonus_id,
+            COALESCE(json_agg(json_build_object('id', d.id, 'name', d.name, 'bonus_id', d.bonus_id)
+                              ORDER BY d.name)
+                     FILTER (WHERE d.id IS NOT NULL), '[]') AS deities
+       FROM trik_pantheons p
+       LEFT JOIN trik_deities d ON d.pantheon_id = p.id
+      GROUP BY p.id
+      ORDER BY p.category, p.name`
+  )
+  return rows
+}
+
+export async function createPantheon(category: string, name: string, bonusId: string | null): Promise<TrikPantheon> {
+  const { rows } = await db.query<Omit<TrikPantheon, 'deities'>>(
+    `INSERT INTO trik_pantheons (category, name, bonus_id) VALUES ($1, $2, $3)
+     RETURNING id, category, name, bonus_id`,
+    [category.trim(), name.trim(), bonusId]
+  )
+  return { ...rows[0], deities: [] }
+}
+
+export async function setPantheonBonus(id: string, bonusId: string | null): Promise<boolean> {
+  const { rowCount } = await db.query(`UPDATE trik_pantheons SET bonus_id = $2 WHERE id = $1`, [id, bonusId])
+  return (rowCount ?? 0) > 0
+}
+
+export async function deletePantheon(id: string): Promise<boolean> {
+  const { rowCount } = await db.query(`DELETE FROM trik_pantheons WHERE id = $1`, [id])
+  return (rowCount ?? 0) > 0
+}
+
+/** null = panteão não existe. */
+export async function createDeity(pantheonId: string, name: string, bonusId: string | null): Promise<TrikDeity | null> {
+  const { rows } = await db.query<TrikDeity>(
+    `INSERT INTO trik_deities (pantheon_id, name, bonus_id)
+     SELECT id, $2, $3 FROM trik_pantheons WHERE id = $1
+     RETURNING id, name, bonus_id`,
+    [pantheonId, name.trim(), bonusId]
+  )
+  return rows[0] ?? null
+}
+
+export async function setDeityBonus(id: string, bonusId: string | null): Promise<boolean> {
+  const { rowCount } = await db.query(`UPDATE trik_deities SET bonus_id = $2 WHERE id = $1`, [id, bonusId])
+  return (rowCount ?? 0) > 0
+}
+
+export async function deleteDeity(id: string): Promise<boolean> {
+  const { rowCount } = await db.query(`DELETE FROM trik_deities WHERE id = $1`, [id])
+  return (rowCount ?? 0) > 0
+}
+
+/** Resolve a escolha do /registro: os nomes, ou null se o panteão (ou a
+ *  divindade, que precisa ser DESSE panteão) não existir no catálogo. */
+export async function resolvePantheonChoice(
+  pantheonId: string, deityId: string | null,
+): Promise<{ pantheon: string; deity: string | null } | null> {
+  const { rows } = await db.query<{ pantheon: string; deity: string | null }>(
+    `SELECT p.name AS pantheon, d.name AS deity
+       FROM trik_pantheons p
+       LEFT JOIN trik_deities d ON d.id = $2::uuid AND d.pantheon_id = p.id
+      WHERE p.id = $1`,
+    [pantheonId, deityId]
+  )
+  const row = rows[0]
+  if (!row || (deityId && !row.deity)) return null
+  return row
+}
+
 export interface TrikCharacterBonuses {
   character_id:          string
   first_aptitude_id:      string | null
@@ -982,6 +1084,8 @@ export interface TrikCharacterBonuses {
   first_preference_id:    string | null
   second_preference_id:   string | null
   goal_id:                string | null
+  pantheon_id:            string | null
+  divine_bond_id:         string | null
 }
 
 export async function getCharacterBonuses(characterId: string): Promise<TrikCharacterBonuses | null> {

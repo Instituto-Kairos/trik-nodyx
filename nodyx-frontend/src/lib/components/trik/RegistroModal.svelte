@@ -32,9 +32,18 @@
 	let faceclaimName = $state('');
 	let faceclaimBirthDate = $state('');
 	let fichaLink = $state('');
-	let pantheon = $state('');
-	let divineBond = $state('');
+	let pantheonId = $state('');
+	let divineBondId = $state('');
 	let divineGift = $state('');
+
+	// Catálogo de /admin/trik/panteoes — o vínculo lista só as divindades do
+	// panteão escolhido.
+	let pantheons = $state<{ id: string; name: string; deities: { id: string; name: string }[] }[]>([]);
+	const deities = $derived(pantheons.find((p) => p.id === pantheonId)?.deities ?? []);
+
+	function onPantheonChange() {
+		divineBondId = '';
+	}
 
 	let principlesPicked = $state<Principle[]>([]);
 	let conductPicked = $state<Conduct[]>([]);
@@ -58,13 +67,16 @@
 	async function load() {
 		loading = true;
 		try {
-			const res = await apiFetch(fetch, '/trik/players/me', {
-				headers: { Authorization: `Bearer ${token}` }
-			});
+			const headers = { Authorization: `Bearer ${token}` };
+			const [res, pRes] = await Promise.all([
+				apiFetch(fetch, '/trik/players/me', { headers }),
+				apiFetch(fetch, '/trik/pantheons', { headers })
+			]);
 			if (res.ok) {
 				const data = await res.json();
 				isNewPlayer = !data.player;
 			}
+			if (pRes.ok) pantheons = (await pRes.json()).pantheons ?? [];
 		} finally {
 			loading = false;
 		}
@@ -101,8 +113,8 @@
 						faceclaimName: faceclaimName.trim() || undefined,
 						faceclaimBirthDate: faceclaimBirthDate || undefined,
 						fichaLink: fichaLink.trim(),
-						pantheon: pantheon.trim() || undefined,
-						divineBond: divineBond.trim() || undefined,
+						pantheonId: pantheonId || undefined,
+						divineBondId: divineBondId || undefined,
 						divineGift: divineGift.trim() || undefined,
 						principlesPicked,
 						conductPicked
@@ -244,16 +256,28 @@
 						class="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-white"
 					/>
 					<div class="grid grid-cols-2 gap-3">
-						<input
-							placeholder="Vínculo divino"
-							bind:value={divineBond}
-							class="rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-white"
-						/>
-						<input
-							placeholder="Panteão"
-							bind:value={pantheon}
-							class="rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-white"
-						/>
+						<select
+							bind:value={pantheonId}
+							onchange={onPantheonChange}
+							aria-label="Panteão"
+							class="rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm {pantheonId ? 'text-white' : 'text-gray-400'}"
+						>
+							<option value="">Panteão</option>
+							{#each pantheons as p (p.id)}
+								<option value={p.id}>{p.name}</option>
+							{/each}
+						</select>
+						<select
+							bind:value={divineBondId}
+							disabled={!pantheonId || deities.length === 0}
+							aria-label="Vínculo divino"
+							class="rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm disabled:opacity-50 {divineBondId ? 'text-white' : 'text-gray-400'}"
+						>
+							<option value="">Vínculo divino</option>
+							{#each deities as d (d.id)}
+								<option value={d.id}>{d.name}</option>
+							{/each}
+						</select>
 					</div>
 					<input
 						placeholder="Presente divino"

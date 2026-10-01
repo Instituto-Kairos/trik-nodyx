@@ -71,8 +71,8 @@ const RegistroBody = z.object({
     // guardado e mostrado como <a href> na tela admin de registros.
     fichaLink:           z.string().url().max(500)
       .refine(u => /^https?:\/\//i.test(u), 'O link da ficha precisa começar com http:// ou https://'),
-    pantheon:            z.string().max(100).optional(),
-    divineBond:          z.string().max(100).optional(),
+    pantheonId:          z.string().uuid().optional(),
+    divineBondId:        z.string().uuid().optional(),
     divineGift:          z.string().max(240).optional(),
     principlesPicked:    z.array(z.enum(['mente', 'coracao', 'corpo'])),
     conductPicked:       z.array(z.enum(['presenca', 'proposito', 'sangue'])),
@@ -213,6 +213,22 @@ const BonusBody = z.object({
 })
 const BonusIdParams = z.object({ id: z.string().uuid() })
 
+// Catálogo de panteões/divindades (trik_005) — dropdowns do /registro.
+const PantheonBody = z.object({
+  category: z.string().trim().min(1).max(50),
+  name:     z.string().trim().min(1).max(100),
+  bonusId:  z.string().uuid().nullable().default(null),
+})
+const DeityBody = z.object({
+  name:    z.string().trim().min(1).max(100),
+  bonusId: z.string().uuid().nullable().default(null),
+})
+const BonusRefBody = z.object({ bonusId: z.string().uuid().nullable() })
+const PantheonIdParams = z.object({ id: z.string().uuid() })
+
+// bonus_id inexistente estoura a FK (23503) — vira 400 em vez de 500.
+const BAD_BONUS = { error: 'Bônus não encontrado', code: 'VALIDATION' }
+
 // Categorias que notificam todos os membros a cada post — substituição total.
 const NotifyCategoriesBody = z.object({
   categoryIds: z.array(z.string().uuid()).max(500),
@@ -277,6 +293,11 @@ export async function trikPlayerPlugin(app: FastifyInstance) {
 
     const aliases = await TrikModel.searchMentionableAliases(communityId, termo)
     return reply.send({ aliases })
+  })
+
+  // Opções dos dropdowns de panteão/vínculo divino do modal de /registro.
+  app.get('/pantheons', async (_request, reply) => {
+    return reply.send({ pantheons: await TrikModel.listPantheons() })
   })
 
   app.post('/registro', {
@@ -542,6 +563,85 @@ export async function trikAdminPlugin(app: FastifyInstance) {
   }, async (request, reply) => {
     const { id } = request.params as z.infer<typeof BonusIdParams>
     if (!await TrikModel.deleteBonus(id)) return reply.code(404).send({ error: 'Item não encontrado', code: 'NOT_FOUND' })
+    return reply.code(204).send()
+  })
+
+  // ── Catálogo de panteões e divindades (trik_pantheons/trik_deities) ────────
+
+  app.get('/pantheons', async (_request, reply) => {
+    return reply.send({ pantheons: await TrikModel.listPantheons() })
+  })
+
+  app.post('/pantheons', {
+    preHandler: validate({ body: PantheonBody }),
+  }, async (request, reply) => {
+    const { category, name, bonusId } = request.body as z.infer<typeof PantheonBody>
+    try {
+      return reply.code(201).send({ pantheon: await TrikModel.createPantheon(category, name, bonusId) })
+    } catch (err: any) {
+      if (err?.code === '23505') return reply.code(409).send({ error: 'Esse panteão já existe', code: 'DUPLICATE_NAME' })
+      if (err?.code === '23503') return reply.code(400).send(BAD_BONUS)
+      throw err
+    }
+  })
+
+  app.patch('/pantheons/:id', {
+    preHandler: validate({ params: PantheonIdParams, body: BonusRefBody }),
+  }, async (request, reply) => {
+    const { id } = request.params as z.infer<typeof PantheonIdParams>
+    const { bonusId } = request.body as z.infer<typeof BonusRefBody>
+    try {
+      if (!await TrikModel.setPantheonBonus(id, bonusId)) return reply.code(404).send({ error: 'Panteão não encontrado', code: 'NOT_FOUND' })
+    } catch (err: any) {
+      if (err?.code === '23503') return reply.code(400).send(BAD_BONUS)
+      throw err
+    }
+    return reply.code(204).send()
+  })
+
+  app.delete('/pantheons/:id', {
+    preHandler: validate({ params: PantheonIdParams }),
+  }, async (request, reply) => {
+    const { id } = request.params as z.infer<typeof PantheonIdParams>
+    if (!await TrikModel.deletePantheon(id)) return reply.code(404).send({ error: 'Panteão não encontrado', code: 'NOT_FOUND' })
+    return reply.code(204).send()
+  })
+
+  app.post('/pantheons/:id/deities', {
+    preHandler: validate({ params: PantheonIdParams, body: DeityBody }),
+  }, async (request, reply) => {
+    const { id } = request.params as z.infer<typeof PantheonIdParams>
+    const { name, bonusId } = request.body as z.infer<typeof DeityBody>
+    try {
+      const deity = await TrikModel.createDeity(id, name, bonusId)
+      if (!deity) return reply.code(404).send({ error: 'Panteão não encontrado', code: 'NOT_FOUND' })
+      return reply.code(201).send({ deity })
+    } catch (err: any) {
+      if (err?.code === '23505') return reply.code(409).send({ error: 'Essa divindade já existe nesse panteão', code: 'DUPLICATE_NAME' })
+      if (err?.code === '23503') return reply.code(400).send(BAD_BONUS)
+      throw err
+    }
+  })
+
+  app.patch('/deities/:id', {
+    preHandler: validate({ params: PantheonIdParams, body: BonusRefBody }),
+  }, async (request, reply) => {
+    const { id } = request.params as z.infer<typeof PantheonIdParams>
+    const { bonusId } = request.body as z.infer<typeof BonusRefBody>
+    try {
+      if (!await TrikModel.setDeityBonus(id, bonusId)) return reply.code(404).send({ error: 'Divindade não encontrada', code: 'NOT_FOUND' })
+    } catch (err: any) {
+      if (err?.code === '23503') return reply.code(400).send(BAD_BONUS)
+      throw err
+    }
+    return reply.code(204).send()
+  })
+
+  app.delete('/deities/:id', {
+    preHandler: validate({ params: PantheonIdParams }),
+  }, async (request, reply) => {
+    const { id } = request.params as z.infer<typeof PantheonIdParams>
+    if (!await TrikModel.deleteDeity(id)) return reply.code(404).send({ error: 'Divindade não encontrada', code: 'NOT_FOUND' })
     return reply.code(204).send()
   })
 
