@@ -116,18 +116,23 @@
 							</div>
 						{/if}
 						<span class="rt-meta-author">{t.author_username}</span>
-						{#if showDate}
-							<span class="rt-meta-dot">·</span>
-							<span class="rt-meta-date">{timeAgo(t.last_post_at ?? t.created_at)}</span>
-						{/if}
-						{#if showReplies}
-							<span class="rt-meta-dot">·</span>
-							<span class="rt-meta-replies">
-								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-									<path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
-								</svg>
-								{replyCount(t.post_count)}
-							</span>
+						<!-- Data + respostas : no celular descem para uma segunda linha -->
+						{#if showDate || showReplies}
+						<span class="rt-card-info">
+							{#if showDate}
+								<span class="rt-meta-dot rt-info-lead">·</span>
+								<span class="rt-meta-date">{timeAgo(t.last_post_at ?? t.created_at)}</span>
+							{/if}
+							{#if showReplies}
+								<span class="rt-meta-dot {showDate ? '' : 'rt-info-lead'}">·</span>
+								<span class="rt-meta-replies">
+									<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+										<path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+									</svg>
+									{replyCount(t.post_count)}
+								</span>
+							{/if}
+						</span>
 						{/if}
 					</div>
 				</a>
@@ -372,10 +377,17 @@
 		gap: .35rem;
 		margin-top: .25rem;
 	}
+	.rt-card { min-width: 0; }
+	.rt-card-meta .rt-meta-author { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.rt-card-meta .rt-avatar { flex-shrink: 0; }
+	.rt-card-info { display: flex; align-items: center; gap: .35rem; white-space: nowrap; }
 	.rt-meta-author { font-size: 11px; color: var(--ntm, #6b7280); }
 
 	/* ── Responsive ─────────────────────────────────────────────────────────── */
 	@media (max-width: 639px) {
 		.rt-cards { grid-template-columns: 1fr 1fr; }
+		.rt-card-meta { flex-wrap: wrap; row-gap: .15rem; }
+		.rt-card-info { flex-basis: 100%; }
+		.rt-info-lead { display: none; }
 	}
 </style>

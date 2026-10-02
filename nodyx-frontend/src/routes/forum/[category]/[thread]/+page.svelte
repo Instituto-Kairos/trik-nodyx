@@ -666,8 +666,9 @@
 				{/if}
 
 				<!-- Méta + actions -->
-				<div class="flex items-center justify-between mb-3 gap-2">
-					<div class="flex items-center gap-2">
+				<!-- Mobile : ações em cima, data/editado/número embaixo. sm+ : uma linha só -->
+				<div class="flex flex-col-reverse gap-1 mb-3 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
+					<div class="flex flex-wrap items-center gap-2">
 						<span class="text-xs text-gray-500">{formatDate(post.created_at)}</span>
 						{#if post.is_edited}
 							<span class="text-xs text-gray-600 italic">{tFn('forum.edited')}</span>
@@ -677,15 +678,15 @@
 						<a href="#post-{post.id}" class="text-xs text-gray-700 hover:text-indigo-400 ml-2">#{pageOffset + index + 1}</a>
 					</div>
 
-					<div class="flex items-center gap-1">
+					<div class="flex flex-wrap items-center gap-1 pb-2 border-b border-gray-800/60 sm:pb-0 sm:border-0">
 						<!-- Continuar a cena a partir desta mensagem -->
 						{#if user && !thread.is_locked}
 							<button type="button"
 								onclick={() => startReply(post, pageOffset + index)}
-								class="px-2 py-1 text-xs text-gray-500 hover:text-indigo-400 hover:bg-indigo-900/20 transition-colors"
+								class="px-2.5 py-1.5 sm:px-2 sm:py-1 bg-gray-800/40 sm:bg-transparent text-xs text-gray-400 sm:text-gray-500 hover:text-indigo-400 hover:bg-indigo-900/20 transition-colors"
 								title={isScene ? tFn('forum.scene_reply_title') : tFn('forum.thread_reply_title')}
 								aria-label={isScene ? tFn('forum.scene_reply_title') : tFn('forum.thread_reply_title')}>
-								↩ <span class="hidden sm:inline">{tFn('forum.scene_reply')}</span>
+								↩ {tFn('forum.scene_reply')}
 							</button>
 						{/if}
 
@@ -697,10 +698,10 @@
 						{/if}
 						<button type="button"
 							onclick={() => copyPostLink(post.id)}
-							class="px-2 py-1 text-xs text-gray-500 hover:text-indigo-400 hover:bg-indigo-900/20 transition-colors"
+							class="px-2.5 py-1.5 sm:px-2 sm:py-1 bg-gray-800/40 sm:bg-transparent text-xs text-gray-400 sm:text-gray-500 hover:text-indigo-400 hover:bg-indigo-900/20 transition-colors"
 							title={tFn('forum.copy_post_link_title')}
 							aria-label={tFn('forum.copy_post_link_title')}>
-							🔗 <span class="hidden sm:inline">{tFn('forum.copy_post_link')}</span>
+							🔗 <span>{tFn('forum.copy_post_link')}</span>
 						</button>
 
 					<!-- Boutons Edit / Delete (auteur ou mod) -->
@@ -708,7 +709,7 @@
 							{#if canEdit(post) && editingPostId !== post.id}
 								<button type="button"
 									onclick={() => { editingPostId = post.id; deletingPostId = null }}
-									class="px-2 py-1 text-xs text-gray-500 hover:text-indigo-400 hover:bg-indigo-900/20 transition-colors"
+									class="px-2.5 py-1.5 sm:px-2 sm:py-1 bg-gray-800/40 sm:bg-transparent text-xs text-gray-400 sm:text-gray-500 hover:text-indigo-400 hover:bg-indigo-900/20 transition-colors"
 									title={tFn('forum.edit_message_title')}>
 									✏️ {tFn('common.edit')}
 								</button>
@@ -717,7 +718,7 @@
 								{#if deletingPostId !== post.id}
 									<button type="button"
 										onclick={() => { deletingPostId = post.id; editingPostId = null }}
-										class="px-2 py-1 text-xs text-gray-500 hover:text-red-400 hover:bg-red-900/20 transition-colors"
+										class="px-2.5 py-1.5 sm:px-2 sm:py-1 bg-gray-800/40 sm:bg-transparent text-xs text-gray-400 sm:text-gray-500 hover:text-red-400 hover:bg-red-900/20 transition-colors"
 										title={tFn('forum.delete_message_title')}>
 										🗑 {tFn('common.delete')}
 									</button>
