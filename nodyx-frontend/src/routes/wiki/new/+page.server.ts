@@ -22,10 +22,15 @@ export const actions: Actions = {
 
 		if (!title) return fail(400, { error: 'Le titre est obligatoire.' })
 
+		// JSON montado pelo WikiChaptersEditor; `[]` = sem capítulos.
+		let chapters: { title: string; content: string }[] = []
+		try { chapters = JSON.parse((formData.get('chapters') as string) || '[]') } catch { /* mantém [] */ }
+		if (chapters.some((c) => !c.title?.trim())) return fail(400, { error: 'Todo capítulo precisa de um título.' })
+
 		const res = await apiFetch(fetch, '/wiki', {
 			method:  'POST',
 			headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-			body:    JSON.stringify({ title, content, excerpt, category, is_public }),
+			body:    JSON.stringify({ title, content, excerpt, category, is_public, chapters }),
 		})
 
 		if (!res.ok) {

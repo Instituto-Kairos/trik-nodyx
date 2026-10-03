@@ -31,12 +31,20 @@
 		width: number | null
 		height: number | null
 		tags: string[]
+		uploader_id: string | null
 		uploader_username: string | null
 		created_at: string
 	}
 
 	const albums = $derived(data.albums as Album[])
 	const images = $derived(data.images as Imagem[])
+
+	// Espelha podeEditar() do backend: quem subiu, ou admin/owner. Só decide o
+	// que aparece na tela; a autorização de verdade continua no servidor.
+	const ehAdmin = $derived(data.user?.role === 'owner' || data.user?.role === 'admin')
+	function podeEditar(img: Imagem): boolean {
+		return !!data.user && (ehAdmin || (!!img.uploader_id && img.uploader_id === data.user.id))
+	}
 
 	// O backend serve os arquivos estáticos em /uploads, fora do prefixo da API,
 	// e tanto o Caddy (`handle /uploads/*`) quanto o proxy do Vite em dev mandam
@@ -484,12 +492,14 @@
 					<a href={urlCheia(aberta)} target="_blank" rel="noopener" class="gal-btn-ghost">
 						{tFn('galeria.open_full')}
 					</a>
-					<button type="button" class="gal-btn-ghost" onclick={abrirEdicao}>
-						{tFn('common.edit')}
-					</button>
-					<button type="button" class="gal-btn-danger" onclick={() => apagarImagem(aberta!.id)}>
-						{tFn('common.delete')}
-					</button>
+					{#if podeEditar(aberta)}
+						<button type="button" class="gal-btn-ghost" onclick={abrirEdicao}>
+							{tFn('common.edit')}
+						</button>
+						<button type="button" class="gal-btn-danger" onclick={() => apagarImagem(aberta!.id)}>
+							{tFn('common.delete')}
+						</button>
+					{/if}
 				</div>
 			{/if}
 			</div>

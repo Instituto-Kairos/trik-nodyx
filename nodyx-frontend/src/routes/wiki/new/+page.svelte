@@ -2,6 +2,7 @@
 	import { enhance } from '$app/forms'
 	import type { ActionData } from './$types'
 	import NodyxEditor from '$lib/components/editor/NodyxEditor.svelte'
+	import WikiChaptersEditor from '$lib/components/wiki/WikiChaptersEditor.svelte'
 	import { t } from '$lib/i18n'
 
 	const tFn = $derived($t)
@@ -89,6 +90,9 @@
 			</span>
 			<NodyxEditor name="content" placeholder={tFn('wiki_new.content_ph')} />
 		</div>
+
+		<!-- Capítulos -->
+		<WikiChaptersEditor />
 
 		<!-- Submit -->
 		<div class="flex items-center justify-end gap-3 pt-2">

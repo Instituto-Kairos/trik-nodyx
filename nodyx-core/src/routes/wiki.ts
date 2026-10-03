@@ -54,12 +54,34 @@ async function getUserRole(userId: string): Promise<string> {
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
 
+// Capítulos: a lista é sempre enviada inteira e regravada (ordem = índice).
+// Mandar `chapters: []` remove todos; omitir o campo deixa como está.
+const Chapters = z.array(z.object({
+  title:   z.string().trim().min(1).max(200),
+  content: z.string(),
+})).max(200)
+
+async function salvarCapitulos(
+  client: { query: typeof db.query },
+  pageId: string,
+  chapters: z.infer<typeof Chapters>,
+): Promise<void> {
+  await client.query(`DELETE FROM wiki_chapters WHERE page_id = $1`, [pageId])
+  for (const [pos, ch] of chapters.entries()) {
+    await client.query(
+      `INSERT INTO wiki_chapters (page_id, position, title, content) VALUES ($1, $2, $3, $4)`,
+      [pageId, pos, ch.title, ch.content],
+    )
+  }
+}
+
 const CreateBody = z.object({
   title:     z.string().min(1).max(200),
   content:   z.string(),
   excerpt:   z.string().max(500).optional(),
   category:  z.string().max(100).optional(),
   is_public: z.boolean().optional(),
+  chapters:  Chapters.optional(),
 })
 
 const UpdateBody = z.object({
@@ -68,6 +90,7 @@ const UpdateBody = z.object({
   excerpt:   z.string().max(500).optional(),
   category:  z.string().max(100).optional(),
   is_public: z.boolean().optional(),
+  chapters:  Chapters.optional(),
 })
 
 // ── Routes ────────────────────────────────────────────────────────────────────
@@ -125,10 +148,16 @@ export default async function wikiRoutes(app: FastifyInstance) {
 
     if (!rows.length) return reply.code(404).send({ error: 'Page introuvable.' })
 
+    const { rows: chapters } = await db.query(
+      `SELECT id, position, title, content FROM wiki_chapters
+       WHERE page_id = $1 ORDER BY position`,
+      [rows[0].id]
+    )
+
     // Async view counter — never blocks the response
     db.query(`UPDATE wiki_pages SET views = views + 1 WHERE slug = $1`, [slug]).catch(() => {})
 
-    return reply.send(rows[0])
+    return reply.send({ ...rows[0], chapters })
   })
 
   // POST /api/v1/wiki — create a new page (admin / moderator only)
@@ -145,22 +174,35 @@ export default async function wikiRoutes(app: FastifyInstance) {
 
     const slug = generateWikiSlug(body.title)
 
-    const { rows } = await db.query(
-      `INSERT INTO wiki_pages (slug, title, content, excerpt, category, is_public, author_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING id, slug`,
-      [
-        slug,
-        body.title,
-        body.content,
-        body.excerpt  ?? null,
-        body.category ?? null,
-        body.is_public ?? false,
-        user.userId,
-      ]
-    )
+    const client = await db.connect()
+    let created: { id: string; slug: string }
+    try {
+      await client.query('BEGIN')
+      const { rows } = await client.query(
+        `INSERT INTO wiki_pages (slug, title, content, excerpt, category, is_public, author_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, slug`,
+        [
+          slug,
+          body.title,
+          body.content,
+          body.excerpt  ?? null,
+          body.category ?? null,
+          body.is_public ?? false,
+          user.userId,
+        ]
+      )
+      created = rows[0]
+      if (body.chapters?.length) await salvarCapitulos(client, created.id, body.chapters)
+      await client.query('COMMIT')
+    } catch (err) {
+      await client.query('ROLLBACK')
+      throw err
+    } finally {
+      client.release()
+    }
 
-    return reply.code(201).send(rows[0])
+    return reply.code(201).send(created)
   })
 
   // PATCH /api/v1/wiki/:slug — update a page (author or admin/mod)
@@ -195,10 +237,22 @@ export default async function wikiRoutes(app: FastifyInstance) {
 
     values.push(existing[0].id)
 
-    const { rows } = await db.query(
-      `UPDATE wiki_pages SET ${setParts.join(', ')} WHERE id = $${i} RETURNING slug`,
-      values
-    )
+    const client = await db.connect()
+    let rows: { slug: string }[]
+    try {
+      await client.query('BEGIN')
+      ;({ rows } = await client.query(
+        `UPDATE wiki_pages SET ${setParts.join(', ')} WHERE id = $${i} RETURNING slug`,
+        values
+      ))
+      if (body.chapters !== undefined) await salvarCapitulos(client, existing[0].id, body.chapters)
+      await client.query('COMMIT')
+    } catch (err) {
+      await client.query('ROLLBACK')
+      throw err
+    } finally {
+      client.release()
+    }
 
     return reply.send(rows[0])
   })

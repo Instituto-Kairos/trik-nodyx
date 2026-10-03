@@ -15,6 +15,15 @@
 		data.user?.username === pg?.author_username
 	)
 
+	// Capítulos: ?cap=N (1-based) abre o capítulo N; sem o parâmetro mostra a
+	// introdução e o sumário. Fora do intervalo cai no sumário.
+	const capitulos = $derived((pg?.chapters ?? []) as { id: string; title: string; content: string }[])
+	const capAtual  = $derived.by(() => {
+		const n = Number(page.url.searchParams.get('cap'))
+		return Number.isInteger(n) && n >= 1 && n <= capitulos.length ? n : 0
+	})
+	const capitulo  = $derived(capAtual ? capitulos[capAtual - 1] : null)
+
 	function formatDate(iso: string) {
 		return new Date(iso).toLocaleDateString('fr-FR', {
 			day: 'numeric', month: 'long', year: 'numeric',
@@ -110,10 +119,71 @@
 		{/if}
 	</div>
 
-	<!-- Content — rendered HTML from NodyxEditor -->
-	<div class="nodyx-prose">
-		{@html pg?.content ?? ''}
-	</div>
+	{#if capitulo}
+		<!-- Capítulo aberto -->
+		<a href="?" data-sveltekit-noscroll={false}
+		   class="inline-flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-300 mb-4">
+			☰ {tFn('wiki_chapters.toc')}
+		</a>
+		<p class="text-xs font-semibold text-violet-400 uppercase tracking-wider mb-1">
+			{tFn('wiki_chapters.number', { n: capAtual })} / {capitulos.length}
+		</p>
+		<h2 class="text-xl font-bold text-white mb-6">{capitulo.title}</h2>
+		<div class="nodyx-prose">
+			{@html capitulo.content}
+		</div>
+
+		<nav class="mt-10 grid grid-cols-2 gap-3">
+			{#if capAtual > 1}
+				<a href="?cap={capAtual - 1}"
+				   class="rounded-xl border border-gray-800 hover:border-violet-500/50 px-4 py-3 text-left">
+					<span class="block text-[11px] text-gray-500">← {tFn('wiki_chapters.prev')}</span>
+					<span class="block text-sm text-gray-200 truncate">{capitulos[capAtual - 2].title}</span>
+				</a>
+			{:else}
+				<a href="?" class="rounded-xl border border-gray-800 hover:border-violet-500/50 px-4 py-3 text-left">
+					<span class="block text-[11px] text-gray-500">← {tFn('wiki_chapters.toc')}</span>
+					<span class="block text-sm text-gray-200 truncate">{pg.title}</span>
+				</a>
+			{/if}
+			{#if capAtual < capitulos.length}
+				<a href="?cap={capAtual + 1}"
+				   class="col-start-2 rounded-xl border border-gray-800 hover:border-violet-500/50 px-4 py-3 text-right">
+					<span class="block text-[11px] text-gray-500">{tFn('wiki_chapters.next')} →</span>
+					<span class="block text-sm text-gray-200 truncate">{capitulos[capAtual].title}</span>
+				</a>
+			{/if}
+		</nav>
+	{:else}
+		<!-- Content — rendered HTML from NodyxEditor (introdução quando há capítulos) -->
+		<div class="nodyx-prose">
+			{@html pg?.content ?? ''}
+		</div>
+
+		{#if capitulos.length}
+			<!-- Sumário -->
+			<section class="mt-8 rounded-xl border border-gray-800 bg-gray-900/40 p-5">
+				<h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-3">
+					{tFn('wiki_chapters.toc')}
+				</h2>
+				<ol class="space-y-1">
+					{#each capitulos as cap, i (cap.id)}
+						<li>
+							<a href="?cap={i + 1}"
+							   class="flex items-baseline gap-3 rounded-lg px-2 py-1.5 hover:bg-gray-800/60 text-gray-300 hover:text-white">
+								<span class="text-xs text-violet-400 tabular-nums w-6 shrink-0">{i + 1}.</span>
+								<span class="text-sm">{cap.title}</span>
+							</a>
+						</li>
+					{/each}
+				</ol>
+				<a href="?cap=1"
+				   class="mt-4 inline-block px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-sm font-semibold">
+					{tFn('wiki_chapters.start')} →
+				</a>
+			</section>
+		{/if}
+	{/if}
 
 	<!-- Back link -->
 	<div class="mt-12 pt-6 border-t border-gray-800">
