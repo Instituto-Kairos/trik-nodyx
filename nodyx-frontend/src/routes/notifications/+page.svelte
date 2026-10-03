@@ -48,6 +48,9 @@
 		category_post: '📢',
 		canvas_access_request: '🎨',
 		canvas_access_granted: '🎨',
+		status_reply:    '💬',
+		status_reaction: '❤️',
+		status_reshare:  '🔁',
 	};
 
 	const TYPE_LABEL = $derived<Record<string, string>>({
@@ -60,6 +63,9 @@
 		category_post: tFn('notifications.category_post_label'),
 		canvas_access_request: tFn('notifications.canvas_access_request_label'),
 		canvas_access_granted: tFn('notifications.canvas_access_granted_label'),
+		status_reply:    tFn('notifications.status_reply_label'),
+		status_reaction: tFn('notifications.status_reaction_label'),
+		status_reshare:  tFn('notifications.status_reshare_label'),
 	});
 
 	function formatDate(iso: string) {
@@ -82,6 +88,8 @@
 	// `post_index` (quantos posts vêm antes, vindo do servidor) resolve a
 	// página. Os slugs evitam o 301 que a página do tópico faz ao receber UUID.
 	function notifLink(n: any): string {
+		// Feed: aponta para o status do destinatário (a página mostra as respostas).
+		if (n.status_post_id) return `/status/${n.status_post_id}`;
 		if (!n.category_id || !n.thread_id) return '#';
 
 		const cat    = n.category_slug ?? n.category_id;
@@ -177,7 +185,7 @@
 
 					<!-- Actions -->
 					<div class="flex items-center gap-2 shrink-0">
-						{#if notif.category_id && notif.thread_id}
+						{#if notif.status_post_id || (notif.category_id && notif.thread_id)}
 							<button
 								onclick={() => markReadAndNavigate(notif)}
 								class="text-xs text-indigo-400 hover:text-indigo-300">

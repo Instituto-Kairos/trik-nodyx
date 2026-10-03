@@ -2,7 +2,9 @@ import { db } from '../config/database'
 
 // category_post: módulo RPG (trik), post numa categoria marcada em
 // /admin/trik/notificacoes — ver TrikModel.notifyCategoryPost.
+// status_*: feed (routes/social.ts) — ver notifyStatus abaixo.
 export type NotificationType = 'thread_reply' | 'post_reply' | 'scene_reply' | 'post_thanks' | 'mention' | 'wave' | 'category_post'
+  | 'status_reply' | 'status_reaction' | 'status_reshare'
 
 export interface Notification {
   id:         string
@@ -11,6 +13,7 @@ export interface Notification {
   actor_id:   string | null
   thread_id:  string | null
   post_id:    string | null
+  status_post_id: string | null
   is_read:    boolean
   created_at: Date
 }
@@ -38,14 +41,49 @@ export async function create(data: {
   actor_id?: string | null
   thread_id?: string | null
   post_id?:   string | null
+  status_post_id?: string | null
 }): Promise<Notification> {
   const { rows } = await db.query<Notification>(
-    `INSERT INTO notifications (user_id, type, actor_id, thread_id, post_id)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO notifications (user_id, type, actor_id, thread_id, post_id, status_post_id)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING *`,
-    [data.user_id, data.type, data.actor_id ?? null, data.thread_id ?? null, data.post_id ?? null]
+    [data.user_id, data.type, data.actor_id ?? null, data.thread_id ?? null, data.post_id ?? null,
+     data.status_post_id ?? null]
   )
   return rows[0]
+}
+
+/**
+ * Notifica o autor de um status do feed que alguém interagiu com ele.
+ * Devolve o id do destinatário quando criou a notificação (para o emit do
+ * contador), ou null quando não havia o que avisar.
+ *
+ * Reação e repost são toggles: tirar e pôr de novo geraria uma notificação a
+ * cada clique. Para esses dois, uma por (ator, post, tipo) basta — se já
+ * existe, não cria outra. Resposta não deduplica: cada uma é conteúdo novo.
+ */
+export async function notifyStatus(opts: {
+  type:     'status_reply' | 'status_reaction' | 'status_reshare'
+  actorId:  string
+  statusId: string
+}): Promise<string | null> {
+  const { rows } = await db.query<{ author_id: string }>(
+    `SELECT author_id FROM status_posts WHERE id = $1`, [opts.statusId]
+  )
+  const ownerId = rows[0]?.author_id
+  if (!ownerId || ownerId === opts.actorId) return null
+
+  if (opts.type !== 'status_reply') {
+    const { rowCount } = await db.query(
+      `SELECT 1 FROM notifications
+       WHERE user_id = $1 AND type = $2 AND actor_id = $3 AND status_post_id = $4 LIMIT 1`,
+      [ownerId, opts.type, opts.actorId, opts.statusId]
+    )
+    if (rowCount) return null
+  }
+
+  await create({ user_id: ownerId, type: opts.type, actor_id: opts.actorId, status_post_id: opts.statusId })
+  return ownerId
 }
 
 export async function listForUser(

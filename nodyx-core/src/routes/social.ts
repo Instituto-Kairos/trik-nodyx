@@ -19,6 +19,19 @@ function firstLink(html: string): string | null {
 }
 import { db } from '../config/database'
 import { io } from '../socket/io'
+import * as NotificationModel from '../models/notification'
+
+// Notificação do feed para o autor do status. Nunca derruba a ação do usuário:
+// curtir/responder já gravou, e um erro aqui só significa um aviso a menos.
+async function avisarAutor(type: 'status_reply' | 'status_reaction' | 'status_reshare', actorId: string, statusId: string) {
+  try {
+    const dest = await NotificationModel.notifyStatus({ type, actorId, statusId })
+    if (dest && io) {
+      const count = await NotificationModel.getUnreadCount(dest)
+      io.to(`user:${dest}`).emit('notification:new', { unreadCount: count })
+    }
+  } catch { /* best-effort */ }
+}
 
 const UPLOADS_DIR  = path.join(process.cwd(), 'uploads')
 const ALLOWED_MIME = [
@@ -211,6 +224,7 @@ export default async function socialRoutes(app: FastifyInstance) {
         'UPDATE status_posts SET replies_count = replies_count + 1 WHERE id = $1',
         [reply_to_id]
       )
+      await avisarAutor('status_reply', userId, reply_to_id)
     }
 
     // Réputation : poster un statut = +2 (participation au fil d'actu)
@@ -321,6 +335,7 @@ export default async function socialRoutes(app: FastifyInstance) {
     )
 
     io?.to('presence').emit('feed:count', { id, likes_count: result.rows[0]?.likes_count })
+    await avisarAutor('status_reaction', userId, id)
     return reply.send({ ok: true, likes_count: result.rows[0]?.likes_count })
   })
 
@@ -371,6 +386,7 @@ export default async function socialRoutes(app: FastifyInstance) {
       )
       likes_count = r.rows[0]?.likes_count
       io?.to('presence').emit('feed:count', { id, likes_count })
+      await avisarAutor('status_reaction', userId, id)
     }
     return reply.send({ ok: true, likes_count })
   })
@@ -409,6 +425,7 @@ export default async function socialRoutes(app: FastifyInstance) {
       [userId, targetId]
     )
     await emitReshareCount()
+    await avisarAutor('status_reshare', userId, targetId)
     return reply.send({ ok: true, reshared: true })
   })
 
