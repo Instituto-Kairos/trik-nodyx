@@ -6,7 +6,6 @@
 	import { t } from '$lib/i18n'
 	import { TextSelection } from '@tiptap/pm/state'
 	import { searchMentionTargets, mentionInsertText, type MentionTarget } from '$lib/mentionTargets'
-	import { normalizarColagem, textoParaSlice } from '$lib/editorPaste'
 
 	let {
 		name       = 'content',
@@ -45,8 +44,6 @@
 	let editorEl    = $state<HTMLElement | undefined>(undefined)
 	let wrapperEl   = $state<HTMLElement | undefined>(undefined)
 	let editor: any = $state(null)
-	// A colagem em curso veio do próprio editor? (ver editorProps.transformPasted)
-	let colagemInterna = false
 
 	// ── Synced HTML (for the hidden form input) ───────────────────────────────
 	let html        = $state(untrack(() => initialContent))
@@ -702,28 +699,9 @@
 				NodyxTerm, TwitchLive,
 			],
 			content: initialContent,
+			// handleKeyDown roda ANTES do TipTap: é o único lugar de onde se pode
+			// tomar as setas e o Enter do editor enquanto o dropdown está aberto.
 			editorProps: {
-				// Colagem de fora: uma linha por parágrafo e recuo manual mantido,
-				// ver $lib/editorPaste.ts. Copiar/colar DENTRO do editor traz
-				// `data-pm-slice` no HTML e fica intocado, senão um <br> feito de
-				// propósito (Shift+Enter) viraria parágrafo.
-				transformPastedHTML(html) {
-					colagemInterna = html.includes('data-pm-slice')
-					return html
-				},
-				transformPastedText(text) {
-					colagemInterna = false
-					return text
-				},
-				clipboardTextParser(text, $context) {
-					return textoParaSlice(text, $context.parent.type.schema, $context.marks())
-				},
-				transformPasted(slice, view) {
-					if (colagemInterna || view.state.selection.$from.parent.type.spec.code) return slice
-					return normalizarColagem(slice, view.state.schema)
-				},
-				// handleKeyDown roda ANTES do TipTap: é o único lugar de onde se pode
-				// tomar as setas e o Enter do editor enquanto o dropdown está aberto.
 				handleKeyDown(_view, event) {
 					if (!mentionOpen || mentionItems.length === 0) return false
 					if (event.key === 'ArrowDown') {
