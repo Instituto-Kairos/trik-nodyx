@@ -4556,6 +4556,8 @@
   "forum.thread_trail_omitted": "{n} mensagens anteriores da conversa",
   "forum.thread_replied_in": "Respondida em",
   "forum.moderate": "Moderar",
+  "forum.read_more": "Leia mais",
+  "forum.read_less": "Mostrar menos",
   "chat.cmd_help_roll": "rolar dados",
   "chat.cmd_help_flip": "jogar uma moeda",
   "chat.cmd_help_8ball": "fazer uma pergunta",

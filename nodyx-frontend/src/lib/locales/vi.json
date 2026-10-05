@@ -312,6 +312,8 @@
   "forum.display": "Hiển thị",
   "forum.per_page": "mỗi trang",
   "forum.new_topic_btn": "Chủ đề mới",
+  "forum.read_more": "Đọc tiếp",
+  "forum.read_less": "Thu gọn",
   "dm.title": "Tin nhắn riêng",
   "dm.n_conversations": "{{n}} cuộc trò chuyện",
   "dm.n_conversations_plural": "{{n}} cuộc trò chuyện",

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import ReactionTooltip from './ReactionTooltip.svelte';
+	import { sceneMarkNote } from '$lib/trik/sceneMarks';
 
 	interface ReactionUser {
 		username:   string;
@@ -23,6 +24,7 @@
 		isOwnPost     = false,
 		isLoggedIn    = false,
 		token         = null,
+		trikRejection = null,
 	}: {
 		postId:       string;
 		reactions?:   ReactionSummary[];
@@ -31,6 +33,7 @@
 		isOwnPost?:   boolean;
 		isLoggedIn?:  boolean;
 		token?:       string | null;
+		trikRejection?: string | null;  // motivo do ❌ do bot Trik (cena recusada)
 	} = $props();
 
 	const EMOJIS = ['👍', '❤️', '🔥', '😂', '😮', '😢'];
@@ -50,12 +53,37 @@
 	}
 
 	// Reações que já existem mas não fazem parte da barra fixa de 6 emojis
-	// (ex.: ⚔️ do bot Trik marcando "essa cena contou xp") — sem isso elas
+	// (ex.: ✅/❌ do bot Trik marcando se a cena contou xp) — sem isso elas
 	// ficam gravadas no banco mas nunca aparecem na tela. Mesma interação de
 	// toggleReaction, que já é genérica (não presa aos 6 emojis padrão).
 	const extraReactions = $derived(
 		localReactions.filter(r => !EMOJIS.includes(r.emoji) && r.count > 0)
 	);
+
+	// Marca do bot Trik (✅/❌) aberta por clique — clicar numa marca mostra a
+	// explicação em vez de reagir junto; funciona no celular, onde não há hover.
+	let pinnedEmoji = $state<string | null>(null);
+	let root: HTMLDivElement;
+
+	// Fecha também o balão de hover: no celular o toque dispara mouseenter mas
+	// nunca mouseleave, e o balão ficaria aberto depois do segundo toque.
+	function closeAll() {
+		if (hoverTimer) clearTimeout(hoverTimer);
+		hoveredEmoji = null;
+		pinnedEmoji = null;
+	}
+
+	function togglePinned(emoji: string) {
+		const wasOpen = pinnedEmoji === emoji;
+		closeAll();
+		if (!wasOpen) pinnedEmoji = emoji;
+	}
+
+	// Clique fora DESTE bloco de reações fecha o balão. Sem stopPropagation no
+	// botão: assim abrir a marca de um post fecha a que estava aberta em outro.
+	function onWindowClick(e: MouseEvent) {
+		if (pinnedEmoji && !root.contains(e.target as Node)) closeAll();
+	}
 
 	function openTooltip(emoji: string) {
 		if (hoverTimer) clearTimeout(hoverTimer);
@@ -125,7 +153,9 @@
 	}
 </script>
 
-<div class="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-gray-800/60">
+<svelte:window onclick={onWindowClick} />
+
+<div bind:this={root} class="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-gray-800/60">
 	<!-- Emoji reactions -->
 	{#each EMOJIS as emoji}
 		{@const r = reactionFor(emoji)}
@@ -168,13 +198,24 @@
 		</div>
 	{/each}
 
-	<!-- Reações fora da barra fixa (ex.: ⚔️ do bot Trik) -->
+	<!-- Reações fora da barra fixa (ex.: ✅/❌ do bot Trik) -->
 	{#each extraReactions as r (r.emoji)}
+		{@const note = sceneMarkNote(r.emoji, trikRejection)}
 		<div class="relative inline-block"
 		     onmouseenter={() => openTooltip(r.emoji)}
 		     onmouseleave={closeTooltip}
 		     role="presentation">
-			{#if isLoggedIn}
+			{#if note}
+				<button
+					type="button"
+					onclick={() => togglePinned(r.emoji)}
+					aria-expanded={pinnedEmoji === r.emoji}
+					class="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium border transition-colors border-gray-700 bg-gray-800/40 text-gray-400 hover:border-gray-600 hover:text-gray-300 cursor-help"
+				>
+					<span>{r.emoji}</span>
+					<span>{r.count}</span>
+				</button>
+			{:else if isLoggedIn}
 				<button
 					type="button"
 					onclick={() => toggleReaction(r.emoji)}
@@ -195,11 +236,12 @@
 					<span>{r.count}</span>
 				</span>
 			{/if}
-			{#if hoveredEmoji === r.emoji && r.users && r.users.length > 0}
+			{#if (hoveredEmoji === r.emoji || pinnedEmoji === r.emoji) && r.users && (r.users.length > 0 || note)}
 				<ReactionTooltip
 					users={r.users}
 					total={r.count}
 					emoji={r.emoji}
+					{note}
 					anchor="top"
 				/>
 			{/if}

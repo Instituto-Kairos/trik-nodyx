@@ -27,9 +27,11 @@
 		emoji:  string
 		// Position d'ancrage : par défaut au-dessus du déclencheur, centré.
 		anchor?: 'top' | 'bottom'
+		// Explicação extra sob o cabeçalho (ex.: por que o bot Trik marcou ❌).
+		note?: string | null
 	}
 
-	let { users, total, emoji, anchor = 'top' }: Props = $props()
+	let { users, total, emoji, anchor = 'top', note = null }: Props = $props()
 
 	// Timestamp relatif "humain" — pas de lib externe, ~10 lignes.
 	function relativeTime(iso: string): string {
@@ -65,6 +67,9 @@
 		<span class="rt-tooltip__emoji">{emoji}</span>
 		<span class="rt-tooltip__count">{total}</span>
 	</div>
+	{#if note}
+		<p class="rt-tooltip__note">{note}</p>
+	{/if}
 	<ul class="rt-tooltip__list">
 		{#each users as u (u.username + u.created_at)}
 			<li class="rt-tooltip__row">
@@ -122,6 +127,14 @@
 		letter-spacing: 0.06em;
 		color: rgba(226, 232, 240, 0.45);
 		font-weight: 700;
+	}
+
+	.rt-tooltip__note {
+		margin: 0 0 4px 0;
+		padding: 2px 8px 6px 8px;
+		line-height: 1.4;
+		color: #e2e8f0;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 	}
 
 	.rt-tooltip__list {

@@ -13,6 +13,8 @@ vi.mock('../models/trik', () => ({
   listAwardedPostIdsByThread: vi.fn(),
   getChannelPurposes:        vi.fn(),
   getOrCreateProgress:       vi.fn(),
+  setSceneRejection:         vi.fn(),
+  clearSceneRejection:       vi.fn(),
 }))
 
 vi.mock('../models/trikMastery', () => ({
@@ -22,9 +24,9 @@ vi.mock('../models/trikMastery', () => ({
 
 vi.mock('../services/trik/bot', () => ({
   postTrikMessage:      vi.fn(),
-  postTrikThreadReply:  vi.fn(),
+  reactSceneRejected:   vi.fn(),
   reactSceneCounted:    vi.fn(),
-  unreactSceneCounted:  vi.fn(),
+  clearSceneMarks:      vi.fn(),
 }))
 
 import {
@@ -32,7 +34,7 @@ import {
   getChannelPurposes, getOrCreateProgress,
 } from '../models/trik'
 import { findCatalogByName, getMasteryUsedToday } from '../models/trikMastery'
-import { postTrikMessage, postTrikThreadReply, reactSceneCounted } from '../services/trik/bot'
+import { postTrikMessage, reactSceneRejected, reactSceneCounted } from '../services/trik/bot'
 import { processScenePost } from '../services/trik/xp'
 
 const THREAD_ID = 'thread-1'
@@ -81,7 +83,7 @@ beforeEach(() => {
   vi.resetAllMocks()
   vi.mocked(getChannelPurposes).mockResolvedValue([])
   vi.mocked(postTrikMessage).mockResolvedValue(undefined)
-  vi.mocked(postTrikThreadReply).mockResolvedValue(undefined)
+  vi.mocked(reactSceneRejected).mockResolvedValue(undefined)
   vi.mocked(reactSceneCounted).mockResolvedValue(undefined)
 
   vi.mocked(isXpThread).mockResolvedValue(true)

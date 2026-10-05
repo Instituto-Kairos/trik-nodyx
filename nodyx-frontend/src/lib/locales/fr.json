@@ -4625,6 +4625,8 @@
   "forum.thread_trail_omitted": "{n} messages précédents de la conversation",
   "forum.thread_replied_in": "Réponses :",
   "forum.moderate": "Modérer",
+  "forum.read_more": "Lire la suite",
+  "forum.read_less": "Réduire",
   "chat.cmd_help_roll": "lance des dés",
   "chat.cmd_help_flip": "pile ou face",
   "chat.cmd_help_8ball": "pose une question",

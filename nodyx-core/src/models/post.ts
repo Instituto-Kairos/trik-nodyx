@@ -1,6 +1,7 @@
 import { db } from '../config/database'
 import { getReactionsForPosts, type ReactionSummary } from './reaction'
 import { getThanksForPosts } from './thanks'
+import { getSceneRejections } from './trik'
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -37,6 +38,8 @@ export interface PostWithAuthor extends Post {
   user_thanked: boolean
   // Fio de cena (trik): de onde este post vem e quem o continua.
   scene: SceneLinks
+  // Motivo do ❌ do bot Trik (cena recusada, sem xp) — null se não recusada.
+  trik_rejection: string | null
 }
 
 // Referência a outro post do tópico. `post_index` = quantos posts vêm antes
@@ -132,10 +135,11 @@ export async function listByThread(threadId: string, opts: {
   if (rows.length === 0) return rows
 
   const postIds = rows.map(p => p.id)
-  const [reactionsMap, thanksMap, sceneMap] = await Promise.all([
+  const [reactionsMap, thanksMap, sceneMap, rejectionMap] = await Promise.all([
     getReactionsForPosts(postIds, opts.viewerId),
     getThanksForPosts(postIds, opts.viewerId),
     getSceneLinks(threadId, postIds),
+    getSceneRejections(postIds),
   ])
 
   return rows.map(p => ({
@@ -144,6 +148,7 @@ export async function listByThread(threadId: string, opts: {
     thanks_count: thanksMap.get(p.id)?.count        ?? 0,
     user_thanked: thanksMap.get(p.id)?.user_thanked ?? false,
     scene:        sceneMap.get(p.id) ?? { chain: [], chain_length: 0, replies: [] },
+    trik_rejection: rejectionMap.get(p.id) ?? null,
   }))
 }
 
