@@ -16,12 +16,12 @@ import {
 } from './calc'
 import {
   getPlayer, isXpThread, applySceneAward, revertSceneAward, listAwardedPostIdsByThread,
-  getChannelPurposes, getOrCreateProgress,
+  getChannelPurposes, getOrCreateProgress, setSceneRejection, clearSceneRejection,
 } from '../../../models/trik'
 import {
   findCatalogByName, getMasteryUsedToday, type CatalogEntry, type MasteryKind,
 } from '../../../models/trikMastery'
-import { postTrikMessage, postTrikThreadReply, reactSceneCounted, unreactSceneCounted } from '../bot'
+import { postTrikMessage, reactSceneCounted, reactSceneRejected, clearSceneMarks } from '../bot'
 import { botSafe } from '../text'
 
 export type SceneRejectionReason = 'no_structure' | 'no_player' | 'no_match' | 'below_minimum'
@@ -46,19 +46,14 @@ async function getAnnounceChannel(): Promise<string | null> {
   return purposes.find(p => p.purpose === 'anuncio')?.channel_id ?? null
 }
 
-const REJECTION_MESSAGES: Record<SceneRejectionReason, string> = {
-  no_structure:   '⚠️ Não encontrei a estrutura de cena nesse post (cabeçalho + cena, separados por pelo menos 2 parágrafos em branco) — não gerou xp.',
-  no_player:      '⚠️ Você ainda não tem cadastro no módulo RPG — use /registro antes de postar uma cena, senão ela não gera xp.',
-  no_match:       '⚠️ Não consegui identificar seu personagem no cabeçalho dessa cena (confira se o nome/assinatura batem com o que foi salvo via /plaquinha) — não gerou xp.',
-  below_minimum:  '⚠️ Essa cena tem menos de 500 caracteres e não gerou xp. Mínimo pra contar: 500.',
-}
-
-/** Avisa no próprio tópico (resposta do bot Trik) quando um post num tópico
- *  XP-elegível não gera xp — mas só pelos motivos "isso deveria ter
+/** Marca com ❌ (reação do bot Trik no próprio post) quando um post num
+ *  tópico XP-elegível não gera xp — mas só pelos motivos "isso deveria ter
  *  funcionado e não funcionou" (nunca pra 'not_xp_thread', que é o caso
- *  normal da maioria das respostas de um fórum). */
-async function notifySceneRejected(threadId: string, reason: SceneRejectionReason): Promise<void> {
-  await postTrikThreadReply(threadId, REJECTION_MESSAGES[reason])
+ *  normal da maioria das respostas de um fórum). O motivo fica gravado pro
+ *  frontend mostrar ao clicar no ❌. */
+async function notifySceneRejected(postId: string, reason: SceneRejectionReason): Promise<void> {
+  await setSceneRejection(postId, reason)
+  await reactSceneRejected(postId)
 }
 
 async function notifyLevelUp(characterId: string, characterName: string): Promise<void> {
@@ -149,25 +144,25 @@ export async function processScenePost(params: {
 
     const parsed = parseScenePost(params.content)
     if (!parsed) {
-      await notifySceneRejected(params.threadId, 'no_structure')
+      await notifySceneRejected(params.postId, 'no_structure')
       return { awarded: false, reason: 'no_structure' }
     }
 
     const player = await getPlayer(params.authorUserId)
     if (!player) {
-      await notifySceneRejected(params.threadId, 'no_player')
+      await notifySceneRejected(params.postId, 'no_player')
       return { awarded: false, reason: 'no_player' }
     }
 
     const character = await matchCharacterByHeader(player.id, parsed.header)
     if (!character) {
-      await notifySceneRejected(params.threadId, 'no_match')
+      await notifySceneRejected(params.postId, 'no_match')
       return { awarded: false, reason: 'no_match' }
     }
 
     const baseXp = calculateSceneXp(parsed.cena.length)
     if (baseXp <= 0) {
-      await notifySceneRejected(params.threadId, 'below_minimum')
+      await notifySceneRejected(params.postId, 'below_minimum')
       return { awarded: false, reason: 'below_minimum' }
     }
 
@@ -209,8 +204,8 @@ export async function processScenePost(params: {
 
 /**
  * Desfaz o prêmio de um post. Chamadores (routes/forums.ts):
- *  - PUT /posts/:id: `await` o revert ANTES de reprocessar (o reprocesso adiciona
- *    a reação de volta se a nova versão ainda contar — aqui só tira);
+ *  - PUT /posts/:id: `await` o revert ANTES de reprocessar (o reprocesso põe
+ *    ✅ ou ❌ de novo conforme a nova versão — aqui só tira as duas);
  *  - DELETE /posts/:id: ANTES de apagar o post — trik_scene_awards tem
  *    ON DELETE CASCADE, e com o post já removido não sobra linha pra reverter.
  * Nunca lança (convenção do módulo): erro vira log.
@@ -218,7 +213,8 @@ export async function processScenePost(params: {
 export async function revertScenePost(postId: string): Promise<void> {
   try {
     await revertSceneAward(postId)
-    await unreactSceneCounted(postId)
+    await clearSceneRejection(postId)
+    await clearSceneMarks(postId)
   } catch (err) {
     console.warn('[trik:xp] revertScenePost error:', err)
   }

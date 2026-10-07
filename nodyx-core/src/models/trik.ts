@@ -1296,3 +1296,28 @@ export async function applyLevelupAllocation(
     client.release()
   }
 }
+
+// ── Motivo do ❌ do bot numa cena recusada ─────────────────────────────────
+
+/** Grava (ou troca) o motivo da recusa de uma cena. */
+export async function setSceneRejection(postId: string, reason: string): Promise<void> {
+  await db.query(
+    `INSERT INTO trik_scene_rejections (post_id, reason) VALUES ($1, $2)
+     ON CONFLICT (post_id) DO UPDATE SET reason = EXCLUDED.reason, created_at = NOW()`,
+    [postId, reason]
+  )
+}
+
+export async function clearSceneRejection(postId: string): Promise<void> {
+  await db.query(`DELETE FROM trik_scene_rejections WHERE post_id = $1`, [postId])
+}
+
+/** Motivos de recusa de uma página de posts, numa consulta só. */
+export async function getSceneRejections(postIds: string[]): Promise<Map<string, string>> {
+  if (postIds.length === 0) return new Map()
+  const { rows } = await db.query<{ post_id: string; reason: string }>(
+    `SELECT post_id, reason FROM trik_scene_rejections WHERE post_id = ANY($1::uuid[])`,
+    [postIds]
+  )
+  return new Map(rows.map(r => [r.post_id, r.reason]))
+}

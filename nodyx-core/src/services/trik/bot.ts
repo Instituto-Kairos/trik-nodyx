@@ -12,7 +12,6 @@ import { randomBytes } from 'crypto'
 import bcrypt from 'bcrypt'
 import { db } from '../../config/database'
 import * as ChannelModel from '../../models/channel'
-import * as PostModel from '../../models/post'
 import * as ReactionModel from '../../models/reaction'
 import { io } from '../../socket/io'
 import { sanitize } from '../../utils/sanitize'
@@ -184,53 +183,45 @@ export async function postTrikMessage(channelId: string, content: string): Promi
   }
 }
 
-/**
- * Responde num tópico do fórum como o bot Trik — usado pelo Fluxo 1 (Fase 2)
- * pra avisar quando uma cena postada num tópico XP-elegível NÃO gerou xp
- * (estrutura ausente, personagem não identificado, abaixo do mínimo de
- * caracteres). Nunca lança, mesma convenção de postTrikMessage: um erro
- * aqui não pode derrubar a resposta de criar/editar o post original.
- *
- * Diferente de postTrikMessage (canal de chat, ChannelModel.addMessage):
- * isso cria um POST de fórum de verdade (PostModel.create) — sem emissão
- * de socket, porque posts de fórum não são ao vivo (só notificações são).
- */
-export async function postTrikThreadReply(threadId: string, content: string): Promise<void> {
+// Marcas do bot Trik num post de cena: ✅ = contou xp, ❌ = estava num
+// tópico XP-elegível mas não gerou xp (sem estrutura, sem /registro,
+// personagem não identificado, abaixo do mínimo). Reação em vez de resposta
+// no tópico — não polui a conversa com um post do bot a cada cena recusada.
+// Trocar um emoji aqui exige migration pras reações já gravadas
+// (ver migrations/trik_008_scene_marks.sql).
+const SCENE_COUNTED_EMOJI  = '✅'
+const SCENE_REJECTED_EMOJI = '❌'
+
+async function reactAsTrik(postId: string, emoji: string): Promise<void> {
   try {
     const botId = await ensureTrikBotUser()
     if (!botId) return
-    await PostModel.create({ thread_id: threadId, author_id: botId, content: sanitize(content) })
+    await ReactionModel.addReaction(postId, botId, emoji)
   } catch (err) {
-    console.warn('[trik:bot] postTrikThreadReply error:', err)
+    console.warn('[trik:bot] reactAsTrik error:', err)
   }
 }
 
-// Emoji usado pra marcar "essa cena contou xp" — mesmo símbolo do badge
-// "⚔️ XP ativo" no cabeçalho do tópico (routes/forum/[category]/[thread]),
-// pra manter a mesma linguagem visual em vez de criar um post extra.
-const XP_COUNTED_EMOJI = '⚔️'
-
-/** Marca com uma reação (não um post novo) que uma cena contou xp — mais
- *  leve que postar no tópico, e reversível (ver unreactSceneCounted). */
+/** Marca que uma cena contou xp — reversível (ver clearSceneMarks). */
 export async function reactSceneCounted(postId: string): Promise<void> {
-  try {
-    const botId = await ensureTrikBotUser()
-    if (!botId) return
-    await ReactionModel.addReaction(postId, botId, XP_COUNTED_EMOJI)
-  } catch (err) {
-    console.warn('[trik:bot] reactSceneCounted error:', err)
-  }
+  await reactAsTrik(postId, SCENE_COUNTED_EMOJI)
 }
 
-/** Desfaz a reação de reactSceneCounted — chamado quando um post editado
- *  deixa de contar xp (revertScenePost), pra não deixar um sinal errado
- *  ("isso contou") num post que não conta mais. */
-export async function unreactSceneCounted(postId: string): Promise<void> {
+/** Marca que uma cena num tópico XP-elegível foi recusada (não gerou xp). */
+export async function reactSceneRejected(postId: string): Promise<void> {
+  await reactAsTrik(postId, SCENE_REJECTED_EMOJI)
+}
+
+/** Tira as duas marcas do bot — chamado por revertScenePost (edição/remoção
+ *  do post), pra não deixar um ✅ num post que não conta mais nem um ❌ num
+ *  post que, editado, passou a contar. */
+export async function clearSceneMarks(postId: string): Promise<void> {
   try {
     const botId = await ensureTrikBotUser()
     if (!botId) return
-    await ReactionModel.removeReaction(postId, botId, XP_COUNTED_EMOJI)
+    await ReactionModel.removeReaction(postId, botId, SCENE_COUNTED_EMOJI)
+    await ReactionModel.removeReaction(postId, botId, SCENE_REJECTED_EMOJI)
   } catch (err) {
-    console.warn('[trik:bot] unreactSceneCounted error:', err)
+    console.warn('[trik:bot] clearSceneMarks error:', err)
   }
 }

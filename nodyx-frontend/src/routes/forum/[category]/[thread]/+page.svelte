@@ -35,6 +35,7 @@
 	import NodyxEditor from '$lib/components/editor/NodyxEditor.svelte';
 	import { renderAliasMentions } from '$lib/linkify';
 	import PostReactions from '$lib/components/PostReactions.svelte';
+	import CollapsiblePost from '$lib/components/CollapsiblePost.svelte';
 	import PollCard from '$lib/components/PollCard.svelte';
 	import PollCreator from '$lib/components/PollCreator.svelte';
 	import { t } from '$lib/i18n';
@@ -778,9 +779,11 @@
 					</form>
 				{:else}
 					<!-- Contenu HTML rendu -->
-					<div class="nodyx-prose">
-						{@html renderAliasMentions(post.content)}
-					</div>
+					<CollapsiblePost>
+						<div class="nodyx-prose">
+							{@html renderAliasMentions(post.content)}
+						</div>
+					</CollapsiblePost>
 					<!-- Réactions + Merci -->
 					<PostReactions
 						postId={post.id}
@@ -790,6 +793,7 @@
 						isOwnPost={user?.id === post.author_id}
 						isLoggedIn={!!user}
 						token={data.token}
+						trikRejection={post.trik_rejection ?? null}
 					/>
 					<!-- Fio de cena : quem continua esta mensagem -->
 					{#if post.scene?.replies?.length}

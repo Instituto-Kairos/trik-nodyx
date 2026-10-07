@@ -73,14 +73,16 @@ vi.mock('../models/trik', () => ({
   revertSceneAward:           vi.fn().mockResolvedValue(undefined),
   listAwardedPostIdsByThread: vi.fn().mockResolvedValue([]),
   applySceneAward:            vi.fn(),
+  setSceneRejection:          vi.fn().mockResolvedValue(undefined),
+  clearSceneRejection:        vi.fn().mockResolvedValue(undefined),
 }))
 
 // O bot real puxa bcrypt/db só pra reagir/postar — aqui só importa que não falhe.
 vi.mock('../services/trik/bot', () => ({
   postTrikMessage:     vi.fn().mockResolvedValue(undefined),
-  postTrikThreadReply: vi.fn().mockResolvedValue(undefined),
+  reactSceneRejected:  vi.fn().mockResolvedValue(undefined),
   reactSceneCounted:   vi.fn().mockResolvedValue(undefined),
-  unreactSceneCounted: vi.fn().mockResolvedValue(undefined),
+  clearSceneMarks:     vi.fn().mockResolvedValue(undefined),
 }))
 
 // ── Imports ───────────────────────────────────────────────────

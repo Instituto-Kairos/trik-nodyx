@@ -312,6 +312,8 @@
   "forum.display": "Mostrar",
   "forum.per_page": "por página",
   "forum.new_topic_btn": "Nuevo tema",
+  "forum.read_more": "Leer más",
+  "forum.read_less": "Mostrar menos",
   "dm.title": "Mensajes directos",
   "dm.n_conversations": "{{n}} conversación",
   "dm.n_conversations_plural": "{{n}} conversaciones",

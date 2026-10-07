@@ -312,6 +312,8 @@
   "forum.display": "Показывать",
   "forum.per_page": "на странице",
   "forum.new_topic_btn": "Новая тема",
+  "forum.read_more": "Читать далее",
+  "forum.read_less": "Свернуть",
   "dm.title": "Личные сообщения",
   "dm.n_conversations": "{{n}} беседа",
   "dm.n_conversations_plural": "{{n}} бесед",

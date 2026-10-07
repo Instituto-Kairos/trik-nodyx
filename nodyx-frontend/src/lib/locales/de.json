@@ -312,6 +312,8 @@
   "forum.display": "Anzeigen",
   "forum.per_page": "pro Seite",
   "forum.new_topic_btn": "Neues Thema",
+  "forum.read_more": "Mehr lesen",
+  "forum.read_less": "Weniger anzeigen",
   "dm.title": "Private Nachrichten",
   "dm.n_conversations": "{{n}} Unterhaltung",
   "dm.n_conversations_plural": "{{n}} Unterhaltungen",
