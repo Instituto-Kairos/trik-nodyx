@@ -132,7 +132,6 @@
 	     chrome de l'appli). Cf SPECS/NODYX_CONTENANT_DESIGN_CDC.md. -->
 	<a href="/" class="lg:hidden min-w-0 flex items-center gap-1.5 font-bold text-sm truncate max-w-[140px]"
 	   style="color: var(--nx-text)">
-		<img src="/nodyx-octopus.png" alt="" class="nx-mark-octopus w-5 h-5 shrink-0" />
 		<span class="truncate">{communityName}</span>
 	</a>
 
@@ -140,7 +139,6 @@
 	<div class="hidden lg:flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden">
 		<!-- Logo toujours visible -->
 		<a href="/" class="shrink-0 flex items-center gap-1.5 font-bold text-sm" style="color: var(--nx-text)">
-			<img src="/nodyx-octopus.png" alt="" class="nx-mark-octopus w-5 h-5 shrink-0" />
 			<span>{communityName}</span>
 		</a>
 		<!-- Breadcrumb dynamique (masqué sur la homepage) -->
