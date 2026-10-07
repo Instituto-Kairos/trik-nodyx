@@ -8,6 +8,7 @@
 	import { socket, getSocket } from '$lib/socket';
 	import { linkifyHtml } from '$lib/linkify';
 	import { searchMentionTargets, mentionInsertText, type MentionTarget } from '$lib/mentionTargets';
+	import { apiFetch } from '$lib/api';
 	import NodyxEditor from '$lib/components/editor/NodyxEditor.svelte';
 	import EmojiPicker from '$lib/components/EmojiPicker.svelte';
 	import { loadCustomEmojis, renderCustomEmojis, customEmojisStore } from '$lib/customEmojis';
@@ -25,7 +26,6 @@
 	// FloatingReactions : retiré, géré globalement dans +layout.svelte
 	import { t } from '$lib/i18n';
 	import { unreadCountsStore, flashChannelIdStore } from '$lib/unreadStore';
-	import { panelCollapsedStore, membersCollapsedStore } from '$lib/communityStore';
 	import { playMessage, playMention } from '$lib/sounds';
 	import { matchTrikCommand } from '$lib/trik/commandRegistry';
 	import RegistroModal from '$lib/components/trik/RegistroModal.svelte';
@@ -1093,7 +1093,7 @@
 <svelte:head><title>Chat · Nodyx</title></svelte:head>
 
 <!-- Full-height layout — left and right offsets dynamically adjusted on collapse/expand -->
-<div class="fixed top-12 bottom-0 {$panelCollapsedStore ? 'lg:left-14' : 'lg:left-[276px]'} {$membersCollapsedStore ? 'xl:right-0' : 'xl:right-[220px]'} left-0 right-0 flex overflow-hidden z-10 bg-[#080810] [transition:left_.25s_cubic-bezier(.4,0,.2,1),right_.25s_cubic-bezier(.4,0,.2,1)]">
+<div class="chat-shell fixed top-12 bottom-0 left-0 right-0 flex overflow-hidden z-10 bg-[#080810]">
 
 	<!-- ── Channel sidebar — mobile drawer only (layout sidebar handles desktop) ── -->
 	<div class="lg:hidden">
@@ -1793,6 +1793,30 @@
 		0%, 30% { background: rgba(124, 58, 237, .18); box-shadow: inset 3px 0 0 #7c3aed; }
 		100%    { background: transparent;              box-shadow: inset 3px 0 0 transparent; }
 	}
+	/* Le chat se pose en `fixed` au lieu de vivre dans <main> : il reprend la
+	   géométrie du contenant flottant (--shell-left / --shell-members, calculées
+	   dans +layout.svelte) au lieu des 276px/220px codés en dur d'avant, qui ne
+	   suivaient ni le redimensionnement des panneaux ni leur repli réel. */
+	@media (min-width: 1024px) {
+		.chat-shell {
+			top: calc(var(--shell-gap) * 2 + var(--shell-head-h));
+			left: var(--shell-left);
+			right: var(--shell-gap);
+			bottom: var(--shell-gap);
+			border-radius: var(--shell-radius);
+			box-shadow: 0 0 0 1px var(--nx-glass-edge), var(--nx-glass-shadow);
+			transition: left .42s var(--ease-out-soft), right .42s var(--ease-out-soft);
+		}
+	}
+	@media (min-width: 1280px) {
+		.chat-shell { right: calc(var(--shell-gap) + var(--shell-members)); }
+	}
+	@supports (corner-shape: squircle) {
+		@media (min-width: 1024px) {
+			.chat-shell { corner-shape: squircle; border-radius: calc(var(--shell-radius) * 1.7); }
+		}
+	}
+
 
 	/* ── Twitch chat badges (bridged via Streamer Hub) ────────────────────── */
 	/* Inserted into message HTML by services/streamer/badges.ts as
