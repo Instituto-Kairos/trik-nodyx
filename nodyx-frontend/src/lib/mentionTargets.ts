@@ -103,3 +103,32 @@ export async function searchMentionTargets(
 
 	return [...membros, ...aliases].slice(0, limit)
 }
+
+// ── NPCC (`@npcc:`) ───────────────────────────────────────────────────────────
+// Um NPCC é um tópico da categoria NPCC. Vira um alias como os outros, só que o
+// alvo entre parênteses é `npcc:<thread id>` em vez de um username : o render
+// ($lib/linkify.ts) linka o tópico e o servidor não notifica ninguém.
+// O id (UUID, 36 chars) e não o slug : o slug passa dos 50 chars que o regex do
+// alias aceita, e a página do tópico redireciona UUID → URL canônica.
+
+export const NPCC_PREFIX = 'npcc:'
+
+/** Busca os tópicos da categoria NPCC já no formato de alvo do dropdown. */
+export async function searchNpccTargets(api: ApiFetch, q: string, token?: string): Promise<MentionTarget[]> {
+	const init: RequestInit = token ? { headers: { Authorization: `Bearer ${token}` } } : {}
+	const res = await api(`/trik/npcc?q=${encodeURIComponent(q)}`, init).catch(() => null)
+	if (!res?.ok) return []
+	let npccs: { id: string; title: string }[] = []
+	try {
+		npccs = (await res.json())?.npccs ?? []
+	} catch {
+		return []
+	}
+	return npccs.map((n) => ({
+		username: NPCC_PREFIX + n.id,
+		avatar: null,
+		// `]` e quebra de linha fechariam o `@[…]` antes da hora.
+		alias: n.title.replace(/[\]\n]/g, ' ').slice(0, 100),
+		playerName: 'NPCC',
+	}))
+}

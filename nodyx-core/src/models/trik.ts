@@ -575,6 +575,59 @@ export async function searchMentionableAliases(
   return rows
 }
 
+/**
+ * `@narrador` : alias fixo, sem personagem por trás, que marca sempre o
+ * narrador da mesa. Sai no mesmo formato de qualquer alias, então render e
+ * notificação não precisam saber que ele existe.
+ */
+export const NARRADOR = { alias: 'Narrador', username: 'oorpheas' } as const
+
+/** O alias do narrador quando `q` casa com "Narrador" e a conta é membro. */
+export async function narradorAlias(communityId: string, q: string): Promise<TrikAlias | null> {
+  const termo = q.trim().toLowerCase()
+  if (termo && !NARRADOR.alias.toLowerCase().includes(termo)) return null
+  const { rows } = await db.query<{ avatar: string | null }>(
+    `SELECT u.avatar FROM users u
+       JOIN community_members cm ON cm.user_id = u.id AND cm.community_id = $1
+      WHERE LOWER(u.username) = LOWER($2) AND u.is_system = false
+      LIMIT 1`,
+    [communityId, NARRADOR.username],
+  )
+  if (!rows[0]) return null
+  return { alias: NARRADOR.alias, username: NARRADOR.username, player_name: NARRADOR.username, avatar: rows[0].avatar }
+}
+
+/** Um NPCC mencionável = um tópico da categoria NPCC (e subcategorias). */
+export interface TrikNpcc {
+  id:    string   // UUID do tópico — vai no alvo `npcc:<id>`
+  title: string   // nome do NPCC, como aparece na cena
+}
+
+/**
+ * Tópicos da categoria NPCC para o autocomplete de `@npcc:`. A categoria é
+ * achada pelo slug ou pelo nome `npccs`/`npcc` (o fórum do trik vive em
+ * /forum/npccs).
+ */
+export async function searchNpccThreads(communityId: string, q: string, limit = 8): Promise<TrikNpcc[]> {
+  const termo = q.trim()
+  const { rows } = await db.query<TrikNpcc>(
+    `WITH RECURSIVE npcc(id) AS (
+       SELECT id FROM categories
+        WHERE community_id = $1 AND (slug IN ('npccs', 'npcc') OR LOWER(name) IN ('npccs', 'npcc'))
+       UNION
+       SELECT ch.id FROM categories ch JOIN npcc ON ch.parent_id = npcc.id
+     )
+     SELECT t.id, t.title
+       FROM threads t
+      WHERE t.category_id IN (SELECT id FROM npcc)
+        AND ($2 = '' OR t.title ILIKE $3)
+      ORDER BY t.title ASC
+      LIMIT $4`,
+    [communityId, termo, `%${termo}%`, limit],
+  )
+  return rows
+}
+
 export async function listRegistros(): Promise<TrikRegistroPlayer[]> {
   const [players, characters] = await Promise.all([
     db.query(

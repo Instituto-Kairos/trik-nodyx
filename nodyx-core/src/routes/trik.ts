@@ -303,8 +303,27 @@ export async function trikPlayerPlugin(app: FastifyInstance) {
     // Um `q` longo não é um caso de uso, é um scan de tabela disfarçado.
     const termo = (q ?? '').trim().slice(0, 100)
 
-    const aliases = await TrikModel.searchMentionableAliases(communityId, termo)
-    return reply.send({ aliases })
+    const [narrador, aliases] = await Promise.all([
+      TrikModel.narradorAlias(communityId, termo),
+      TrikModel.searchMentionableAliases(communityId, termo),
+    ])
+    return reply.send({ aliases: narrador ? [narrador, ...aliases] : aliases })
+  })
+
+  // GET /api/v1/trik/npcc?q= — tópicos da categoria NPCC para `@npcc:`.
+  //
+  // O cliente insere `@[<título>](npcc:<thread id>)`: renderiza como link pro
+  // tópico e não notifica ninguém (resolveMentions ignora o prefixo `npcc:`).
+  // Só descoberta, como /aliases.
+  app.get('/npcc', async (request, reply) => {
+    const communityId = await getCommunityId()
+    if (!communityId) return reply.code(503).send({ error: 'Community not configured' })
+
+    const { q } = request.query as { q?: string }
+    const termo = (q ?? '').trim().slice(0, 100)
+
+    const npccs = await TrikModel.searchNpccThreads(communityId, termo)
+    return reply.send({ npccs })
   })
 
   // Opções dos dropdowns de panteão/vínculo divino do modal de /registro.

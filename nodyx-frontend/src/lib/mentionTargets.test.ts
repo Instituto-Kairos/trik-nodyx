@@ -7,6 +7,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
 	searchMentionTargets,
+	searchNpccTargets,
 	mentionInsertText,
 	mentionLabel,
 	type ApiFetch,
@@ -120,5 +121,24 @@ describe('searchMentionTargets', () => {
 	it('resposta vazia das duas fontes devolve lista vazia, não erro', async () => {
 		const { api } = apiFalso({ '/chat/members': () => ok({}), '/trik/aliases': () => ok({}) })
 		expect(await searchMentionTargets(api, 'zzz')).toEqual([] as MentionTarget[])
+	})
+})
+
+describe('searchNpccTargets — `@npcc:`', () => {
+	it('vira alvo `npcc:<id>` com o título como nome', async () => {
+		const api: ApiFetch = vi.fn(async () => ok({ npccs: [{ id: 'abc-123', title: 'Dona Celeste' }] }))
+		const alvos = await searchNpccTargets(api, 'cel')
+		expect(api).toHaveBeenCalledWith('/trik/npcc?q=cel', {})
+		expect(alvos).toEqual([{ username: 'npcc:abc-123', avatar: null, alias: 'Dona Celeste', playerName: 'NPCC' }])
+		expect(mentionInsertText(alvos[0])).toBe('@[Dona Celeste](npcc:abc-123)')
+	})
+
+	it('tira o `]` do título, que fecharia o alias antes da hora', async () => {
+		const api: ApiFetch = async () => ok({ npccs: [{ id: 'x1', title: 'O [Velho] Guarda' }] })
+		expect((await searchNpccTargets(api, ''))[0].alias).toBe('O [Velho  Guarda')
+	})
+
+	it('módulo desligado (503) devolve lista vazia, sem erro', async () => {
+		expect(await searchNpccTargets(async () => erro(503), 'x')).toEqual([])
 	})
 })

@@ -491,6 +491,12 @@
 
 				<div class="{showModActions ? 'flex' : 'hidden'} sm:flex flex-wrap items-center gap-2 mt-2 sm:mt-0">
 					{#if canAdmin}
+					<!-- Edição de título + tags (trik) : tela própria, admin-only -->
+					<a href="/forum/{thread.category_slug ?? thread.category_id}/{thread.slug ?? thread.id}/edit"
+						class="px-3 py-1.5 border border-gray-700 text-xs font-medium text-gray-400 hover:text-indigo-400 hover:border-indigo-700 transition-colors">
+						✎ Editar
+					</a>
+
 					<!-- Épingler/Désépingler -->
 					<form method="POST" action="?/pinThread" use:enhance={() => {
 						return async ({ update }) => { await update({ reset: false }) }

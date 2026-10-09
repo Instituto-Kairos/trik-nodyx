@@ -39,6 +39,9 @@ export async function resolveMentions(html: string, communityId: string): Promis
   // proteger o caminho mais usado em vez de sobrar para ele.
   ALIAS_MENTION_RE.lastIndex = 0
   while ((match = ALIAS_MENTION_RE.exec(html)) !== null) {
+    // `@[Nome](npcc:<thread id>)` aponta um tópico de NPCC, não um jogador :
+    // ninguém a notificar (cf GET /trik/npcc).
+    if (match[1].startsWith('npcc:')) continue
     usernames.add(match[1].toLowerCase())
     if (usernames.size >= MAX_MENTIONS_PER_MESSAGE) break
   }

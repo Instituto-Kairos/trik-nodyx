@@ -107,3 +107,15 @@ describe('resolveMentions — alias de personagem', () => {
 		expect(params[1]).toBe('community-42')
 	})
 })
+
+describe('resolveMentions — alias de NPCC', () => {
+	it('não notifica ninguém por `@[Nome](npcc:<id>)`', async () => {
+		expect(await usernamesConsultados('@[Dona Celeste](npcc:3f2b9c1e-0a4d-4e8b-9c7f-1d2e3f4a5b6c) serve o chá.'))
+			.toEqual([])
+	})
+
+	it('o narrador notifica a conta por trás dele', async () => {
+		expect(await usernamesConsultados('@[Narrador](oorpheas) A noite cai.'))
+			.toEqual(['oorpheas'])
+	})
+})

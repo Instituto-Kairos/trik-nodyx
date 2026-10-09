@@ -152,3 +152,17 @@ describe('renderAliasMentions — só os aliases, para o fórum', () => {
 		expect(renderAliasMentions(html)).toBe(html)
 	})
 })
+
+describe('alias de NPCC — `@[Nome](npcc:<thread id>)`', () => {
+	const ID = '3f2b9c1e-0a4d-4e8b-9c7f-1d2e3f4a5b6c'
+
+	it('linka o tópico do NPCC, não um perfil', () => {
+		const html = renderAliasMentions(`<p>@[Dona Celeste](npcc:${ID}) serve o chá.</p>`)
+		expect(hrefs(html)).toEqual([`/forum/npccs/${ID}`])
+		expect(html).toContain('>Dona Celeste</a>')
+	})
+
+	it('vale também no chat (linkifyHtml)', () => {
+		expect(hrefs(linkifyHtml(`<p>@[Dona Celeste](npcc:${ID})</p>`))).toEqual([`/forum/npccs/${ID}`])
+	})
+})

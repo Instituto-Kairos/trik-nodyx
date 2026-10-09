@@ -94,12 +94,22 @@ function mapTextNodes(
     .join('')
 }
 
+/**
+ * Para onde aponta uma marcação. `npcc:<thread id>` (`@npcc:` no compositor,
+ * ver $lib/mentionTargets) é um tópico da categoria NPCC : `/forum/npccs/<id>`,
+ * que a página do tópico redireciona para a URL canônica. O resto é jogador.
+ */
+export function mentionHref(target: string): string {
+  if (target.startsWith('npcc:')) return `/forum/npccs/${encodeURIComponent(target.slice(5))}`
+  return `/users/${target}`
+}
+
 /** O <a> de um alias: nome do personagem visível, jogador no href. */
 function aliasAnchors(part: string): string {
   return part.replace(
     ALIAS_MENTION_REGEX,
     (_full: string, lead: string, display: string, username: string) =>
-      `${lead}<a href="/users/${escapeAttr(username)}" class="text-indigo-400 hover:text-indigo-300 font-medium" style="text-decoration: none">${display}</a>`,
+      `${lead}<a href="${escapeAttr(mentionHref(username))}" class="text-indigo-400 hover:text-indigo-300 font-medium" style="text-decoration: none">${display}</a>`,
   )
 }
 

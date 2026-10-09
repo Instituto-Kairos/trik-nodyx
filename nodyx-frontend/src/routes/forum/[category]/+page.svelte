@@ -131,26 +131,29 @@
 			);
 		}
 		
-		// Tri
+		// Tri. Fixados (is_pinned) sempre no topo, qualquer que seja o critério :
+		// o back já os manda primeiro, mas reordenar só por data aqui os
+		// espalhava no meio da lista. O critério escolhido vale dentro de cada grupo.
+		const pinnedFirst = (a: Thread, b: Thread) => Number(b.is_pinned) - Number(a.is_pinned);
 		switch(sortBy) {
 			case 'recent':
-				return filtered.sort((a, b) => 
+				return filtered.sort((a, b) => pinnedFirst(a, b) ||
 					new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
 				);
 			case 'popular':
 				// Volontairement sur post_count et non sur replyCount : retrancher le
 				// message d'ouverture des DEUX côtés ne change pas l'ordre. Passer par
 				// le helper ici n'apporterait rien qu'un appel de plus par comparaison.
-				return filtered.sort((a, b) => (b.post_count || 0) - (a.post_count || 0));
+				return filtered.sort((a, b) => pinnedFirst(a, b) || (b.post_count || 0) - (a.post_count || 0));
 			case 'views':
-				return filtered.sort((a, b) => (b.views || 0) - (a.views || 0));
+				return filtered.sort((a, b) => pinnedFirst(a, b) || (b.views || 0) - (a.views || 0));
 			case 'lastReply':
-				return filtered.sort((a, b) => 
+				return filtered.sort((a, b) => pinnedFirst(a, b) ||
 					new Date(b.updated_at || b.created_at).getTime() - 
 					new Date(a.updated_at || a.created_at).getTime()
 				);
 			default:
-				return filtered;
+				return filtered.sort(pinnedFirst);
 		}
 	}
 
@@ -611,12 +614,16 @@
 			{@const lastPoster = getLastPoster(thread)}
 			{@const isNew = new Date(thread.updated_at || thread.created_at) > new Date(Date.now() - 24*60*60*1000)}
 			
+			<!-- Fixado (trik) : leve tom índigo + filete à esquerda, para se
+			     destacar dos demais sem gritar. -->
 			<a
 				href="/forum/{categoryId}/{thread.slug ?? thread.id}"
 				class="group relative flex flex-wrap sm:flex-nowrap items-center gap-4
-					   border border-white/[.06] bg-gray-900/60
-					   px-5 py-4 hover:border-indigo-700/50 hover:bg-gray-900
-					   transition-colors duration-200 overflow-hidden"
+					   border px-5 py-4 hover:border-indigo-700/50 hover:bg-gray-900
+					   transition-colors duration-200 overflow-hidden
+					   {thread.is_pinned
+						? 'border-indigo-800/40 border-l-2 border-l-indigo-500 bg-indigo-950/30'
+						: 'border-white/[.06] bg-gray-900/60'}"
 			>
 				<!-- ... reste du code identique ... -->
 				<!-- Avatar créateur -->
