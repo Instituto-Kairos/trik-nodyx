@@ -22,6 +22,13 @@ vi.mock('../models/trikMastery', () => ({
   getMasteryUsedToday: vi.fn(),
 }))
 
+vi.mock('../models/trikNarrador', () => ({
+  getNarratorUserId:                  vi.fn().mockResolvedValue(null),
+  applyNarratorAward:                 vi.fn(),
+  revertNarratorAward:                vi.fn().mockResolvedValue(undefined),
+  listNarratorAwardedPostIdsByThread: vi.fn().mockResolvedValue([]),
+}))
+
 vi.mock('../services/trik/bot', () => ({
   postTrikMessage:      vi.fn(),
   reactSceneRejected:   vi.fn(),

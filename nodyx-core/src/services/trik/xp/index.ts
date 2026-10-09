@@ -9,10 +9,11 @@
  * RPG. Qualquer falha interna vira log + resultado "not awarded".
  */
 
-import { parseScenePost, parseFooterTags } from './sceneParser'
+import { parseScenePost, parseFooterTags, stripTags, hasLoreTag } from './sceneParser'
 import { matchCharacterByHeader } from './matcher'
 import {
   calculateSceneXp, calculateTrainingSceneXp, calculateMasteryUnits, remainingDailyMastery,
+  calculateNarratorXp,
 } from './calc'
 import {
   getPlayer, isXpThread, applySceneAward, revertSceneAward, listAwardedPostIdsByThread,
@@ -21,6 +22,9 @@ import {
 import {
   findCatalogByName, getMasteryUsedToday, type CatalogEntry, type MasteryKind,
 } from '../../../models/trikMastery'
+import {
+  getNarratorUserId, applyNarratorAward, revertNarratorAward, listNarratorAwardedPostIdsByThread,
+} from '../../../models/trikNarrador'
 import { postTrikMessage, reactSceneCounted, reactSceneRejected, clearSceneMarks } from '../bot'
 import { botSafe } from '../text'
 
@@ -40,6 +44,8 @@ export type SceneXpResult =
   // already_awarded: o post já tinha prêmio (edições concorrentes) — nada foi creditado de novo.
   | { awarded: false; reason: 'not_xp_thread' | SceneRejectionReason | 'already_awarded' | 'error' }
   | { awarded: true; characterId: string; xp: number; leveledUp: boolean; mastery?: SceneMasteryResult }
+  // Cena de narrador (#lore): o xp foi pro pool do narrador, não pra um personagem.
+  | { awarded: true; narrator: true; xp: number }
 
 async function getAnnounceChannel(): Promise<string | null> {
   const purposes = await getChannelPurposes()
@@ -56,7 +62,7 @@ async function notifySceneRejected(postId: string, reason: SceneRejectionReason)
   await reactSceneRejected(postId)
 }
 
-async function notifyLevelUp(characterId: string, characterName: string): Promise<void> {
+export async function notifyLevelUp(characterId: string, characterName: string): Promise<void> {
   const announceChannel = await getAnnounceChannel()
   if (!announceChannel) return // nenhum canal configurado — não é erro, só não avisa
   await postTrikMessage(announceChannel, `🎉 <strong>${botSafe(characterName)}</strong> subiu de nível!`)
@@ -143,6 +149,18 @@ export async function processScenePost(params: {
     if (!await isXpThread(params.threadId)) return { awarded: false, reason: 'not_xp_thread' }
 
     const parsed = parseScenePost(params.content)
+
+    // Cena de narrador: post do narrador com #lore. Testa a tag antes (sem
+    // custo) pra só ir ao banco atrás do narrador quando ela existe. Não exige
+    // estrutura de plaquinha: com estrutura conta só a cena, sem ela o post todo.
+    const plain = stripTags(params.content)
+    if (hasLoreTag(plain)) {
+      const narratorId = await getNarratorUserId()
+      if (narratorId && narratorId === params.authorUserId) {
+        return await processNarratorPost(narratorId, params.postId, parsed?.cena ?? plain)
+      }
+    }
+
     if (!parsed) {
       await notifySceneRejected(params.postId, 'no_structure')
       return { awarded: false, reason: 'no_structure' }
@@ -202,6 +220,17 @@ export async function processScenePost(params: {
   }
 }
 
+async function processNarratorPost(narratorId: string, postId: string, text: string): Promise<SceneXpResult> {
+  const xp = calculateNarratorXp(text.length)
+  if (xp <= 0) {
+    await notifySceneRejected(postId, 'below_minimum')
+    return { awarded: false, reason: 'below_minimum' }
+  }
+  if (!await applyNarratorAward(narratorId, postId, xp)) return { awarded: false, reason: 'already_awarded' }
+  await reactSceneCounted(postId)
+  return { awarded: true, narrator: true, xp }
+}
+
 /**
  * Desfaz o prêmio de um post. Chamadores (routes/forums.ts):
  *  - PUT /posts/:id: `await` o revert ANTES de reprocessar (o reprocesso põe
@@ -213,6 +242,7 @@ export async function processScenePost(params: {
 export async function revertScenePost(postId: string): Promise<void> {
   try {
     await revertSceneAward(postId)
+    await revertNarratorAward(postId)
     await clearSceneRejection(postId)
     await clearSceneMarks(postId)
   } catch (err) {
@@ -224,7 +254,11 @@ export async function revertScenePost(postId: string): Promise<void> {
  *  tópico (o CASCADE apaga os posts e, com eles, os prêmios). Nunca lança. */
 export async function revertThreadScenes(threadId: string): Promise<void> {
   try {
-    for (const postId of await listAwardedPostIdsByThread(threadId)) {
+    const postIds = new Set([
+      ...await listAwardedPostIdsByThread(threadId),
+      ...await listNarratorAwardedPostIdsByThread(threadId),
+    ])
+    for (const postId of postIds) {
       await revertScenePost(postId)
     }
   } catch (err) {

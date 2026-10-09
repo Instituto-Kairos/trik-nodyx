@@ -40,7 +40,7 @@ const HTML_ENTITIES: Record<string, string> = {
   '&nbsp;': ' ', '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'",
 }
 
-function stripTags(html: string): string {
+export function stripTags(html: string): string {
   // <br> e fronteira de parágrafo viram quebra de linha ANTES de remover as
   // tags — senão duas linhas coladas (ex.: "...quiser<br>Olho pelo...")
   // grudam sem espaço nenhum ao tirar a tag, o que tanto polui a contagem
@@ -99,4 +99,11 @@ export function parseFooterTags(footer: string): FooterTags {
     if (result[trigger] === undefined) result[trigger] = next
   })
   return result
+}
+
+/** `#lore` em qualquer parte do post (header, cena ou footer) — marca a cena
+ *  de narrador (ver processScenePost). Recebe texto puro. Não casa
+ *  `#lorena`, mas casa `#Lore`. */
+export function hasLoreTag(text: string): boolean {
+  return /#lore(?![\wÀ-ÿ])/i.test(text)
 }

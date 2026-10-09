@@ -55,3 +55,14 @@ export function calculateTrainingSceneXp(
   if (cenaLength > remainingUnits * MASTERY_UNIT_CHARS) return base
   return Math.round(base * (cenaLength <= 1000 ? 0.2 : 0.5))
 }
+
+// ─── Xp de narrador (#lore) ─────────────────────────────────────────────────
+// Ver models/trikNarrador.ts. Proporcional como a cena normal (750 chars =
+// 22.5 → 23), mesmo mínimo de 500 caracteres, mas sem a taxa 1.8x.
+
+export const NARRATOR_XP_PER_500 = 15
+
+export function calculateNarratorXp(textLength: number): number {
+  if (textLength < 500) return 0
+  return Math.round((textLength / 500) * NARRATOR_XP_PER_500)
+}

@@ -23,9 +23,11 @@ import { validate } from '../middleware/validate'
 import * as ChannelModel from '../models/channel'
 import * as TrikModel from '../models/trik'
 import * as TrikMastery from '../models/trikMastery'
+import * as TrikNarrador from '../models/trikNarrador'
 import { getPlayerAndCharacters, submitRegistro } from '../services/trik/registro'
 import { submitPlaquinha } from '../services/trik/registro/plaquinha'
 import { submitLevelup } from '../services/trik/xp/levelup'
+import { notifyLevelUp } from '../services/trik/xp'
 import { postTrikMessage, getTrikBotProfile, updateTrikBotProfile } from '../services/trik/bot'
 import { botSafe } from '../services/trik/text'
 import { scanBuffer } from '../services/fileScanner'
@@ -49,6 +51,11 @@ async function getCommunityId(): Promise<string | null> {
 }
 
 // ─── Zod schemas ─────────────────────────────────────────────────────────────
+
+const NarradorDistribuirBody = z.object({
+  characterId: z.string().uuid(),
+  xp:          z.number().int().positive().max(1_000_000),
+})
 
 const TesteBody = z.object({
   channelId: z.string().uuid(),
@@ -706,6 +713,47 @@ export async function trikAdminPlugin(app: FastifyInstance) {
     const { categoryIds } = request.body as z.infer<typeof NotifyCategoriesBody>
     await TrikModel.setNotifyCategories(categoryIds, communityId, request.user!.userId)
     return reply.send({ ok: true })
+  })
+
+  // ── Xp de narrador (#lore) — ver models/trikNarrador.ts ───────────────────
+
+  app.get('/narrador', async (_request, reply) => {
+    const userId = await TrikNarrador.getNarratorUserId()
+    if (!userId) {
+      return reply.send({ narrator: null, username: TrikModel.NARRADOR.username })
+    }
+    const [balance, characters, awards, distributions] = await Promise.all([
+      TrikNarrador.getNarratorBalance(userId),
+      TrikNarrador.listNarratorCharacters(userId),
+      TrikNarrador.listNarratorAwards(userId),
+      TrikNarrador.listNarratorDistributions(userId),
+    ])
+    return reply.send({
+      narrator: { userId, username: TrikModel.NARRADOR.username },
+      balance, characters, awards, distributions,
+    })
+  })
+
+  app.post('/narrador/distribuir', {
+    preHandler: validate({ body: NarradorDistribuirBody }),
+  }, async (request, reply) => {
+    const { characterId, xp } = request.body as z.infer<typeof NarradorDistribuirBody>
+    const userId = await TrikNarrador.getNarratorUserId()
+    if (!userId) return reply.code(404).send({ error: 'Conta do narrador não encontrada', code: 'NOT_FOUND' })
+
+    try {
+      const result = await TrikNarrador.distributeNarratorXp(userId, characterId, xp, request.user!.userId)
+      if (result.leveledUp) {
+        notifyLevelUp(characterId, result.characterName)
+          .catch(err => request.log.warn({ err }, '[trik:narrador] notifyLevelUp failed'))
+      }
+      return reply.send(result)
+    } catch (err) {
+      if (err instanceof TrikNarrador.NarratorDistributionError) {
+        return reply.code(400).send({ error: err.message, code: err.code })
+      }
+      throw err
+    }
   })
 
   // GET /admin/trik/threads/:id — estado de XP de um tópico do fórum.

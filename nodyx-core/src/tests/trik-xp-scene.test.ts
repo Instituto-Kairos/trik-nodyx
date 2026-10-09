@@ -17,6 +17,13 @@ vi.mock('../models/trik', () => ({
   clearSceneRejection:    vi.fn().mockResolvedValue(undefined),
 }))
 
+vi.mock('../models/trikNarrador', () => ({
+  getNarratorUserId:                  vi.fn().mockResolvedValue(null),
+  applyNarratorAward:                 vi.fn(),
+  revertNarratorAward:                vi.fn().mockResolvedValue(undefined),
+  listNarratorAwardedPostIdsByThread: vi.fn().mockResolvedValue([]),
+}))
+
 vi.mock('../services/trik/bot', () => ({
   postTrikMessage:      vi.fn().mockResolvedValue(undefined),
   reactSceneRejected:   vi.fn().mockResolvedValue(undefined),

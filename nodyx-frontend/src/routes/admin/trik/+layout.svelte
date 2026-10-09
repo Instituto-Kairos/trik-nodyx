@@ -8,6 +8,7 @@
 		{ href: '/admin/trik/registros', label: 'Registros' },
 		{ href: '/admin/trik/channels',  label: 'Canais' },
 		{ href: '/admin/trik/xp-levels', label: 'Curva de XP' },
+		{ href: '/admin/trik/narrador',  label: 'Narrador' },
 		{ href: '/admin/trik/catalogo',  label: 'Armas & Aulas' },
 		{ href: '/admin/trik/bonus',     label: 'Bônus' },
 		{ href: '/admin/trik/panteoes',  label: 'Panteões' },
