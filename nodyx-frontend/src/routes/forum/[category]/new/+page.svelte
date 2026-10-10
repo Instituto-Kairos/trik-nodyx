@@ -5,6 +5,7 @@
 	import NodyxEditor from '$lib/components/editor/NodyxEditor.svelte';
 	import PollCreator from '$lib/components/PollCreator.svelte';
 	import { t } from '$lib/i18n';
+	import { luminance } from '$lib/shellTheme';
 	import { untrack } from 'svelte';
 	import { findCategoryIdPath } from '$lib/forumTree';
 
@@ -64,6 +65,13 @@
 	let showPollSection = $state(false);
 	let pollConfig      = $state<any>(null);
 	let pollJson        = $derived(pollConfig ? JSON.stringify(pollConfig) : '');
+
+	// A cor da tag não pode virar a cor do texto: uma tag escura some no fundo
+	// escuro. Selecionada = fundo sólido na cor da tag com texto contrastante
+	// (como em /admin/tags); não selecionada = texto neutro + ponto colorido.
+	function tagTextColor(color: string): string {
+		try { return luminance(color) > 0.5 ? '#111' : '#fff'; } catch { return '#fff'; }
+	}
 
 	function toggleTag(id: string) {
 		if (selectedTagIds.includes(id)) {
@@ -160,14 +168,14 @@
 						<button
 							type="button"
 							onclick={() => toggleTag(tag.id)}
-							class="inline-flex items-center px-2.5 py-1 text-xs font-medium border transition-colors cursor-pointer"
-							style="
-								background-color: {selectedTagIds.includes(tag.id) ? tag.color + '33' : 'transparent'};
-								color: {tag.color};
-								border-color: {selectedTagIds.includes(tag.id) ? tag.color : tag.color + '55'};
-							"
+							aria-pressed={selectedTagIds.includes(tag.id)}
+							class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium border transition-colors cursor-pointer {selectedTagIds.includes(tag.id) ? '' : 'text-gray-200 hover:bg-gray-800'}"
+							style={selectedTagIds.includes(tag.id)
+								? `background-color: ${tag.color}; border-color: ${tag.color}; color: ${tagTextColor(tag.color)};`
+								: `border-color: ${tag.color};`}
 						>
-							{#if selectedTagIds.includes(tag.id)}✓ {/if}{tag.name}
+							{#if selectedTagIds.includes(tag.id)}✓{:else}<span class="inline-block w-2 h-2 rounded-full" style="background-color: {tag.color}"></span>{/if}
+							{tag.name}
 						</button>
 					{/each}
 				</div>
