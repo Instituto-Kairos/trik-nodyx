@@ -43,6 +43,27 @@ export async function create(data: {
   return rows[0]
 }
 
+/**
+ * Renomeia e/ou recolore uma tag. O slug acompanha o nome, e os tópicos não
+ * precisam ser tocados: thread_tags aponta para o id. Devolve null se a tag
+ * não existir nesta comunidade; um slug repetido estoura como 23505 (UNIQUE).
+ */
+export async function update(id: string, communityId: string, data: {
+  name?:  string
+  color?: string
+}): Promise<Tag | null> {
+  const { rows } = await db.query<Tag>(
+    `UPDATE tags
+        SET name  = COALESCE($3, name),
+            slug  = COALESCE($4, slug),
+            color = COALESCE($5, color)
+      WHERE id = $1 AND community_id = $2
+      RETURNING *`,
+    [id, communityId, data.name ?? null, data.name ? slugify(data.name) : null, data.color ?? null]
+  )
+  return rows[0] ?? null
+}
+
 export async function remove(id: string): Promise<boolean> {
   const { rowCount } = await db.query(`DELETE FROM tags WHERE id = $1`, [id])
   return (rowCount ?? 0) > 0

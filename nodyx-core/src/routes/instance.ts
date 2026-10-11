@@ -459,6 +459,37 @@ export default async function instanceRoutes(app: FastifyInstance) {
     return reply.code(201).send({ tag })
   })
 
+  // PATCH /api/v1/instance/tags/:id — admin only (nome e/ou cor)
+  app.patch('/tags/:id', { preHandler: [rateLimit, requireAuth] }, async (request, reply) => {
+    const communityId = await getCommunityId()
+    if (!communityId) return reply.code(404).send({ error: 'Community not found', code: 'NOT_FOUND' })
+
+    const member = await CommunityModel.getMember(communityId, request.user!.userId)
+    if (!member || member.role === 'member') {
+      return reply.code(403).send({ error: 'Forbidden', code: 'FORBIDDEN' })
+    }
+
+    const { id } = request.params as { id: string }
+    const { name, color } = request.body as { name?: string; color?: string }
+    const nome = name?.trim()
+    if (name !== undefined && (!nome || nome.length > 50)) {
+      return reply.code(400).send({ error: 'Name required (max 50)', code: 'BAD_REQUEST' })
+    }
+    if (color !== undefined && !/^#[0-9a-f]{6}$/i.test(color)) {
+      return reply.code(400).send({ error: 'Invalid color', code: 'BAD_REQUEST' })
+    }
+
+    try {
+      const tag = await TagModel.update(id, communityId, { name: nome, color })
+      return tag ? reply.send({ tag }) : reply.code(404).send({ error: 'Tag not found', code: 'NOT_FOUND' })
+    } catch (err) {
+      if ((err as { code?: string }).code === '23505') {
+        return reply.code(409).send({ error: 'A tag with this name already exists', code: 'CONFLICT' })
+      }
+      throw err
+    }
+  })
+
   // DELETE /api/v1/instance/tags/:id — admin only
   app.delete('/tags/:id', { preHandler: [rateLimit, requireAuth] }, async (request, reply) => {
     const communityId = await getCommunityId()

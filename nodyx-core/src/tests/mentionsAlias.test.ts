@@ -114,6 +114,11 @@ describe('resolveMentions — alias de NPCC', () => {
 			.toEqual([])
 	})
 
+	it('não notifica ninguém por `@[Nome](npc:<id>)` (álbum NPC da galeria)', async () => {
+		expect(await usernamesConsultados('@[Dona Celeste](npc:3f2b9c1e-0a4d-4e8b-9c7f-1d2e3f4a5b6c) serve o chá.'))
+			.toEqual([])
+	})
+
 	it('o narrador notifica a conta por trás dele', async () => {
 		expect(await usernamesConsultados('@[Narrador](oorpheas) A noite cai.'))
 			.toEqual(['oorpheas'])

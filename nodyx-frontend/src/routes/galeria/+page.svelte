@@ -39,13 +39,6 @@
 	const albums = $derived(data.albums as Album[])
 	const images = $derived(data.images as Imagem[])
 
-	// Espelha podeEditar() do backend: quem subiu, ou admin/owner. Só decide o
-	// que aparece na tela; a autorização de verdade continua no servidor.
-	const ehAdmin = $derived(data.user?.role === 'owner' || data.user?.role === 'admin')
-	function podeEditar(img: Imagem): boolean {
-		return !!data.user && (ehAdmin || (!!img.uploader_id && img.uploader_id === data.user.id))
-	}
-
 	// O backend serve os arquivos estáticos em /uploads, fora do prefixo da API,
 	// e tanto o Caddy (`handle /uploads/*`) quanto o proxy do Vite em dev mandam
 	// esse caminho pro backend. Então o caminho RELATIVO é o que vale aqui.
@@ -58,7 +51,6 @@
 	// galeria não carregavam nada. API_URL só serve para o próprio código buscar
 	// a API; nunca para montar endereço que o navegador vai resolver.
 	const urlThumb = (i: Imagem) => `/uploads/${i.thumbnail_path ?? i.file_path}`
-	const urlCheia = (i: Imagem) => `/uploads/${i.file_path}`
 
 	// Valor inicial do campo de busca: leitura deliberada, não deve reagir.
 	let busca = $state(untrack(() => (data.q ?? '') as string))
@@ -99,23 +91,6 @@
 
 	function paginar(delta: number) {
 		navegar({ offset: String(Math.max(0, offset + delta * limite)) })
-		// Uma nova página é um novo conjunto; manter o visualizador aberto
-		// mostraria uma imagem que já não está na lista navegável por setas.
-		fecharVisualizador()
-	}
-
-	// ── Visualizador ──────────────────────────────────────────────────────────
-	let aberta = $state<Imagem | null>(null)
-
-	function aoTeclar(e: KeyboardEvent) {
-		if (!aberta) return
-		// Editando, as setas movem o cursor nos campos — trocar de imagem aqui
-		// jogaria fora o que foi digitado. Esc só fecha a edição.
-		if (editando) { if (e.key === 'Escape') editando = false; return }
-		if (e.key === 'Escape') { aberta = null; return }
-		const i = images.findIndex((x) => x.id === aberta!.id)
-		if (e.key === 'ArrowRight' && i < images.length - 1) aberta = images[i + 1]
-		if (e.key === 'ArrowLeft'  && i > 0)                 aberta = images[i - 1]
 	}
 
 	// ── Envio ─────────────────────────────────────────────────────────────────
@@ -197,79 +172,11 @@
 		}
 	}
 
-	async function apagarImagem(id: string) {
-		const res = await apiFetch(fetch, `/galeria/images/${id}`, {
-			method: 'DELETE',
-			headers: { Authorization: `Bearer ${data.token}` },
-		})
-		if (res.ok) { aberta = null; await invalidateAll() }
-	}
-
-	// ── Edição ────────────────────────────────────────────────────────────────
-	// Título, descrição, álbum e tags; o arquivo em si não se troca (para isso,
-	// apaga e envia de novo). Quem pode editar é decidido pelo backend — autor
-	// ou admin/owner —, e um 403 aparece como erro no formulário.
-	let editando    = $state(false)
-	let edTitulo    = $state('')
-	let edDescricao = $state('')
-	let edAlbum     = $state('')
-	let edTags      = $state('')
-	let salvando    = $state(false)
-	let erroEdicao  = $state('')
-
-	function abrirEdicao() {
-		if (!aberta) return
-		edTitulo    = aberta.title
-		edDescricao = aberta.description ?? ''
-		edAlbum     = aberta.album_id ?? ''
-		edTags      = aberta.tags.join(', ')
-		erroEdicao  = ''
-		editando    = true
-	}
-
-	function fecharVisualizador() {
-		aberta = null
-		editando = false
-	}
-
-	async function salvarEdicao() {
-		if (!aberta || !edTitulo.trim() || salvando) return
-		salvando   = true
-		erroEdicao = ''
-		const id = aberta.id
-		try {
-			const res = await apiFetch(fetch, `/galeria/images/${id}`, {
-				method: 'PATCH',
-				headers: { Authorization: `Bearer ${data.token}` },
-				body: JSON.stringify({
-					title:       edTitulo.trim(),
-					description: edDescricao.trim() ? edDescricao : null,
-					album_id:    edAlbum || null,
-					tags:        edTags.split(',').map((s) => s.trim()).filter(Boolean).slice(0, 12),
-				}),
-			})
-			if (!res.ok) {
-				const j = await res.json().catch(() => ({}))
-				throw new Error(j.error ?? tFn('galeria.save_error'))
-			}
-			await invalidateAll()
-			// Reaponta para a versão recarregada: ela já vem com o nome do álbum
-			// e a descrição sanitizada pelo servidor.
-			aberta   = images.find((x) => x.id === id) ?? null
-			editando = false
-		} catch (e) {
-			erroEdicao = e instanceof Error ? e.message : tFn('galeria.save_error')
-		} finally {
-			salvando = false
-		}
-	}
 </script>
 
 <svelte:head>
 	<title>{tFn('galeria.page_title')}</title>
 </svelte:head>
-
-<svelte:window onkeydown={aoTeclar} />
 
 <div class="gal-root">
 	<div class="gal-header">
@@ -394,7 +301,8 @@
 		{:else}
 			<div class="gal-grid">
 				{#each images as img (img.id)}
-					<button type="button" class="gal-card" onclick={() => (aberta = img)}>
+					<!-- Cada imagem tem página própria, com as anotações de quem a enviou. -->
+					<a href="/galeria/{img.id}" class="gal-card">
 						<img src={urlThumb(img)} alt={img.title} loading="lazy" class="gal-card-img" />
 						<div class="gal-card-body">
 							<p class="gal-card-title">{img.title}</p>
@@ -407,7 +315,7 @@
 								</p>
 							{/if}
 						</div>
-					</button>
+					</a>
 				{/each}
 			</div>
 			<div class="gal-pager">
@@ -424,88 +332,6 @@
 		{/if}
 	{/if}
 </div>
-
-<!-- ── Visualizador ───────────────────────────────────────────────────────── -->
-{#if aberta}
-	<!-- svelte-ignore a11y_click_events_have_key_events -->
-	<div class="gal-viewer" role="dialog" aria-modal="true" tabindex="-1" aria-label={aberta.title}
-	     onclick={(e) => { if (e.target === e.currentTarget && !editando) fecharVisualizador() }}>
-		<div class="gal-viewer-box">
-			<img src={urlCheia(aberta)} alt={aberta.title} class="gal-viewer-img" />
-			<div class="gal-viewer-side">
-			{#if editando}
-				<input type="text" bind:value={edTitulo} maxlength="160"
-				       placeholder={tFn('galeria.title_ph')} class="gal-input gal-input--full" />
-
-				<div class="gal-editor">
-					<!-- `{#key}`: o editor só lê `initialContent` ao montar. -->
-					{#key aberta.id}
-						<NodyxEditor
-							compact={true}
-							initialContent={aberta.description ?? ''}
-							placeholder={tFn('galeria.description_ph')}
-							onchange={(v) => (edDescricao = v)}
-						/>
-					{/key}
-				</div>
-
-				<select bind:value={edAlbum} class="gal-input gal-input--full">
-					<option value="">{tFn('galeria.no_album')}</option>
-					{#each albums as a}
-						<option value={a.id}>{a.name}</option>
-					{/each}
-				</select>
-				<input type="text" bind:value={edTags}
-				       placeholder={tFn('galeria.tags_ph')} class="gal-input gal-input--full" />
-
-				{#if erroEdicao}<p class="gal-error">{erroEdicao}</p>{/if}
-
-				<div class="gal-row gal-row--end gal-viewer-actions">
-					<button type="button" class="gal-btn-ghost" onclick={() => (editando = false)}>
-						{tFn('common.cancel')}
-					</button>
-					<button type="button" class="gal-btn-primary"
-					        disabled={!edTitulo.trim() || salvando}
-					        onclick={salvarEdicao}>
-						{salvando ? tFn('galeria.saving') : tFn('common.save')}
-					</button>
-				</div>
-			{:else}
-				<h2 class="gal-viewer-title">{aberta.title}</h2>
-				<p class="gal-viewer-meta">
-					{aberta.uploader_username ?? '—'}
-					{#if aberta.album_name} · {aberta.album_name}{/if}
-				</p>
-				{#if aberta.description}
-					<!-- HTML sanitizado no servidor com o mesmo sanitize do fórum. -->
-					<div class="nodyx-prose gal-viewer-desc">{@html aberta.description}</div>
-				{/if}
-				{#if aberta.tags.length}
-					<p class="gal-card-tags">
-						{#each aberta.tags as tg}
-							<button type="button" class="gal-tag gal-tag--btn"
-							        onclick={() => { fecharVisualizador(); aplicarFiltro({ tag: tg, album: '' }) }}>#{tg}</button>
-						{/each}
-					</p>
-				{/if}
-				<div class="gal-row gal-row--end gal-row--wrap gal-viewer-actions">
-					<a href={urlCheia(aberta)} target="_blank" rel="noopener" class="gal-btn-ghost">
-						{tFn('galeria.open_full')}
-					</a>
-					{#if podeEditar(aberta)}
-						<button type="button" class="gal-btn-ghost" onclick={abrirEdicao}>
-							{tFn('common.edit')}
-						</button>
-						<button type="button" class="gal-btn-danger" onclick={() => apagarImagem(aberta!.id)}>
-							{tFn('common.delete')}
-						</button>
-					{/if}
-				</div>
-			{/if}
-			</div>
-		</div>
-	</div>
-{/if}
 
 <style>
 /* Sem max-width: o +layout tira o `max-w-5xl` desta rota justamente pra grade
@@ -542,18 +368,9 @@
 	border: 0; border-radius: 0.5rem; padding: 0.5rem 1rem;
 	font-size: 0.8125rem; cursor: pointer; text-decoration: none;
 }
-.gal-btn-danger {
-	background: rgba(239,68,68,0.15); color: rgb(248 113 113);
-	border: 0; border-radius: 0.5rem; padding: 0.5rem 1rem;
-	font-size: 0.8125rem; cursor: pointer;
-}
 
 .gal-row { display: flex; gap: 0.5rem; align-items: center; }
 .gal-row--end { justify-content: flex-end; }
-.gal-row--wrap { flex-wrap: wrap; }
-/* No painel do visualizador os campos empilham; `flex: 1` num container em
-   coluna esticaria a altura, então aqui a largura é explícita. */
-.gal-input--full { flex: 0 0 auto; width: 100%; }
 
 /* ── Envio ─────────────────────────────────────────────────────────────────── */
 .gal-upload {
@@ -609,7 +426,7 @@
 	display: flex; flex-direction: column; text-align: left; cursor: pointer;
 	background: rgba(255,255,255,0.03);
 	border: 1px solid rgba(255,255,255,0.07);
-	border-radius: 0.75rem; overflow: hidden; padding: 0;
+	border-radius: 0.75rem; overflow: hidden; padding: 0; text-decoration: none;
 	transition: border-color .15s, transform .15s;
 }
 .gal-card:hover { border-color: rgb(var(--nx-accent-rgb) / 0.45); transform: translateY(-2px); }
@@ -619,7 +436,6 @@
 .gal-card-album { font-size: 0.6875rem; color: rgba(255,255,255,0.4); margin-top: 0.125rem; }
 .gal-card-tags  { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.375rem; }
 .gal-tag        { font-size: 0.625rem; color: rgb(var(--nx-accent-rgb)); background: rgb(var(--nx-accent-rgb) / 0.12); border-radius: 9999px; padding: 0.0625rem 0.375rem; }
-.gal-tag--btn   { border: 0; cursor: pointer; }
 .gal-count      { font-size: 0.6875rem; color: rgba(255,255,255,0.3); text-align: center; }
 .gal-pager      { display: flex; align-items: center; justify-content: center; gap: 1rem; margin-top: 1.5rem; }
 .gal-pager .gal-btn-ghost:disabled { opacity: 0.3; cursor: not-allowed; }
@@ -628,34 +444,10 @@
 .gal-empty-title{ font-size: 0.9375rem; font-weight: 600; color: rgba(255,255,255,0.55); }
 .gal-empty-sub  { font-size: 0.8125rem; color: rgba(255,255,255,0.3); margin-top: 0.375rem; }
 
-/* ── Visualizador ──────────────────────────────────────────────────────────── */
-.gal-viewer {
-	position: fixed; inset: 0; z-index: 200;
-	background: rgba(0,0,0,0.85);
-	display: flex; align-items: center; justify-content: center; padding: 1.5rem;
-}
-.gal-viewer-box {
-	display: grid; grid-template-columns: minmax(0, 1fr) 22rem;
-	gap: 1rem; width: 100%; max-width: 1200px; max-height: 88vh;
-	background: var(--p-bg, #0b0f19);
-	border: 1px solid rgba(255,255,255,0.1);
-	border-radius: 0.875rem; overflow: hidden;
-}
-.gal-viewer-img  { width: 100%; height: 100%; max-height: 88vh; object-fit: contain; background: #000; }
-.gal-viewer-side { padding: 1.25rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0.625rem; }
-.gal-viewer-title{ font-size: 1rem; font-weight: 700; color: #fff; }
-.gal-viewer-meta { font-size: 0.75rem; color: rgba(255,255,255,0.4); }
-.gal-viewer-desc { font-size: 0.8125rem; color: rgba(255,255,255,0.75); }
-.gal-viewer-actions { margin-top: auto; }
-
-/* Telefone: o envio e o visualizador viram uma coluna só — duas colunas de
-   240px + conteúdo não cabem, e o visualizador ficaria com a imagem em uma
-   fatia ilegível. */
+/* Telefone: o envio vira uma coluna só — duas colunas de 240px + conteúdo
+   não cabem. */
 @media (max-width: 860px) {
 	.gal-root { padding: 1rem; }
 	.gal-upload-grid { grid-template-columns: 1fr; }
-	.gal-viewer { padding: 0; }
-	.gal-viewer-box { grid-template-columns: 1fr; grid-template-rows: auto 1fr; max-height: 100dvh; border-radius: 0; }
-	.gal-viewer-img { max-height: 45vh; }
 }
 </style>

@@ -25,6 +25,24 @@ export const actions: Actions = {
 		if (!res.ok) return fail(res.status, { error: (await res.json()).error ?? 'Erreur création tag' });
 	},
 
+	update: async ({ fetch, request, cookies }) => {
+		const token = cookies.get('token')!;
+		const form  = await request.formData();
+		const tagId = form.get('tag_id') as string;
+		const name  = (form.get('name') as string).trim();
+		const color = form.get('color') as string;
+
+		if (!name) return fail(400, { error: 'Le nom est obligatoire.' });
+
+		const res = await apiFetch(fetch, `/instance/tags/${tagId}`, {
+			method: 'PATCH',
+			headers: { Authorization: `Bearer ${token}` },
+			body: JSON.stringify({ name, color }),
+		});
+		if (!res.ok) return fail(res.status, { error: (await res.json()).error ?? 'Erreur modification tag' });
+		return { updated: tagId };
+	},
+
 	delete: async ({ fetch, request, cookies }) => {
 		const token = cookies.get('token')!;
 		const form  = await request.formData();

@@ -8,6 +8,7 @@ import { describe, it, expect, vi } from 'vitest'
 import {
 	searchMentionTargets,
 	searchNpccTargets,
+	searchNpcTargets,
 	mentionInsertText,
 	mentionLabel,
 	type ApiFetch,
@@ -140,5 +141,19 @@ describe('searchNpccTargets — `@npcc:`', () => {
 
 	it('módulo desligado (503) devolve lista vazia, sem erro', async () => {
 		expect(await searchNpccTargets(async () => erro(503), 'x')).toEqual([])
+	})
+})
+
+describe('searchNpcTargets — `@npc:`', () => {
+	it('vira alvo `npc:<id>` com o título da imagem como nome', async () => {
+		const api: ApiFetch = vi.fn(async () => ok({ npcs: [{ id: 'abc-123', title: 'Dona Celeste' }] }))
+		const alvos = await searchNpcTargets(api, 'cel')
+		expect(api).toHaveBeenCalledWith('/trik/npc?q=cel', {})
+		expect(alvos).toEqual([{ username: 'npc:abc-123', avatar: null, alias: 'Dona Celeste', playerName: 'NPC' }])
+		expect(mentionInsertText(alvos[0])).toBe('@[Dona Celeste](npc:abc-123)')
+	})
+
+	it('módulo desligado (503) devolve lista vazia, sem erro', async () => {
+		expect(await searchNpcTargets(async () => erro(503), 'x')).toEqual([])
 	})
 })

@@ -52,6 +52,10 @@ const PatchImageBody = z.object({
   tags:        z.array(z.string().trim().min(1).max(30)).max(12).optional(),
 })
 
+const NoteBody = z.object({
+  content: z.string().min(1).max(20000),
+})
+
 /**
  * A descrição vem do NodyxEditor, então é HTML e passa pelo MESMO sanitize do
  * fórum — não uma lista de tags própria, que divergiria com o tempo. Depois, o
@@ -241,6 +245,76 @@ export default async function galeriaRoutes(app: FastifyInstance) {
     }
 
     await Galeria.deleteImage(communityId, id)
+    return reply.code(204).send()
+  })
+
+  // ── Anotações ──────────────────────────────────────────────────────────────
+  // Só quem enviou a imagem escreve e edita: a linha do tempo é o caderno do
+  // post, não comentários. Admin/owner pode apagar (moderação), não escrever
+  // em nome de ninguém.
+
+  app.get('/images/:id/notes', { preHandler: [rateLimit, requireAuth] }, async (request, reply) => {
+    const communityId = await getCommunityId()
+    if (!communityId) return reply.code(503).send({ error: 'Community not configured' })
+    const { id } = request.params as { id: string }
+    return reply.send({ notes: await Galeria.listNotes(communityId, id) })
+  })
+
+  app.post('/images/:id/notes', {
+    preHandler: [rateLimit, requireAuth, validate({ body: NoteBody })],
+  }, async (request, reply) => {
+    const communityId = await getCommunityId()
+    if (!communityId) return reply.code(503).send({ error: 'Community not configured' })
+    const { id } = request.params as { id: string }
+
+    const imagem = await Galeria.getImage(communityId, id)
+    if (!imagem) return reply.code(404).send({ error: 'Imagem não encontrada.' })
+    if (!imagem.uploader_id || imagem.uploader_id !== request.user!.userId) {
+      return reply.code(403).send({ error: 'Só quem enviou a imagem pode anotar.', code: 'FORBIDDEN' })
+    }
+
+    const c = limparDescricao((request.body as z.infer<typeof NoteBody>).content)
+    if (!c.ok) return reply.code(422).send({ error: c.motivo, code: 'CONTENT_BLOCKED' })
+    if (!c.html) return reply.code(400).send({ error: 'A anotação está vazia.' })
+
+    const note = await Galeria.createNote({
+      communityId, imageId: id, authorId: request.user!.userId, content: c.html,
+    })
+    return reply.code(201).send({ note })
+  })
+
+  app.patch('/notes/:id', {
+    preHandler: [rateLimit, requireAuth, validate({ body: NoteBody })],
+  }, async (request, reply) => {
+    const communityId = await getCommunityId()
+    if (!communityId) return reply.code(503).send({ error: 'Community not configured' })
+    const { id } = request.params as { id: string }
+
+    const atual = await Galeria.getNote(communityId, id)
+    if (!atual) return reply.code(404).send({ error: 'Anotação não encontrada.' })
+    if (atual.author_id !== request.user!.userId) {
+      return reply.code(403).send({ error: 'Forbidden', code: 'FORBIDDEN' })
+    }
+
+    const c = limparDescricao((request.body as z.infer<typeof NoteBody>).content)
+    if (!c.ok) return reply.code(422).send({ error: c.motivo, code: 'CONTENT_BLOCKED' })
+    if (!c.html) return reply.code(400).send({ error: 'A anotação está vazia.' })
+
+    return reply.send({ note: await Galeria.updateNote(communityId, id, c.html) })
+  })
+
+  app.delete('/notes/:id', { preHandler: [rateLimit, requireAuth] }, async (request, reply) => {
+    const communityId = await getCommunityId()
+    if (!communityId) return reply.code(503).send({ error: 'Community not configured' })
+    const { id } = request.params as { id: string }
+
+    const atual = await Galeria.getNote(communityId, id)
+    if (!atual) return reply.code(404).send({ error: 'Anotação não encontrada.' })
+    if (!(await podeEditar(request.user!.userId, atual.author_id))) {
+      return reply.code(403).send({ error: 'Forbidden', code: 'FORBIDDEN' })
+    }
+
+    await Galeria.deleteNote(communityId, id)
     return reply.code(204).send()
   })
 }

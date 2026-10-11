@@ -5,7 +5,7 @@
 	import { anchoredPopover } from '$lib/actions/anchoredPopover'
 	import { t } from '$lib/i18n'
 	import { TextSelection } from '@tiptap/pm/state'
-	import { searchMentionTargets, searchNpccTargets, mentionInsertText, type MentionTarget } from '$lib/mentionTargets'
+	import { searchMentionTargets, searchNpccTargets, searchNpcTargets, mentionInsertText, type MentionTarget } from '$lib/mentionTargets'
 
 	let {
 		name       = 'content',
@@ -768,9 +768,11 @@
 		// \w do chat não permite. A busca no servidor é ILIKE %termo%.
 		// `@npcc:<nome>` (trik) : lista os tópicos da categoria NPCC em vez de
 		// membros. Aceita espaço na consulta, nome de NPCC costuma ter. Testado
-		// antes da forma simples, que pararia no `:`.
+		// antes da forma simples, que pararia no `:`. `@npc:<nome>` faz o mesmo
+		// com as imagens do álbum NPC da galeria.
 		const npcc = antes.match(/@npcc:([\p{L}\p{N} _-]{0,30})$/iu)
-		const m = npcc ?? antes.match(/@([\p{L}\p{N}_-]{1,30})$/u)
+		const npc  = npcc ? null : antes.match(/@npc:([\p{L}\p{N} _-]{0,30})$/iu)
+		const m = npcc ?? npc ?? antes.match(/@([\p{L}\p{N}_-]{1,30})$/u)
 		if (!m) return fecharMention()
 
 		mentionFrom = from - m[0].length
@@ -785,7 +787,9 @@
 			const api   = (path: string, init?: RequestInit) => apiFetch(fetch, path, init)
 			const alvos = npcc
 				? await searchNpccTargets(api, m[1].trim(), token)
-				: await searchMentionTargets(api, m[1], token)
+				: npc
+					? await searchNpcTargets(api, m[1].trim(), token)
+					: await searchMentionTargets(api, m[1], token)
 			if (seq !== mentionSeq) return
 			mentionItems = alvos
 			mentionOpen  = alvos.length > 0

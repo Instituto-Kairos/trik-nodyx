@@ -628,6 +628,32 @@ export async function searchNpccThreads(communityId: string, q: string, limit = 
   return rows
 }
 
+/** Um NPC mencionável = uma imagem do álbum NPC da galeria. */
+export interface TrikNpcImage {
+  id:    string   // UUID da imagem — vai no alvo `npc:<id>`
+  title: string   // nome do NPC, como aparece na cena
+}
+
+/**
+ * Imagens do álbum NPC da galeria para o autocomplete de `@npc:`. O álbum é
+ * achado pelo slug ou pelo nome `npc`/`npcs`, como a categoria do `@npcc:`.
+ */
+export async function searchNpcImages(communityId: string, q: string, limit = 8): Promise<TrikNpcImage[]> {
+  const termo = q.trim()
+  const { rows } = await db.query<TrikNpcImage>(
+    `SELECT i.id, i.title
+       FROM galeria_images i
+       JOIN galeria_albums a ON a.id = i.album_id
+      WHERE i.community_id = $1
+        AND (a.slug IN ('npc', 'npcs') OR LOWER(a.name) IN ('npc', 'npcs'))
+        AND ($2 = '' OR i.title ILIKE $3)
+      ORDER BY i.title ASC
+      LIMIT $4`,
+    [communityId, termo, `%${termo}%`, limit],
+  )
+  return rows
+}
+
 export async function listRegistros(): Promise<TrikRegistroPlayer[]> {
   const [players, characters] = await Promise.all([
     db.query(

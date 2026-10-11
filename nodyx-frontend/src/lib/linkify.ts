@@ -97,10 +97,13 @@ function mapTextNodes(
 /**
  * Para onde aponta uma marcação. `npcc:<thread id>` (`@npcc:` no compositor,
  * ver $lib/mentionTargets) é um tópico da categoria NPCC : `/forum/npccs/<id>`,
- * que a página do tópico redireciona para a URL canônica. O resto é jogador.
+ * que a página do tópico redireciona para a URL canônica. `npc:<image id>`
+ * (`@npc:`) é uma imagem do álbum NPC da galeria : `/galeria/<id>`. O resto é
+ * jogador.
  */
 export function mentionHref(target: string): string {
   if (target.startsWith('npcc:')) return `/forum/npccs/${encodeURIComponent(target.slice(5))}`
+  if (target.startsWith('npc:'))  return `/galeria/${encodeURIComponent(target.slice(4))}`
   return `/users/${target}`
 }
 

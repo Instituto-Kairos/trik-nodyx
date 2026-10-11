@@ -333,6 +333,21 @@ export async function trikPlayerPlugin(app: FastifyInstance) {
     return reply.send({ npccs })
   })
 
+  // GET /api/v1/trik/npc?q= — imagens do álbum NPC da galeria para `@npc:`.
+  //
+  // Mesmo esquema do /npcc: o cliente insere `@[<título>](npc:<image id>)`,
+  // que renderiza como link para /galeria/<id> e não notifica ninguém.
+  app.get('/npc', async (request, reply) => {
+    const communityId = await getCommunityId()
+    if (!communityId) return reply.code(503).send({ error: 'Community not configured' })
+
+    const { q } = request.query as { q?: string }
+    const termo = (q ?? '').trim().slice(0, 100)
+
+    const npcs = await TrikModel.searchNpcImages(communityId, termo)
+    return reply.send({ npcs })
+  })
+
   // Opções dos dropdowns de panteão/vínculo divino do modal de /registro.
   app.get('/pantheons', async (_request, reply) => {
     return reply.send({ pantheons: await TrikModel.listPantheons() })

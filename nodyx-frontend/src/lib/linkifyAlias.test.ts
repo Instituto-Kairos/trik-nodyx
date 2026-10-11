@@ -166,3 +166,18 @@ describe('alias de NPCC — `@[Nome](npcc:<thread id>)`', () => {
 		expect(hrefs(linkifyHtml(`<p>@[Dona Celeste](npcc:${ID})</p>`))).toEqual([`/forum/npccs/${ID}`])
 	})
 })
+
+describe('alias de NPC — `@[Nome](npc:<image id>)`', () => {
+	const ID = '3f2b9c1e-0a4d-4e8b-9c7f-1d2e3f4a5b6c'
+
+	it('linka a página da imagem na galeria', () => {
+		const html = renderAliasMentions(`<p>@[Dona Celeste](npc:${ID}) serve o chá.</p>`)
+		expect(hrefs(html)).toEqual([`/galeria/${ID}`])
+		expect(html).toContain('>Dona Celeste</a>')
+	})
+
+	it('não confunde com `npcc:`', () => {
+		expect(hrefs(linkifyHtml(`<p>@[A](npc:${ID}) @[B](npcc:${ID})</p>`)))
+			.toEqual([`/galeria/${ID}`, `/forum/npccs/${ID}`])
+	})
+})

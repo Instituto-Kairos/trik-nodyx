@@ -132,3 +132,28 @@ export async function searchNpccTargets(api: ApiFetch, q: string, token?: string
 		playerName: 'NPCC',
 	}))
 }
+
+// ── NPC (`@npc:`) ─────────────────────────────────────────────────────────────
+// Um NPC é uma imagem do álbum NPC da galeria. Mesmo esquema do `@npcc:`: o alvo
+// é `npc:<image id>` (UUID), o render linka /galeria/<id> e ninguém é notificado.
+
+export const NPC_PREFIX = 'npc:'
+
+/** Busca as imagens do álbum NPC já no formato de alvo do dropdown. */
+export async function searchNpcTargets(api: ApiFetch, q: string, token?: string): Promise<MentionTarget[]> {
+	const init: RequestInit = token ? { headers: { Authorization: `Bearer ${token}` } } : {}
+	const res = await api(`/trik/npc?q=${encodeURIComponent(q)}`, init).catch(() => null)
+	if (!res?.ok) return []
+	let npcs: { id: string; title: string }[] = []
+	try {
+		npcs = (await res.json())?.npcs ?? []
+	} catch {
+		return []
+	}
+	return npcs.map((n) => ({
+		username: NPC_PREFIX + n.id,
+		avatar: null,
+		alias: n.title.replace(/[\]\n]/g, ' ').slice(0, 100),
+		playerName: 'NPC',
+	}))
+}

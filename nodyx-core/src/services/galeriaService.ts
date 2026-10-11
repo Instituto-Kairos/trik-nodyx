@@ -284,3 +284,74 @@ export async function deleteImage(communityId: string, id: string): Promise<{ up
   }
   return { uploader_id: rows[0].uploader_id }
 }
+
+// ── Anotações ─────────────────────────────────────────────────────────────────
+// A linha do tempo da página de uma imagem (galeria_002_notes.sql). Quem pode
+// escrever é decidido na rota; aqui só se lê e grava.
+
+export interface GaleriaNote {
+  id: string
+  image_id: string
+  community_id: string
+  author_id: string | null
+  content: string   // HTML já sanitizado
+  created_at: string
+  updated_at: string
+  author_username?: string | null
+  author_avatar?: string | null
+}
+
+const NOTE_SELECT =
+  `SELECT n.*, u.username AS author_username, u.avatar AS author_avatar
+     FROM galeria_notes n
+     LEFT JOIN users u ON u.id = n.author_id`
+
+/** Em ordem cronológica: a linha do tempo se lê de cima para baixo. */
+export async function listNotes(communityId: string, imageId: string): Promise<GaleriaNote[]> {
+  const { rows } = await db.query<GaleriaNote>(
+    `${NOTE_SELECT}
+      WHERE n.image_id = $1 AND n.community_id = $2
+      ORDER BY n.created_at ASC`,
+    [imageId, communityId],
+  )
+  return rows
+}
+
+export async function getNote(communityId: string, id: string): Promise<GaleriaNote | null> {
+  const { rows } = await db.query<GaleriaNote>(
+    `${NOTE_SELECT} WHERE n.id = $1 AND n.community_id = $2`,
+    [id, communityId],
+  )
+  return rows[0] ?? null
+}
+
+export async function createNote(opts: {
+  communityId: string
+  imageId: string
+  authorId: string
+  content: string   // HTML JÁ sanitizado
+}): Promise<GaleriaNote> {
+  const { rows } = await db.query<{ id: string }>(
+    `INSERT INTO galeria_notes (image_id, community_id, author_id, content)
+     VALUES ($1,$2,$3,$4) RETURNING id`,
+    [opts.imageId, opts.communityId, opts.authorId, opts.content],
+  )
+  return (await getNote(opts.communityId, rows[0].id))!
+}
+
+export async function updateNote(communityId: string, id: string, content: string): Promise<GaleriaNote | null> {
+  const { rowCount } = await db.query(
+    `UPDATE galeria_notes SET content = $1, updated_at = NOW()
+      WHERE id = $2 AND community_id = $3`,
+    [content, id, communityId],
+  )
+  return rowCount ? getNote(communityId, id) : null
+}
+
+export async function deleteNote(communityId: string, id: string): Promise<boolean> {
+  const { rowCount } = await db.query(
+    `DELETE FROM galeria_notes WHERE id = $1 AND community_id = $2`,
+    [id, communityId],
+  )
+  return (rowCount ?? 0) > 0
+}

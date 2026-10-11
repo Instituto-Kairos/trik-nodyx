@@ -9,6 +9,9 @@
 
 	const tags = $derived(data.tags ?? []);
 
+	// Linha em edição (uma por vez). Fecha sozinha quando o update volta ok.
+	let editId = $state<string | null>(null);
+
 	function luminance(hex: string) {
 		const r = parseInt(hex.slice(1, 3), 16);
 		const g = parseInt(hex.slice(3, 5), 16);
@@ -68,6 +71,28 @@
 				<tbody class="divide-y divide-gray-800/60">
 					{#each tags as tag}
 						<tr class="bg-gray-900/30 hover:bg-gray-900/60 transition-colors">
+							{#if editId === tag.id}
+							<td class="px-4 py-3" colspan="3">
+								<form method="POST" action="?/update" class="flex flex-wrap items-center gap-2"
+									use:enhance={() => async ({ result, update }) => {
+										await update({ reset: false });
+										if (result.type === 'success') editId = null;
+									}}>
+									<input type="hidden" name="tag_id" value={tag.id} />
+									<input name="name" type="text" required maxlength="50" value={tag.name}
+										aria-label={tFn('atags.name')}
+										class="flex-1 min-w-[10rem] rounded-lg bg-gray-800 border border-gray-700 px-3 py-1.5 text-white text-sm focus:outline-none focus:border-indigo-500" />
+									<input name="color" type="color" value={tag.color} aria-label={tFn('atags.color')}
+										class="h-9 w-14 rounded-lg bg-gray-800 border border-gray-700 px-1 cursor-pointer" />
+									<button type="submit" class="rounded-lg bg-indigo-600 hover:bg-indigo-500 px-3 py-1.5 text-xs font-semibold text-white">
+										{tFn('common.save')}
+									</button>
+									<button type="button" onclick={() => (editId = null)} class="text-xs text-gray-400 hover:text-white">
+										{tFn('common.cancel')}
+									</button>
+								</form>
+							</td>
+							{:else}
 							<td class="px-4 py-3" data-label={tFn('atags.col_tag')}>
 								<span class="inline-block rounded-full px-3 py-1 text-xs font-semibold"
 									style="background:{tag.color}; color:{luminance(tag.color) > 0.5 ? '#111' : '#fff'}">
@@ -75,7 +100,11 @@
 								</span>
 							</td>
 							<td class="px-4 py-3 text-gray-400 font-mono text-xs" data-label={tFn('atags.col_slug')}>{tag.slug}</td>
-							<td class="px-4 py-3 text-right">
+							<td class="px-4 py-3 text-right whitespace-nowrap">
+								<button type="button" onclick={() => (editId = tag.id)}
+									class="text-xs text-indigo-400 hover:text-indigo-300 mr-3">
+									{tFn('common.edit')}
+								</button>
 								<form method="POST" action="?/delete" use:enhance class="inline">
 									<input type="hidden" name="tag_id" value={tag.id} />
 									<button type="submit"
@@ -85,6 +114,7 @@
 									</button>
 								</form>
 							</td>
+							{/if}
 						</tr>
 					{/each}
 				</tbody>
