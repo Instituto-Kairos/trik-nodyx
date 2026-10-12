@@ -38,7 +38,11 @@ export function mentionLabel(t: MentionTarget): string {
  * uma marcação do jogador — e o único lugar que produz o formato de alias.
  */
 export function mentionInsertText(t: MentionTarget): string {
-	return t.alias ? `@[${t.alias}](${t.username})` : `@${t.username}`
+	if (t.alias) return `@[${t.alias}](${t.username})`
+	// `@username` simples termina no primeiro espaço/símbolo: um username fora do
+	// charset `[\w-]` (ex.: "Nome Sobrenome") vai no formato com colchetes, que
+	// delimita o alvo pelo `)` e aceita espaço.
+	return /^[\w-]+$/.test(t.username) ? `@${t.username}` : `@[@${t.username}](${t.username})`
 }
 
 interface AliasResposta {

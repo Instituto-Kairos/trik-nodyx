@@ -17,7 +17,7 @@ const MENTION_REGEX  = /(?:^|\s)@([a-zA-Z0-9_-]{2,32})/g
 // ATENÇÃO: o mesmo formato vive no servidor, em
 // nodyx-core/src/utils/mentions.ts (é ele que notifica). Bundles separados, sem
 // módulo comum: mudar um exige mudar o outro. Os dois têm teste.
-const ALIAS_MENTION_REGEX = /(^|\s)@\[([^\]\n]{1,100})\]\(([^)\s\n]{2,50})\)/g
+const ALIAS_MENTION_REGEX = /(^|\s)@\[([^\]\n]{1,100})\]\(([^)\n]{2,50})\)/g
 
 // Escape ASSIMÉTRICO, e a assimetria é o ponto:
 //
@@ -104,7 +104,7 @@ function mapTextNodes(
 export function mentionHref(target: string): string {
   if (target.startsWith('npcc:')) return `/forum/npccs/${encodeURIComponent(target.slice(5))}`
   if (target.startsWith('npc:'))  return `/galeria/${encodeURIComponent(target.slice(4))}`
-  return `/users/${target}`
+  return `/users/${encodeURIComponent(target)}`
 }
 
 /** O <a> de um alias: nome do personagem visível, jogador no href. */
@@ -194,7 +194,7 @@ const TRAILING_PUNCT  = /[.,;:!?)\]}»>"']+$/
 // `@[Kaelen](rafael)` nunca seria alcançada pela forma simples logo atrás.
 //   grupo 1 = espaço/início   2 = nome exibido   3 = username do alias
 //   grupo 4 = username da menção simples
-const ANY_MENTION_RE  = /(^|\s)(?:@\[([^\]\n]{1,100})\]\(([^)\s\n]{2,50})\)|@([a-zA-Z0-9_-]{2,32}))/g
+const ANY_MENTION_RE  = /(^|\s)(?:@\[([^\]\n]{1,100})\]\(([^)\n]{2,50})\)|@([a-zA-Z0-9_-]{2,32}))/g
 
 export function linkify(text: string): ExtSegment[] {
   if (!text) return []

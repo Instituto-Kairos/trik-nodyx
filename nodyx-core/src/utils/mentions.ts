@@ -17,7 +17,8 @@ const MAX_MENTIONS_PER_MESSAGE = 20
 // as duas formas não se pisam — em `@[Kaelen](rafael)` o caractere após o `@`
 // é `[`, que não é `\w`, então MENTION_RE não casa nada ali.
 //
-// O username aceita qualquer coisa que não seja `)` nem espaço (o fechamento
+// O username aceita qualquer coisa que não seja `)` nem quebra de linha —
+// espaço inclusive, para usernames como "Nome Sobrenome" (o fechamento
 // delimita), até 50 caracteres = o máximo de users.username. A busca em base
 // é por igualdade exata e parametrizada, então a permissividade do regex não
 // alarga superfície de ataque.
@@ -25,7 +26,7 @@ const MAX_MENTIONS_PER_MESSAGE = 20
 // ATENÇÃO: este formato é duplicado no cliente, em
 // nodyx-frontend/src/lib/linkify.ts (bundles separados, sem módulo comum).
 // Mudar um exige mudar o outro; os dois têm teste.
-const ALIAS_MENTION_RE = /@\[[^\]\n]{1,100}\]\(([^)\s\n]{2,50})\)/g
+const ALIAS_MENTION_RE = /@\[[^\]\n]{1,100}\]\(([^)\n]{2,50})\)/g
 const MENTION_RE       = /@([\w\-]{2,30})/g
 
 // Scan HTML content for @username mentions, return matching user IDs.

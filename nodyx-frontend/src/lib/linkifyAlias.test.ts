@@ -89,8 +89,14 @@ describe('linkifyHtml — alias de personagem', () => {
 		// então um `"` cru fecharia o atributo e permitiria injetar outro. Um `"`
 		// sobrevive num nó de texto HTML — sanitize-html não o codifica ali.
 		const out = linkifyHtml('<p>@[Kaelen](ra"onmouseover="x)</p>')
-		expect(out).toContain('href="/users/ra&quot;onmouseover=&quot;x"')
+		expect(out).toContain('href="/users/ra%22onmouseover%3D%22x"')
 		expect(out).not.toMatch(/href="[^"]*"\s*onmouseover/)
+	})
+
+	it('aceita username com espaço', () => {
+		const out = linkifyHtml('<p>oi @[@Nome Sobrenome](Nome Sobrenome)!</p>')
+		expect(out).toContain('href="/users/Nome%20Sobrenome"')
+		expect(out).toContain('>@Nome Sobrenome</a>!')
 	})
 
 	it('não toca alias dentro de <code>', () => {
