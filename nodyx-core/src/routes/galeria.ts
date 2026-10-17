@@ -52,6 +52,10 @@ const PatchImageBody = z.object({
   tags:        z.array(z.string().trim().min(1).max(30)).max(12).optional(),
 })
 
+const TagBody = z.object({
+  name: z.string().trim().min(1).max(30),
+})
+
 const NoteBody = z.object({
   content: z.string().min(1).max(20000),
 })
@@ -112,6 +116,43 @@ export default async function galeriaRoutes(app: FastifyInstance) {
     }
     const ok = await Galeria.deleteAlbum(communityId, id)
     return ok ? reply.code(204).send() : reply.code(404).send({ error: 'Álbum não encontrado.' })
+  })
+
+  // ── Tags ───────────────────────────────────────────────────────────────────
+  // Catálogo: qualquer membro cadastra (é o que evita redigitar), só admin/owner
+  // apaga, porque apagar tira a tag de todas as imagens.
+
+  app.get('/tags', { preHandler: [rateLimit, requireAuth] }, async (_request, reply) => {
+    const communityId = await getCommunityId()
+    if (!communityId) return reply.code(503).send({ error: 'Community not configured' })
+    return reply.send({ tags: await Galeria.listTags(communityId) })
+  })
+
+  app.post('/tags', {
+    preHandler: [rateLimit, requireAuth, validate({ body: TagBody })],
+  }, async (request, reply) => {
+    const communityId = await getCommunityId()
+    if (!communityId) return reply.code(503).send({ error: 'Community not configured' })
+    const { name } = request.body as z.infer<typeof TagBody>
+
+    const c = checkHtmlContent(name)
+    if (!c.ok) return reply.code(422).send({ error: c.reason, code: 'CONTENT_BLOCKED' })
+
+    const tag = await Galeria.createTag(communityId, name.replace(/,/g, ' '), request.user!.userId)
+    return tag ? reply.code(201).send({ tag }) : reply.code(400).send({ error: 'Tag inválida.' })
+  })
+
+  app.delete('/tags/:id', { preHandler: [rateLimit, requireAuth] }, async (request, reply) => {
+    const communityId = await getCommunityId()
+    if (!communityId) return reply.code(503).send({ error: 'Community not configured' })
+    const { id } = request.params as { id: string }
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return reply.code(404).send({ error: 'Tag não encontrada.' })
+
+    if (!(await podeModerar(request.user!.userId))) {
+      return reply.code(403).send({ error: 'Admin required', code: 'FORBIDDEN' })
+    }
+    const ok = await Galeria.deleteTag(communityId, id)
+    return ok ? reply.code(204).send() : reply.code(404).send({ error: 'Tag não encontrada.' })
   })
 
   // ── Imagens ────────────────────────────────────────────────────────────────
@@ -176,8 +217,12 @@ export default async function galeriaRoutes(app: FastifyInstance) {
     if (!scan.ok) return reply.code(400).send({ error: `Arquivo recusado: ${scan.reason}` })
 
     const albumId = campo('album_id')
-    const tags = (campo('tags') ?? '')
-      .split(',').map(t => t.trim()).filter(Boolean).slice(0, 12)
+    // Tag nova entra no catálogo; tag existente volta na grafia cadastrada.
+    const tags = await Galeria.registerTags(
+      communityId,
+      (campo('tags') ?? '').split(',').slice(0, 12),
+      request.user!.userId,
+    )
 
     try {
       const image = await Galeria.uploadImage({
@@ -228,7 +273,7 @@ export default async function galeriaRoutes(app: FastifyInstance) {
       title:       body.title,
       description: descricao,
       albumId:     body.album_id,
-      tags:        body.tags,
+      tags:        body.tags && await Galeria.registerTags(communityId, body.tags, request.user!.userId),
     })
     return reply.send({ image })
   })

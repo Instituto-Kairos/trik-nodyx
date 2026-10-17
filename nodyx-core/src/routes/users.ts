@@ -8,6 +8,11 @@ import { rateLimit } from '../middleware/rateLimit'
 import { requireAuth } from '../middleware/auth'
 import { validate } from '../middleware/validate'
 import * as UserModel from '../models/user'
+import {
+  changeUsername, nextUsernameChangeAt, resolveRenamedUsername, UsernameChangeError,
+  USERNAME_CHANGE_INTERVAL_DAYS,
+} from '../models/usernameHistory'
+import { signToken, trackSession, invalidateUserSessions, SESSION_TTL } from './auth'
 import { toPublicUser, toSelfUser } from '../utils/publicUser'
 import { db, redis } from '../config/database'
 import { io } from '../socket/io'
@@ -42,6 +47,11 @@ const localFontUrl = z.string().max(500).refine(
   v => isContainedUploadPath(v) && !/['"\\]/.test(v),
   { message: 'Font URL must point to /uploads/ and must not contain quotes or backslashes' }
 ).nullable().optional()
+
+// Mesmas regras do cadastro (routes/auth.ts, RegisterBody).
+const ChangeUsernameBody = z.object({
+  username: z.string().trim().min(3).max(50),
+})
 
 const PatchProfileBody = z.object({
   display_name:      z.string().max(100).nullable().optional(),
@@ -218,6 +228,57 @@ export default async function userRoutes(app: FastifyInstance) {
   })
 
   // PATCH /api/v1/users/me/profile
+  // ── Troca de nome de usuário (trik_011) ─────────────────────────────────
+  // 1 vez a cada 30 dias. O nome antigo vai pro username_history: links e
+  // menções antigas continuam levando à conta, e ninguém mais pode usá-lo.
+
+  app.get('/me/username', {
+    preHandler: [requireAuth],
+  }, async (request, reply) => {
+    const next = await nextUsernameChangeAt(request.user!.userId)
+    return reply.send({ nextChangeAt: next?.toISOString() ?? null, intervalDays: USERNAME_CHANGE_INTERVAL_DAYS })
+  })
+
+  app.patch('/me/username', {
+    preHandler: [rateLimit, requireAuth, validate({ body: ChangeUsernameBody })],
+  }, async (request, reply) => {
+    const { username } = request.body as z.infer<typeof ChangeUsernameBody>
+    const userId = request.user!.userId
+
+    // Mesmo filtro dos campos livres do perfil (PATCH /me/profile).
+    const fc = checkContent(username)
+    if (!fc.ok) return reply.code(422).send({ error: fc.reason, code: 'CONTENT_BLOCKED' })
+
+    try {
+      const changed = await changeUsername(userId, username)
+      // O token carrega o username: encerra todas as sessões (as outras abas
+      // e aparelhos ficariam com o nome velho) e devolve uma nova pra esta.
+      await invalidateUserSessions(userId)
+      const token = signToken(userId, changed.username)
+      await redis.set(`session:${token}`, userId, 'EX', SESSION_TTL)
+      await trackSession(userId, token)
+      // Sockets abertos guardam o username da conexão (socket.data) e não
+      // passam de novo pela sessão: derruba, o cliente reconecta com o token novo.
+      io?.in(`user:${userId}`).disconnectSockets(true)
+      return reply.send({ username: changed.username, token })
+    } catch (err) {
+      if (err instanceof UsernameChangeError) {
+        const status = err.code === 'TAKEN' ? 409 : err.code === 'TOO_SOON' ? 429 : err.code === 'NOT_FOUND' ? 404 : 400
+        return reply.code(status).send({ error: err.message, code: `USERNAME_${err.code}` })
+      }
+      throw err
+    }
+  })
+
+  // GET /api/v1/users/resolve/:username — nome atual de quem já usou esse
+  // nome. O perfil usa pra redirecionar /users/<nome antigo>.
+  app.get('/resolve/:username', async (request, reply) => {
+    const { username } = request.params as { username: string }
+    const current = await resolveRenamedUsername(username)
+    if (!current) return reply.code(404).send({ error: 'Not found', code: 'NOT_FOUND' })
+    return reply.send({ username: current })
+  })
+
   app.patch('/me/profile', {
     preHandler: [rateLimit, requireAuth, validate({ body: PatchProfileBody })],
   }, async (request, reply) => {

@@ -34,6 +34,18 @@
 			label: 'Anúncio',
 			command: 'automático',
 			description: 'Canal onde o bot Trik avisa quando um personagem sobe de nível (Fase 2). A contagem de XP em si é marcada por tópico do fórum, não aqui.'
+		},
+		{
+			value: 'clima',
+			label: 'Clima',
+			command: 'automático',
+			description: 'Recebe o aviso do clima da semana (nascer/pôr do sol, chuva, temperatura e alertas) ao selecionar a semana na aba Clima.'
+		},
+		{
+			value: 'alertas',
+			label: 'Alertas',
+			command: 'automático',
+			description: 'Recebe o aviso de personagem "passando mal" ao treinar em alerta vermelho, marcando o narrador.'
 		}
 	];
 

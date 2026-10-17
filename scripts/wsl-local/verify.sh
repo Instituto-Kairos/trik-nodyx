@@ -8,17 +8,20 @@ set -uo pipefail
 ENV_FILE=/opt/nodyx/nodyx-core/.env
 DB_PASSWORD=$(grep '^DB_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)
 export PGPASSWORD="$DB_PASSWORD"
+# Sem paginador: a lista de tabelas passou de uma tela e o psql parava no
+# "less" esperando tecla, travando o update.sh.
+export PAGER=cat PSQL_PAGER=cat
 
 echo "=== 1. Migrations do trik aplicadas? ==="
-psql -h localhost -U nodyx_user -d nodyx -c "SELECT version, run_at FROM schema_migrations WHERE version LIKE 'trik%' ORDER BY run_at;"
+psql -X -P pager=off -h localhost -U nodyx_user -d nodyx -c "SELECT version, run_at FROM schema_migrations WHERE version LIKE 'trik%' ORDER BY run_at;"
 
 echo
 echo "=== 2. Tabelas trik_* existem? ==="
-psql -h localhost -U nodyx_user -d nodyx -c "\dt trik_*"
+psql -X -P pager=off -h localhost -U nodyx_user -d nodyx -c "\dt trik_*"
 
 echo
 echo "=== 3. Curva de XP (todos os types) ==="
-psql -h localhost -U nodyx_user -d nodyx -c "SELECT type, level, goal_xp, req_mastery, req_education FROM trik_progression ORDER BY type, level;"
+psql -X -P pager=off -h localhost -U nodyx_user -d nodyx -c "SELECT type, level, goal_xp, req_mastery, req_education FROM trik_progression ORDER BY type, level;"
 
 echo
 echo "=== 4. PM2 (precisa root) ==="

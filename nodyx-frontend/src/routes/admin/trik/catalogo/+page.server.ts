@@ -26,14 +26,14 @@ export const actions: Actions = {
 		const type = resolveType(String(form.get('type') ?? ''));
 		const name = String(form.get('name') ?? '').trim();
 		if (!name) return fail(400, { error: 'Digite um nome' });
-		// Categoria só existe pra arma (validação de bônus por categoria, Fase 3).
+		// Arma e matéria exigem categoria (alvo de bônus por categoria, Fase 3).
 		const category = String(form.get('category') ?? '').trim();
-		if (type === 'weapon' && !category) return fail(400, { error: 'Informe a categoria da arma' });
+		if (!category) return fail(400, { error: 'Informe a categoria' });
 
 		const res = await apiFetch(fetch, '/admin/trik/catalog', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-			body: JSON.stringify(type === 'weapon' ? { type, name, category } : { type, name })
+			body: JSON.stringify({ type, name, category })
 		});
 
 		if (!res.ok) {

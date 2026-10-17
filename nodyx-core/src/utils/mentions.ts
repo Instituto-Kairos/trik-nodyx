@@ -57,10 +57,14 @@ export async function resolveMentions(html: string, communityId: string): Promis
 
   // Exclut les utilisateurs système (bots OctoGuard et autres) :
   // un user humain ne peut pas mentionner un bot pour le notifier.
+  // Nome antigo (username_history) também resolve: quem trocou de nome
+  // continua sendo notificado por quem ainda usa o @ de antes.
   const { rows } = await db.query<{ id: string }>(
-    `SELECT u.id FROM users u
+    `SELECT DISTINCT u.id FROM users u
      JOIN community_members cm ON cm.user_id = u.id
-     WHERE LOWER(u.username) = ANY($1) AND u.is_system = false AND cm.community_id = $2`,
+     WHERE u.is_system = false AND cm.community_id = $2
+       AND (LOWER(u.username) = ANY($1)
+            OR u.id IN (SELECT h.user_id FROM username_history h WHERE LOWER(h.old_username) = ANY($1)))`,
     [Array.from(usernames), communityId]
   )
   return rows.map(r => r.id)

@@ -19,6 +19,18 @@ const HTML_ESCAPES: Record<string, string> = {
  * Use SÓ em texto vindo do jogador — a menção intencional ao autor do
  * comando (`@${username}`) continua fora daqui.
  */
+/**
+ * Menção que notifica o dono de verdade: forma de alias `@[nome](username)`
+ * (utils/mentions.ts), que aceita qualquer username — inclusive com espaço ou
+ * acento, que o `@nome` simples não casa. Com `)`, `]`, quebra de linha ou
+ * caractere que o HTML escaparia (o alvo escapado deixaria de bater com o
+ * username), não dá pra marcar: sai só o nome, escapado.
+ */
+export function mentionUser(username: string): string {
+  if (/[\])\n&<>"']/.test(username)) return username.replace(/[&<>"']/g, ch => HTML_ESCAPES[ch])
+  return `@[${username}](${username})`
+}
+
 export function botSafe(text: string): string {
   return text
     .replace(/[&<>"']/g, ch => HTML_ESCAPES[ch])

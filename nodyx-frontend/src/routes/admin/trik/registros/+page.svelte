@@ -575,6 +575,10 @@ Isso apaga também o nível, o XP, as maestrias e os bônus dele. Não dá para 
 											{/if}
 										</dl>
 									</div>
+									<a
+										href="/admin/trik/registros/{character.id}"
+										class="inline-block mt-4 text-xs font-medium text-indigo-400 hover:text-indigo-300"
+									>Ficha completa (aptidões, preferências, desbloqueios, maestrias, cenas) →</a>
 								</td>
 							</tr>
 						{/if}

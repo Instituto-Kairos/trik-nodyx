@@ -4,15 +4,17 @@
  * plans/fase-dois-passo-a-passo.md, passo 6.2.
  *
  * Mesma convenção dos services da Fase 1 (registro/plaquinha): nunca lança
- * — devolve resultado tipado, a rota decide o código HTTP. Sem Aptidões
- * nesta fase (ver passo 0 do passo-a-passo) — só Conduct/Principles
- * (pontos), Preferência (1 slot por submit) e Objetivo (desbloqueio por
- * has_goal, sem custo de pontos).
+ * — devolve resultado tipado, a rota decide o código HTTP. Conduct/Principles
+ * (pontos), Preferência (1 slot por submit), Objetivo (desbloqueio por
+ * has_goal, sem custo de pontos) e, desde a Fase 3, Aptidão natural e
+ * adquirida (1 slot de cada por submit, liberados pela curva de XP).
+ * Escolhas de slot são definitivas.
  */
 
 import {
   getPlayer, getCharacterById, getOrCreateProgress, getCharacterBonuses,
   applyLevelupAllocation, LevelupRejectedError,
+  NATURAL_APTITUDE_SLOTS, ACQUIRED_APTITUDE_SLOTS,
   type TrikCharacter, type LevelupDeltas, type LevelupBonusFill, type BonusSlot,
 } from '../../../models/trik'
 
@@ -21,6 +23,8 @@ export interface LevelupInput {
   deltas:        LevelupDeltas
   preferenceId?: string
   goalId?:       string
+  naturalAptitudeId?:  string
+  acquiredAptitudeId?: string
 }
 
 export type LevelupResult =
@@ -55,7 +59,8 @@ export async function submitLevelup(userId: string, input: LevelupInput): Promis
   }
 
   const bonusFills: LevelupBonusFill[] = []
-  const bonuses = (input.preferenceId || input.goalId) ? await getCharacterBonuses(character.id) : null
+  const wantsSlot = input.preferenceId || input.goalId || input.naturalAptitudeId || input.acquiredAptitudeId
+  const bonuses = wantsSlot ? await getCharacterBonuses(character.id) : null
 
   if (input.preferenceId) {
     if (availablePreferences <= 0) {
@@ -68,6 +73,34 @@ export async function submitLevelup(userId: string, input: LevelupInput): Promis
       return { ok: false, code: 'VALIDATION', message: 'Já escolheu as duas preferências' }
     }
     bonusFills.push({ slot, valueId: input.preferenceId })
+  }
+
+  // Aptidões: a mesma aptidão não pode ocupar dois slots.
+  const ownedAptitudes = new Set(
+    [...NATURAL_APTITUDE_SLOTS, ...ACQUIRED_APTITUDE_SLOTS].map(s => bonuses?.[s]).filter(Boolean)
+  )
+  if (input.naturalAptitudeId && input.naturalAptitudeId === input.acquiredAptitudeId) {
+    return { ok: false, code: 'VALIDATION', message: 'Escolha aptidões diferentes' }
+  }
+  const aptitudeChoices = [
+    { id: input.naturalAptitudeId,  slots: NATURAL_APTITUDE_SLOTS,
+      available: progress.points_natural_aptitudes - progress.spent_natural_aptitudes, label: 'natural' },
+    { id: input.acquiredAptitudeId, slots: ACQUIRED_APTITUDE_SLOTS,
+      available: progress.points_acquired_aptitudes - progress.spent_acquired_aptitudes, label: 'adquirida' },
+  ]
+  for (const choice of aptitudeChoices) {
+    if (!choice.id) continue
+    if (choice.available <= 0) {
+      return { ok: false, code: 'VALIDATION', message: `Sem slot de Aptidão ${choice.label} disponível` }
+    }
+    if (ownedAptitudes.has(choice.id)) {
+      return { ok: false, code: 'VALIDATION', message: 'O personagem já tem essa aptidão' }
+    }
+    const slot = choice.slots.find(s => !bonuses?.[s])
+    if (!slot) {
+      return { ok: false, code: 'VALIDATION', message: `Já escolheu as duas aptidões ${choice.label === 'natural' ? 'naturais' : 'adquiridas'}` }
+    }
+    bonusFills.push({ slot, valueId: choice.id })
   }
 
   if (input.goalId) {

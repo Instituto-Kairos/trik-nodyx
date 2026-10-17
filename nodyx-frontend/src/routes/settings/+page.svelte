@@ -2,6 +2,8 @@
     import NetworkDoctor from '$lib/components/NetworkDoctor.svelte';
     import E2EKeyBackup from '$lib/components/E2EKeyBackup.svelte';
     import { page } from '$app/state';
+    import { enhance } from '$app/forms';
+    import { goto } from '$app/navigation';
 
     import { PUBLIC_API_URL, PUBLIC_SIGNET_URL } from '$env/static/public';
     import { tick } from 'svelte';
@@ -131,6 +133,23 @@
             // Nettoyer l'URL pour ne pas rejouer le toast au refresh
             const url = new URL(window.location.href)
             url.searchParams.delete('just_linked_twitch')
+            window.history.replaceState({}, '', url)
+        }
+    })
+
+    // ── Conta: troca de nome de usuário (1 vez a cada 30 dias) ──────────
+    // Isolada numa aba própria — formulário só dela, com confirmação — pra
+    // não ir junto com a edição de perfil nem pegar ninguém de surpresa.
+    let usernameChanged = $state<string | null>(null)
+    let usernameSubmitting = $state(false)
+    const usernameNextChangeAt = $derived((page.data as any).usernameNextChangeAt as string | null)
+    const usernameError = $derived((page.form as any)?.usernameError as string | undefined)
+    $effect(() => {
+        const changed = page.url.searchParams.get('username_changed')
+        if (changed) {
+            usernameChanged = changed
+            const url = new URL(window.location.href)
+            url.searchParams.delete('username_changed')
             window.history.replaceState({}, '', url)
         }
     })
@@ -510,6 +529,18 @@
                     <span class="sb-badge">{linkedSlugs.length}</span>
                 {/if}
             </button>
+
+            {#if page.data.user}
+            <button class="sb-item {activeSection === 'account' ? 'active' : ''}"
+                    onclick={() => activeSection = 'account'}>
+                <span class="sb-icon" style="background: rgba(168,85,247,0.12); color: #c084fc">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/>
+                    </svg>
+                </span>
+                <span class="sb-label">Conta</span>
+            </button>
+            {/if}
 
             <div class="sb-section-label" style="margin-top: 16px">{tFn('settings.nav.security')}</div>
 
@@ -1107,6 +1138,70 @@
                     {twitchToast}
                 </div>
             {/if}
+        </div>
+        {/if}
+
+        <!-- ═══ CONTA (nome de usuário) ══════════════════════════════════════ -->
+        {#if activeSection === 'account' && page.data.user}
+        <div class="s-pane" style="--accent: #c084fc; --accent-bg: rgba(168,85,247,0.08); --accent-border: rgba(168,85,247,0.2)">
+            <div class="s-pane-header">
+                <div class="s-pane-icon" style="background: var(--accent-bg); border-color: var(--accent-border); color: var(--accent)">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
+                        <circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/>
+                    </svg>
+                </div>
+                <div>
+                    <h2 class="s-pane-title">Conta</h2>
+                    <p class="s-pane-desc">Seu nome de usuário (o @ usado em menções e no endereço do perfil).</p>
+                </div>
+            </div>
+
+            {#if usernameChanged}
+            <div class="s-success-banner">Pronto! Agora você é @{usernameChanged}. Nos outros aparelhos, entre de novo.</div>
+            {/if}
+
+            <div class="s-card">
+                <div class="s-row-title" style="margin-bottom:10px">Nome de usuário</div>
+                {#if usernameNextChangeAt}
+                    <p class="s-hint-text" style="color:#9ca3af">
+                        Você é @{(page.data.user as any).username}. A próxima troca fica liberada em
+                        {new Date(usernameNextChangeAt).toLocaleDateString('pt-BR')}.
+                    </p>
+                {:else}
+                    <form method="POST" action="?/changeUsername"
+                        use:enhance={({ formData, cancel }) => {
+                            const novo = String(formData.get('username') ?? '').trim()
+                            if (!confirm(`Trocar seu nome de usuário para @${novo}?\n\nVocê só poderá trocar de novo daqui a 30 dias, e vai precisar entrar de novo nos outros aparelhos.`)) {
+                                cancel()
+                                return
+                            }
+                            usernameSubmitting = true
+                            return async ({ result, update }) => {
+                                usernameSubmitting = false
+                                if (result.type === 'redirect') await goto(result.location, { invalidateAll: true })
+                                else await update({ reset: false })
+                            }
+                        }}>
+                        <div class="s-add-instance-row">
+                            <div class="s-input-wrap" style="flex:1;position:relative">
+                                <input name="username" required minlength="3" maxlength="50"
+                                    value={(page.data.user as any).username}
+                                    aria-label="Novo nome de usuário" autocomplete="off" class="s-input" />
+                            </div>
+                            <button type="submit" disabled={usernameSubmitting} class="s-primary-btn">
+                                {usernameSubmitting ? '…' : 'Trocar'}
+                            </button>
+                        </div>
+                    </form>
+                    {#if usernameError}
+                        <p class="s-field-error">{usernameError}</p>
+                    {/if}
+                    <p class="s-hint-text" style="margin-top:10px">
+                        Uma troca a cada 30 dias. Seus posts continuam seus, e menções e links com o nome antigo
+                        continuam levando a você — por isso o nome antigo fica reservado e ninguém mais pode usá-lo.
+                    </p>
+                {/if}
+            </div>
         </div>
         {/if}
 

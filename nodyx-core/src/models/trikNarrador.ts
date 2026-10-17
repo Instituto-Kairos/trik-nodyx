@@ -15,7 +15,13 @@ import { applyXpInTx, NARRADOR } from './trik'
 /** id do usuário narrador — null se a conta não existe nesta instância. */
 export async function getNarratorUserId(): Promise<string | null> {
   const { rows } = await db.query<{ id: string }>(
-    `SELECT id FROM users WHERE LOWER(username) = LOWER($1) AND is_system = false LIMIT 1`,
+    // Também pelo nome antigo: o narrador pode ter trocado de nome
+    // (username_history) sem que NARRADOR.username seja atualizado.
+    `SELECT id FROM users
+      WHERE is_system = false
+        AND (LOWER(username) = LOWER($1)
+             OR id IN (SELECT user_id FROM username_history WHERE LOWER(old_username) = LOWER($1)))
+      LIMIT 1`,
     [NARRADOR.username],
   )
   return rows[0]?.id ?? null

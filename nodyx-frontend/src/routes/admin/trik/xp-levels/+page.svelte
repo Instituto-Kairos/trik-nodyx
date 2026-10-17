@@ -41,6 +41,8 @@
 		rewardPrinciples: number;
 		rewardPreferences: number;
 		rewardGoal: boolean;
+		rewardNaturalAptitudes: number;
+		rewardAcquiredAptitudes: number;
 		/** Treinos (weapon) ou aulas (knowledge) pra sair do nível; sem uso no 'character'. */
 		requirement: number;
 	}
@@ -52,6 +54,8 @@
 		reward_principles: number;
 		reward_preferences: number;
 		reward_goal: boolean;
+		reward_natural_aptitudes?: number;
+		reward_acquired_aptitudes?: number;
 		req_mastery?: number;
 		req_education?: number;
 	}
@@ -70,6 +74,8 @@
 				rewardPrinciples: l.reward_principles,
 				rewardPreferences: l.reward_preferences,
 				rewardGoal: l.reward_goal,
+				rewardNaturalAptitudes: l.reward_natural_aptitudes ?? 0,
+				rewardAcquiredAptitudes: l.reward_acquired_aptitudes ?? 0,
 				requirement:
 					currentType === 'weapon'
 						? (l.req_mastery ?? 0)
@@ -90,6 +96,8 @@
 				rewardPrinciples: 0,
 				rewardPreferences: 0,
 				rewardGoal: false,
+				rewardNaturalAptitudes: 0,
+				rewardAcquiredAptitudes: 0,
 				// Linha nova = um degrau novo; 0 significaria "nível máximo", que não é
 				// o que quem clica em "+ Adicionar nível" espera.
 				requirement: 5
@@ -169,6 +177,8 @@
 							<th class="px-4 py-3">+Conduta</th>
 							<th class="px-4 py-3">+Princípios</th>
 							<th class="px-4 py-3">+Preferências</th>
+							<th class="px-4 py-3" title="Slots de aptidão natural liberados neste nível (máx. 2 no total)">+Apt. natural</th>
+							<th class="px-4 py-3" title="Slots de aptidão adquirida liberados neste nível (máx. 2 no total)">+Apt. adquirida</th>
 							<th class="px-4 py-3">Desbloqueia Objetivo</th>
 						{/if}
 						<th class="px-4 py-3"></th>
@@ -229,6 +239,24 @@
 									/>
 								</td>
 								<td class="px-4 py-2">
+									<input
+										type="number"
+										min="0"
+										max="2"
+										bind:value={row.rewardNaturalAptitudes}
+										class="w-16 rounded-lg bg-gray-800 border border-gray-700 px-2 py-1.5 text-white"
+									/>
+								</td>
+								<td class="px-4 py-2">
+									<input
+										type="number"
+										min="0"
+										max="2"
+										bind:value={row.rewardAcquiredAptitudes}
+										class="w-16 rounded-lg bg-gray-800 border border-gray-700 px-2 py-1.5 text-white"
+									/>
+								</td>
+								<td class="px-4 py-2">
 									<input type="checkbox" bind:checked={row.rewardGoal} class="w-4 h-4" />
 								</td>
 							{/if}
@@ -245,7 +273,7 @@
 					{/each}
 					{#if rows.length === 0}
 						<tr>
-							<td colspan={isCharacter ? 7 : 3} class="px-4 py-6 text-center text-gray-500">
+							<td colspan={isCharacter ? 9 : 3} class="px-4 py-6 text-center text-gray-500">
 								Nenhum nível cadastrado ainda.
 							</td>
 						</tr>

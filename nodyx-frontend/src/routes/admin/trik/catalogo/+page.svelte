@@ -45,9 +45,10 @@
 	}
 
 	const entries = $derived((data.entries ?? []) as CatalogEntry[]);
-	const hasCategory = $derived(currentType === 'weapon');
+	// Arma e matéria têm categoria (alvo de bônus por categoria, Fase 3).
+	const hasCategory = true;
 	// Categorias já cadastradas: alimentam o dropdown. Uma nova só nasce junto
-	// com a primeira arma que a usa (o backend também reaproveita a grafia
+	// com o primeiro item que a usa (o backend também reaproveita a grafia
 	// existente se o texto digitado bater com uma delas).
 	const knownCategories = $derived(
 		[...new Set(entries.map((e) => e.category).filter((c): c is string => !!c))].sort((a, b) =>
@@ -78,7 +79,7 @@
 	// Sem nenhuma categoria cadastrada não há o que escolher: vai direto pro campo de texto.
 	const creatingCategory = $derived(knownCategories.length === 0 || categoryChoice === NEW_CATEGORY);
 	// Valor que vai no POST (o <select> em si não tem `name`).
-	// A escolha some se a categoria deixou de existir (ex.: removeu a única arma dela).
+	// A escolha some se a categoria deixou de existir (ex.: removeu o único item dela).
 	const categoryValue = $derived(
 		creatingCategory ? newCategory.trim() : knownCategories.includes(categoryChoice) ? categoryChoice : ''
 	);
@@ -130,7 +131,7 @@
 				// Só limpa se cadastrou — em erro (ex.: nome duplicado) mantém o que foi digitado.
 				if (result.type === 'success') {
 					newName = '';
-					// Mantém a categoria selecionada (comum cadastrar várias armas da mesma).
+					// Mantém a categoria selecionada (comum cadastrar vários itens da mesma).
 					// Se acabou de criar uma nova, ela já está na lista recarregada: seleciona-a.
 					if (wasCreating) {
 						const created = knownCategories.find((c) => normalizeKey(c) === normalizeKey(typedCategory));
@@ -165,7 +166,7 @@
 				{#if knownCategories.length > 0}
 					<select
 						bind:value={categoryChoice}
-						aria-label="Categoria da arma"
+						aria-label="Categoria"
 						class="w-56 rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-white"
 					>
 						<option value="" disabled>Categoria…</option>

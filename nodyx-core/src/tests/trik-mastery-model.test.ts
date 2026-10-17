@@ -87,12 +87,12 @@ describe('findCatalogByName', () => {
 })
 
 describe('listCatalog', () => {
-  it('arma traz a categoria; matéria não tem a coluna', async () => {
+  it('arma e matéria trazem a categoria (matéria ganhou na trik_010)', async () => {
     mockDb.query.mockResolvedValue({ rows: [] })
     await listCatalog('weapon')
     await listCatalog('knowledge')
     expect(mockDb.query.mock.calls[0][0]).toContain('id, name, category')
-    expect(mockDb.query.mock.calls[1][0]).not.toContain('category')
+    expect(mockDb.query.mock.calls[1][0]).toContain('id, name, category')
   })
 })
 
@@ -120,22 +120,24 @@ describe('createCatalogEntry', () => {
     expect(mockDb.query.mock.calls[1][1]).toEqual(['Lança', 'Armas de Haste'])
   })
 
-  it('arma sem categoria (ou só símbolos) → erro, sem tocar no banco', async () => {
-    await expect(createCatalogEntry('weapon', 'Espada')).rejects.toThrow('categoria')
+  it('sem categoria (ou só símbolos) → erro, sem tocar no banco', async () => {
+    await expect(createCatalogEntry('weapon', 'Espada', undefined as any)).rejects.toThrow('categoria')
     await expect(createCatalogEntry('weapon', 'Espada', '!!!')).rejects.toThrow('categoria')
+    await expect(createCatalogEntry('knowledge', 'Russo', '')).rejects.toThrow('categoria')
     expect(mockDb.query).not.toHaveBeenCalled()
   })
 
-  it('matéria: só nome, ignora categoria', async () => {
-    mockDb.query.mockResolvedValueOnce({ rows: [{ id: 'k1', name: 'História' }] })
+  it('matéria: grava categoria, reaproveitando a grafia das matérias (não das armas)', async () => {
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [{ category: 'Idiomas' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'k1', name: 'Russo', category: 'Idiomas' }] })
 
-    await createCatalogEntry('knowledge', 'História', 'ignorada')
+    await createCatalogEntry('knowledge', 'Russo', 'idiomas')
 
-    expect(mockDb.query).toHaveBeenCalledTimes(1)
-    const [sql, params] = mockDb.query.mock.calls[0]
-    expect(sql).toContain('trik_knowledges')
-    expect(sql).not.toContain('category')
-    expect(params).toEqual(['História'])
+    expect(mockDb.query.mock.calls[0][0]).toContain('FROM trik_knowledges')
+    const [sql, params] = mockDb.query.mock.calls[1]
+    expect(sql).toContain('INSERT INTO trik_knowledges (name, category)')
+    expect(params).toEqual(['Russo', 'Idiomas'])
   })
 })
 
@@ -169,7 +171,7 @@ describe('getMasteryUsedToday', () => {
     expect(await getMasteryUsedToday('char-1', 'weapon', 'post-1')).toBe(1.68)
 
     const [sql, params] = mockDb.query.mock.calls[0]
-    expect(params).toEqual(['char-1', 'weapon', 'post-1'])
+    expect(params).toEqual(['char-1', 'weapon', 'post-1', null])
     expect(sql).toContain('a.mastery_kind = $2')  // tipo separado: arma não conta aula
     expect(sql).toContain('a.post_id <> $3')      // reprocessar edição não conta a cena contra ela mesma
     expect(sql).toContain('created_at::date')     // dia da POSTAGEM, não "hoje"
@@ -311,15 +313,15 @@ describe('applySceneAward — prêmio + xp + maestria numa transação só', () 
     expect(sqls.filter(s => s === 'BEGIN')).toHaveLength(1) // UMA transação
     const insert = mockClient.query.mock.calls.find(c => (c[0] as string).includes('INSERT INTO trik_scene_awards'))!
     expect(insert[0]).toContain('ON CONFLICT (post_id) DO NOTHING')
-    expect(insert[1]).toEqual(['char-1', 'post-1', 12, null, null, 0, null])
+    expect(insert[1]).toEqual(['char-1', 'post-1', 12, null, null, 0, null, null, null, null])
     expect(sqls.some(s => s.includes('weapon_progress') || s.includes('knowledge_progress'))).toBe(false)
     expect(mockDb.query).not.toHaveBeenCalled() // tudo pelo client, nada solto no pool
     expect(mockClient.release).toHaveBeenCalled()
   })
 
   it.each([
-    ['weapon',    'w1', 'trik_character_weapon_progress',    ['char-1', 'post-1', 2, 'w1', null, 1.2, 'weapon']],
-    ['knowledge', 'k1', 'trik_character_knowledge_progress', ['char-1', 'post-1', 2, null, 'k1', 1.2, 'knowledge']],
+    ['weapon',    'w1', 'trik_character_weapon_progress',    ['char-1', 'post-1', 2, 'w1', null, 1.2, 'weapon', null, null, null]],
+    ['knowledge', 'k1', 'trik_character_knowledge_progress', ['char-1', 'post-1', 2, null, 'k1', 1.2, 'knowledge', null, null, null]],
   ] as const)('com %s: grava o item, credita a maestria na MESMA transação e devolve o resultado', async (kind, itemId, table, insertParams) => {
     setupAwardTx()
 

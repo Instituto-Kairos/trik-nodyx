@@ -11,6 +11,7 @@ const REJECTION_MESSAGES: Record<string, string> = {
 	no_player:     'Você ainda não tem cadastro no módulo RPG — use /registro antes de postar uma cena.',
 	no_match:      'Não consegui identificar seu personagem no cabeçalho dessa cena (confira se o nome/assinatura batem com o que foi salvo via /plaquinha).',
 	below_minimum: 'Essa cena tem menos de 500 caracteres. Mínimo pra contar: 500.',
+	invalid_date:  'A Data dessa cena de treino/aula está fora da semana em jogo (veja o aviso no canal Clima).',
 }
 
 /** Texto explicando a marca, ou null se o emoji não é uma marca do Trik. */

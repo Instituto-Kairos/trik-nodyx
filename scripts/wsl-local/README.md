@@ -35,6 +35,11 @@ Isso copia a lista de arquivos em `stage.sh` (ver "Manutenção da lista"
 abaixo) pra `/tmp/trik-fase2-deploy/` dentro do WSL — só leitura do repo,
 escrita em `/tmp`, sem precisar de privilégio nenhum.
 
+Além do que difere do git, o `stage.sh` também copia todo arquivo de `src/`
+que esteja diferente do instalado em `/opt/nodyx` (ignorando CRLF) — cobre
+arquivo que mudou e depois voltou a ser igual ao git, que senão ficaria com a
+versão velha em `/opt`. Arquivo apagado no fork continua sobrando em `/opt`.
+
 **2. Deploy (precisa de senha — rodar num terminal WSL de verdade)**:
 
 ```bash

@@ -35,6 +35,13 @@ vi.mock('../models/user', () => ({
   hashPassword:    vi.fn().mockResolvedValue('$argon2id$v=19$m=65536,t=3,p=4$fakehash'),
 }))
 
+// O cadastro checa nome atual E antigo (username_history). Aqui delega pro
+// mock de findByUsername, que é o que os testes de cadastro controlam.
+vi.mock('../models/usernameHistory', async () => {
+  const users = await import('../models/user')
+  return { isUsernameTaken: vi.fn(async (u: string) => !!(await users.findByUsername(u))) }
+})
+
 // ── Imports (after mocks) ─────────────────────────────────────
 
 import * as UserModel from '../models/user'

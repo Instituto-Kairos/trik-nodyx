@@ -107,3 +107,77 @@ export function parseFooterTags(footer: string): FooterTags {
 export function hasLoreTag(text: string): boolean {
   return /#lore(?![\wÀ-ÿ])/i.test(text)
 }
+
+// ─── Fase 3: Data, Hora e #com (plans/fase-tres-bonus.md §5) ────────────────
+
+export interface FooterMeta {
+  /** `Data: dd/mm/aaaa` → 'YYYY-MM-DD'. Ausente ou data impossível → undefined. */
+  gameDate?: string
+  /** `Hora: HH:MM` (aceita também "14h" e "14h30") → 'HH:MM'. */
+  gameTime?: string
+  /** Nomes depois de `#com`, como digitados. Quem decide se é jogador ou NPC
+   *  é o motor (confere em trik_characters). */
+  companions: string[]
+}
+
+const pad2 = (n: number) => String(n).padStart(2, '0')
+
+function parseGameDate(text: string): string | undefined {
+  const m = text.match(/\bdata\s*:\s*(\d{1,2})\s*[/.-]\s*(\d{1,2})\s*[/.-]\s*(\d{2}|\d{4})\b/i)
+  if (!m) return undefined
+  const day = Number(m[1]), month = Number(m[2])
+  const year = m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3])
+  // Confere se a data existe (31/02 vira março no Date — recusa).
+  const d = new Date(Date.UTC(year, month - 1, day))
+  if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) return undefined
+  return `${year}-${pad2(month)}-${pad2(day)}`
+}
+
+function parseGameTime(text: string): string | undefined {
+  const m = text.match(/\bhora\s*:\s*(\d{1,2})\s*(?::|h)\s*(\d{2})?/i)
+  if (!m) return undefined
+  const h = Number(m[1]), min = Number(m[2] ?? 0)
+  if (h > 23 || min > 59) return undefined
+  return `${pad2(h)}:${pad2(min)}`
+}
+
+/**
+ * `#com` aceita dois jeitos de escrever:
+ *  - texto até o fim da linha (ou até a próxima hashtag), separado por
+ *    vírgula, "e", "&" ou "/": `#com Ana Clara, Bruno e Caio`;
+ *  - hashtags seguidas: `#com #Ana #Bruno` (para na primeira tag reservada).
+ * Pode aparecer mais de uma vez; nomes repetidos contam uma vez só.
+ */
+function parseCompanions(text: string): string[] {
+  const names: string[] = []
+  for (const m of text.matchAll(/#com(?![\wÀ-ÿ])([^\n]*)/gi)) {
+    const rest = m[1]
+    const plain = rest.split('#')[0].trim()
+    if (plain) {
+      names.push(...plain.split(/\s*(?:,|;|&|\/|\be\b)\s*/i))
+    } else {
+      for (const t of rest.matchAll(/#([\wÀ-ÿ]+)/g)) {
+        if (RESERVED_TAGS.has(t[1].toLowerCase()) || t[1].toLowerCase() === 'lore') break
+        names.push(t[1])
+      }
+    }
+  }
+  const seen = new Set<string>()
+  return names
+    .map(n => n.trim().replace(/[.!]+$/, ''))
+    .filter(n => {
+      const key = n.toLowerCase()
+      if (!n || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+}
+
+/** Lê Data, Hora e #com do footer (texto puro, ver parseScenePost). */
+export function parseFooterMeta(footer: string): FooterMeta {
+  return {
+    gameDate:   parseGameDate(footer),
+    gameTime:   parseGameTime(footer),
+    companions: parseCompanions(footer),
+  }
+}

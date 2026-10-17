@@ -355,3 +355,77 @@ export async function deleteNote(communityId: string, id: string): Promise<boole
   )
   return (rowCount ?? 0) > 0
 }
+
+// ── Tags ──────────────────────────────────────────────────────────────────────
+// Catálogo das tags da comunidade (galeria_003_tags.sql). As imagens seguem
+// guardando os nomes no TEXT[]; o catálogo é o que o seletor e os filtros leem.
+
+export interface GaleriaTag {
+  id: string
+  name: string
+  image_count: number
+}
+
+export async function listTags(communityId: string): Promise<GaleriaTag[]> {
+  const { rows } = await db.query<GaleriaTag>(
+    `SELECT t.id, t.name,
+            (SELECT COUNT(*) FROM galeria_images i
+              WHERE i.community_id = t.community_id AND t.name = ANY(i.tags))::int AS image_count
+       FROM galeria_tags t
+      WHERE t.community_id = $1
+      ORDER BY lower(t.name) ASC`,
+    [communityId],
+  )
+  return rows
+}
+
+/**
+ * Garante que as tags existem no catálogo e devolve-as na grafia CADASTRADA:
+ * quem digita "Kaelen" quando já existe "kaelen" fica com "kaelen", senão o
+ * filtro (que compara exato) se partiria em dois. Sem repetidas, na ordem dada.
+ */
+export async function registerTags(communityId: string, nomes: string[], userId: string | null): Promise<string[]> {
+  const limpos: string[] = []
+  const vistos = new Set<string>()
+  for (const n of nomes) {
+    const t = n.trim().slice(0, 30)
+    if (!t || vistos.has(t.toLowerCase())) continue
+    vistos.add(t.toLowerCase())
+    limpos.push(t)
+  }
+  if (limpos.length === 0) return []
+
+  await db.query(
+    `INSERT INTO galeria_tags (community_id, name, created_by)
+     SELECT $1, n, $3 FROM unnest($2::text[]) AS n
+     ON CONFLICT DO NOTHING`,
+    [communityId, limpos, userId],
+  )
+  const { rows } = await db.query<{ name: string }>(
+    `SELECT name FROM galeria_tags WHERE community_id = $1 AND lower(name) = ANY($2::text[])`,
+    [communityId, limpos.map(t => t.toLowerCase())],
+  )
+  const canon = new Map(rows.map(r => [r.name.toLowerCase(), r.name]))
+  return limpos.map(t => canon.get(t.toLowerCase()) ?? t)
+}
+
+export async function createTag(communityId: string, nome: string, userId: string): Promise<GaleriaTag | null> {
+  const [name] = await registerTags(communityId, [nome], userId)
+  if (!name) return null
+  return (await listTags(communityId)).find(t => t.name === name) ?? null
+}
+
+/** Tira a tag do catálogo E das imagens: uma tag apagada não pode sobrar órfã nos cartões. */
+export async function deleteTag(communityId: string, id: string): Promise<boolean> {
+  const { rows } = await db.query<{ name: string }>(
+    `DELETE FROM galeria_tags WHERE id = $1 AND community_id = $2 RETURNING name`,
+    [id, communityId],
+  )
+  if (!rows[0]) return false
+  await db.query(
+    `UPDATE galeria_images SET tags = array_remove(tags, $1)
+      WHERE community_id = $2 AND $1 = ANY(tags)`,
+    [rows[0].name, communityId],
+  )
+  return true
+}

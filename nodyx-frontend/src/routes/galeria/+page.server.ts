@@ -23,9 +23,10 @@ export const load: PageServerLoad = async ({ fetch, cookies, url }) => {
 	if (q)     params.set('q', q)
 	if (tag)   params.set('tag', tag)
 
-	const [resAlbums, resImages] = await Promise.all([
+	const [resAlbums, resImages, resTags] = await Promise.all([
 		apiFetch(fetch, '/galeria/albums', { headers }),
 		apiFetch(fetch, `/galeria/images?${params}`, { headers }),
+		apiFetch(fetch, '/galeria/tags', { headers }),
 	])
 
 	// 503 = módulo desligado nesta instância. A página diz isso em vez de
@@ -34,10 +35,12 @@ export const load: PageServerLoad = async ({ fetch, cookies, url }) => {
 	const moduloDesligado = resAlbums.status === 503 || resImages.status === 503
 
 	const albums = resAlbums.ok ? (await resAlbums.json()).albums ?? [] : []
+	const tags   = resTags.ok ? (await resTags.json()).tags ?? [] : []
 	const dados  = resImages.ok ? await resImages.json() : { images: [], total: 0 }
 
 	return {
 		albums,
+		tags,
 		images: dados.images ?? [],
 		total:  dados.total ?? 0,
 		album, q, tag,

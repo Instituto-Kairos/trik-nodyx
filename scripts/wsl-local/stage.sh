@@ -39,6 +39,25 @@ copy_changed() {
 copy_changed nodyx-core
 copy_changed nodyx-frontend
 
+# Arquivo que mudou e depois VOLTOU a ser igual ao git some da lista acima,
+# mas /opt continua com a versão mexida (ex.: servidor de página que perdeu
+# uma action enquanto a tela nova já não a usa). Compara o src/ rastreado
+# com o que está instalado, ignorando CRLF, e copia o que divergir.
+OPT=/opt/nodyx
+copy_diverged() {
+  local proj="$1"
+  [[ -d "$OPT/$proj/src" ]] || return 0
+  cd "$LOCAL/$proj"
+  git -c safe.directory='*' ls-files src \
+    | while IFS= read -r f; do
+        [[ -f "$f" && ! -f "$STAGE/$proj/$f" && -f "$OPT/$proj/$f" ]] || continue
+        diff -q --strip-trailing-cr "$f" "$OPT/$proj/$f" >/dev/null 2>&1 || printf '%s\n' "$f"
+      done \
+    | xargs -d '\n' -r cp --parents -t "$STAGE/$proj/"
+}
+copy_diverged nodyx-core
+copy_diverged nodyx-frontend
+
 TOTAL=$(find "$STAGE" -type f | wc -l)
 [[ "$TOTAL" -gt 0 ]] || { echo "Nada pra staging — git não listou nenhum arquivo." >&2; exit 1; }
 

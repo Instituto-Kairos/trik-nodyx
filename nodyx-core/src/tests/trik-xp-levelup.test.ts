@@ -14,6 +14,8 @@ vi.mock('../models/trik', () => ({
   getOrCreateProgress:     vi.fn(),
   getCharacterBonuses:     vi.fn(),
   applyLevelupAllocation:  vi.fn(),
+  NATURAL_APTITUDE_SLOTS:  ['first_natural_aptitude_id', 'second_natural_aptitude_id'],
+  ACQUIRED_APTITUDE_SLOTS: ['first_acquired_aptitude_id', 'second_acquired_aptitude_id'],
   // Classe de verdade (não vi.fn): o service usa `instanceof` pra separar rejeição de regra de erro de banco.
   LevelupRejectedError:    class LevelupRejectedError extends Error {},
 }))
@@ -38,6 +40,8 @@ function progress(overrides: Record<string, unknown> = {}) {
     points_conduct: 0, points_principles: 0, points_preferences: 0,
     spent_conduct: 0, spent_principles: 0, spent_preferences: 0,
     has_goal: false, updated_at: '',
+    points_natural_aptitudes: 0, spent_natural_aptitudes: 0,
+    points_acquired_aptitudes: 0, spent_acquired_aptitudes: 0,
     ...overrides,
   }
 }
@@ -188,5 +192,46 @@ describe('submitLevelup', () => {
     await expect(submitLevelup(OWNER_ID, {
       characterId: CHAR_ID, deltas: zeroDeltas({ conductPresenca: 1 }),
     })).rejects.toThrow('conexão caiu')
+  })
+
+  describe('aptidões (Fase 3)', () => {
+    const emptyBonuses = {
+      character_id: CHAR_ID, first_preference_id: null, second_preference_id: null, goal_id: null,
+      first_natural_aptitude_id: null, second_natural_aptitude_id: null,
+      first_acquired_aptitude_id: null, second_acquired_aptitude_id: null,
+    }
+
+    it('preenche o primeiro slot livre de cada tipo', async () => {
+      vi.mocked(getOrCreateProgress).mockResolvedValue(progress({ points_natural_aptitudes: 1, points_acquired_aptitudes: 1 }) as any)
+      vi.mocked(getCharacterBonuses).mockResolvedValue({ ...emptyBonuses, first_natural_aptitude_id: 'a0' } as any)
+      vi.mocked(applyLevelupAllocation).mockResolvedValue({ id: CHAR_ID } as any)
+
+      const result = await submitLevelup(OWNER_ID, {
+        characterId: CHAR_ID, deltas: zeroDeltas(), naturalAptitudeId: 'a1', acquiredAptitudeId: 'a2',
+      })
+      expect(result.ok).toBe(true)
+      expect(applyLevelupAllocation).toHaveBeenCalledWith(CHAR_ID, zeroDeltas(), [
+        { slot: 'second_natural_aptitude_id', valueId: 'a1' },
+        { slot: 'first_acquired_aptitude_id', valueId: 'a2' },
+      ])
+    })
+
+    it('sem slot liberado pela curva → VALIDATION', async () => {
+      vi.mocked(getOrCreateProgress).mockResolvedValue(progress() as any)
+      vi.mocked(getCharacterBonuses).mockResolvedValue(emptyBonuses as any)
+      const result = await submitLevelup(OWNER_ID, { characterId: CHAR_ID, deltas: zeroDeltas(), naturalAptitudeId: 'a1' })
+      expect(result).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(applyLevelupAllocation).not.toHaveBeenCalled()
+    })
+
+    it('não deixa repetir aptidão que o personagem já tem, nem a mesma nos dois tipos', async () => {
+      vi.mocked(getOrCreateProgress).mockResolvedValue(progress({ points_natural_aptitudes: 2, points_acquired_aptitudes: 1 }) as any)
+      vi.mocked(getCharacterBonuses).mockResolvedValue({ ...emptyBonuses, first_natural_aptitude_id: 'a1' } as any)
+      expect(await submitLevelup(OWNER_ID, { characterId: CHAR_ID, deltas: zeroDeltas(), acquiredAptitudeId: 'a1' }))
+        .toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(await submitLevelup(OWNER_ID, { characterId: CHAR_ID, deltas: zeroDeltas(), naturalAptitudeId: 'a3', acquiredAptitudeId: 'a3' }))
+        .toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(applyLevelupAllocation).not.toHaveBeenCalled()
+    })
   })
 })

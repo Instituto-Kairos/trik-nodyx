@@ -556,6 +556,23 @@
 								{data.xpEnabled ? 'Desativar XP' : 'Ativar XP'}
 							</button>
 						</form>
+						{#if data.trikRegion}
+							<form method="POST" action="?/setTrikRegion" use:enhance={() => {
+								return async ({ update }) => { await update({ reset: false }) }
+							}}>
+								<input type="hidden" name="threadId" value={thread.id} />
+								<select name="locationId"
+									onchange={(e) => e.currentTarget.form?.requestSubmit()}
+									aria-label="Região do tópico (clima)"
+									title="Região do tópico: define clima, horário e alertas das cenas"
+									class="px-2 py-1.5 border border-gray-700 bg-gray-900 text-xs text-gray-300">
+									<option value="" selected={!data.trikRegion.locationId}>🌦️ Sem região</option>
+									{#each data.trikRegion.locations as loc (loc.id)}
+										<option value={loc.id} selected={loc.id === data.trikRegion.locationId}>🌦️ {loc.name}</option>
+									{/each}
+								</select>
+							</form>
+						{/if}
 					{/if}
 
 					<!-- Supprimer le thread -->

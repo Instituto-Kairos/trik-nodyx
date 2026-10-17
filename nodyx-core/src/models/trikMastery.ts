@@ -33,9 +33,9 @@ const KIND_CONFIG = {
 export interface CatalogEntry {
   id:   string
   name: string
-  /** Só armas têm categoria (registro no banco, pra validar bônus por
-   *  categoria — Fase 3); matérias não. */
-  category?: string
+  /** Registro no banco pra validar bônus por categoria (Fase 3). Arma
+   *  sempre tem; matéria ganhou na trik_010 — as antigas ficam null. */
+  category: string | null
 }
 
 /**
@@ -53,8 +53,7 @@ export function normalizeCatalogName(name: string): string {
 }
 
 export async function listCatalog(kind: MasteryKind): Promise<CatalogEntry[]> {
-  const cols = kind === 'weapon' ? 'id, name, category' : 'id, name'
-  const { rows } = await pool.query(`SELECT ${cols} FROM ${KIND_CONFIG[kind].catalog} ORDER BY name`)
+  const { rows } = await pool.query(`SELECT id, name, category FROM ${KIND_CONFIG[kind].catalog} ORDER BY name`)
   return rows
 }
 
@@ -74,28 +73,23 @@ export async function findCatalogByName(kind: MasteryKind, name: string): Promis
  * senão a validação de bônus por categoria (Fase 3) veria categorias distintas
  * onde o admin só errou a caixa.
  */
-async function canonicalWeaponCategory(category: string): Promise<string> {
+async function canonicalCategory(kind: MasteryKind, category: string): Promise<string> {
   const key = normalizeCatalogName(category)
-  const { rows } = await pool.query(`SELECT DISTINCT category FROM trik_weapons`)
+  const { rows } = await pool.query(
+    `SELECT DISTINCT category FROM ${KIND_CONFIG[kind].catalog} WHERE category IS NOT NULL`
+  )
   const existing = rows.find(r => normalizeCatalogName(r.category) === key)
   return existing ? existing.category : category.trim()
 }
 
-/** `category` é obrigatória pra arma e ignorada pra matéria. */
+/** `category` é obrigatória pros dois tipos (matéria passou a ter na trik_010). */
 export async function createCatalogEntry(
-  kind: MasteryKind, name: string, category?: string
+  kind: MasteryKind, name: string, category: string
 ): Promise<CatalogEntry> {
-  if (kind === 'weapon') {
-    if (!category || !normalizeCatalogName(category)) throw new Error('Arma precisa de categoria')
-    const { rows } = await pool.query(
-      `INSERT INTO trik_weapons (name, category) VALUES ($1, $2) RETURNING id, name, category`,
-      [name.trim(), await canonicalWeaponCategory(category)]
-    )
-    return rows[0]
-  }
+  if (!category || !normalizeCatalogName(category)) throw new Error('Item do catálogo precisa de categoria')
   const { rows } = await pool.query(
-    `INSERT INTO ${KIND_CONFIG[kind].catalog} (name) VALUES ($1) RETURNING id, name`,
-    [name.trim()]
+    `INSERT INTO ${KIND_CONFIG[kind].catalog} (name, category) VALUES ($1, $2) RETURNING id, name, category`,
+    [name.trim(), await canonicalCategory(kind, category)]
   )
   return rows[0]
 }
@@ -134,21 +128,27 @@ export async function getProgressionRequirement(
  * coluna é TIMESTAMP sem fuso), não o de hoje: editar no dia seguinte um post
  * de ontem continua contando contra o teto de ontem. Exclui o próprio post,
  * pra reprocessar uma edição não contar a cena contra ela mesma.
+ *
+ * Fase 3: o dia é a data IN-GAME (`gameDate`, do footer); cena sem Data cai
+ * na data real do post, dos dois lados da comparação. Soma as unidades
+ * BRUTAS (mastery_raw) — bônus não gastam teto; cena penalizada grava 0.
  */
 export async function getMasteryUsedToday(
   characterId: string,
   kind: MasteryKind,
-  postId: string
+  postId: string,
+  gameDate: string | null = null
 ): Promise<number> {
   const { rows } = await pool.query(
-    `SELECT COALESCE(SUM(a.mastery_awarded), 0) AS used
+    `SELECT COALESCE(SUM(COALESCE(a.mastery_raw, a.mastery_awarded)), 0) AS used
        FROM trik_scene_awards a
        JOIN posts p ON p.id = a.post_id
       WHERE a.character_id = $1
         AND a.mastery_kind = $2
         AND a.post_id <> $3
-        AND p.created_at::date = (SELECT created_at::date FROM posts WHERE id = $3)`,
-    [characterId, kind, postId]
+        AND COALESCE(a.game_date, p.created_at::date)
+            = COALESCE($4::date, (SELECT created_at::date FROM posts WHERE id = $3))`,
+    [characterId, kind, postId, gameDate]
   )
   return Number(rows[0]?.used ?? 0)
 }
@@ -182,7 +182,8 @@ export async function applyMasteryInTx(
   kind: MasteryKind,
   characterId: string,
   itemId: string,
-  units: number
+  units: number,
+  reqReduction = 0
 ): Promise<MasteryResult> {
   const { progress: table, itemCol } = KIND_CONFIG[kind]
 
@@ -201,7 +202,8 @@ export async function applyMasteryInTx(
   while (true) {
     const req = await getProgressionRequirement(kind, level, client)
     if (req <= 0) break // sem curva pro nível atual — nível máximo, progresso represa
-    const reqCents = toCents(req)
+    // Fase 3: reduz_requisito, com piso 1 (plano §2.1).
+    const reqCents = toCents(Math.max(1, req - reqReduction))
     if (cents < reqCents) break
     cents -= reqCents
     level += 1

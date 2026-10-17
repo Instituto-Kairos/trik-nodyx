@@ -241,6 +241,12 @@
 <!-- ═══════════════════════════════════════════════════════════════
      FORM
      ═══════════════════════════════════════════════════════════════ -->
+<!-- Troca do @ fica isolada nas Configurações (aba Conta), fora deste form. -->
+<p class="mb-4 text-xs text-gray-500">
+	Quer trocar seu nome de usuário (@{profile.username})?
+	<a href="/settings?section=account" class="text-indigo-400 hover:text-indigo-300">Configurações → Conta</a>
+</p>
+
 <form
 	method="POST"
 	use:enhance={() => {

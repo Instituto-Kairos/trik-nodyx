@@ -15,11 +15,20 @@ vi.mock('../models/trik', () => ({
   getOrCreateProgress:       vi.fn(),
   setSceneRejection:         vi.fn(),
   clearSceneRejection:       vi.fn(),
+  NARRADOR:                  { alias: 'Narrador', username: 'oorpheas' },
+  getCharacterOwnerUsername: vi.fn(),
 }))
 
 vi.mock('../models/trikMastery', () => ({
   findCatalogByName:   vi.fn(),
   getMasteryUsedToday: vi.fn(),
+}))
+
+vi.mock('../models/trikEffects', () => ({
+  getGameWeek:            vi.fn().mockResolvedValue(null),
+  getThreadWeatherDay:    vi.fn().mockResolvedValue(null),
+  listCharacterEffects:   vi.fn().mockResolvedValue({}),
+  findPartnerCharacters:  vi.fn().mockResolvedValue([]),
 }))
 
 vi.mock('../models/trikNarrador', () => ({
@@ -38,9 +47,10 @@ vi.mock('../services/trik/bot', () => ({
 
 import {
   isXpThread, getPlayer, getCharactersWithTemplate, applySceneAward,
-  getChannelPurposes, getOrCreateProgress,
+  getChannelPurposes, getOrCreateProgress, getCharacterOwnerUsername,
 } from '../models/trik'
 import { findCatalogByName, getMasteryUsedToday } from '../models/trikMastery'
+import { getGameWeek, getThreadWeatherDay, listCharacterEffects, findPartnerCharacters } from '../models/trikEffects'
 import { postTrikMessage, reactSceneRejected, reactSceneCounted } from '../services/trik/bot'
 import { processScenePost } from '../services/trik/xp'
 
@@ -88,7 +98,12 @@ function trainWith(
 
 beforeEach(() => {
   vi.resetAllMocks()
+  vi.mocked(getGameWeek).mockResolvedValue(null)
+  vi.mocked(getThreadWeatherDay).mockResolvedValue(null)
+  vi.mocked(listCharacterEffects).mockResolvedValue({})
+  vi.mocked(findPartnerCharacters).mockResolvedValue([])
   vi.mocked(getChannelPurposes).mockResolvedValue([])
+  vi.mocked(getCharacterOwnerUsername).mockResolvedValue('Jogador Um')
   vi.mocked(postTrikMessage).mockResolvedValue(undefined)
   vi.mocked(reactSceneRejected).mockResolvedValue(undefined)
   vi.mocked(reactSceneCounted).mockResolvedValue(undefined)
@@ -109,8 +124,8 @@ describe('processScenePost — #treino / #aula válidos', () => {
 
     expect(findCatalogByName).toHaveBeenCalledWith('weapon', 'espada')
     // 600 chars: base 12 xp → 0.2x = 2 (2.4 arredondado); 600/500 = 1.2 unidades
-    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, 2, { kind: 'weapon', itemId: 'w1', units: 1.2 })
-    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, expect.any(Number), { kind: 'weapon', itemId: 'w1', units: 1.2 })
+    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, 2, expect.objectContaining({ kind: 'weapon', itemId: 'w1', units: 1.2 }), expect.anything())
+    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, expect.any(Number), expect.objectContaining({ kind: 'weapon', itemId: 'w1', units: 1.2 }), expect.anything())
     expect(result).toEqual({
       awarded: true, characterId: 'char-1', xp: 2, leveledUp: false,
       mastery: { kind: 'weapon', name: 'Espada', units: 1.2, level: 1, leveledUp: false },
@@ -125,8 +140,8 @@ describe('processScenePost — #treino / #aula válidos', () => {
     const result = await post('x'.repeat(600), AULA)
 
     expect(findCatalogByName).toHaveBeenCalledWith('knowledge', 'historia')
-    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, 2, { kind: 'knowledge', itemId: 'k1', units: 1.2 })
-    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, expect.any(Number), { kind: 'knowledge', itemId: 'k1', units: 1.2 })
+    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, 2, expect.objectContaining({ kind: 'knowledge', itemId: 'k1', units: 1.2 }), expect.anything())
+    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, expect.any(Number), expect.objectContaining({ kind: 'knowledge', itemId: 'k1', units: 1.2 }), expect.anything())
     expect(result).toMatchObject({ awarded: true, mastery: { kind: 'knowledge', name: 'História' } })
   })
 
@@ -136,7 +151,7 @@ describe('processScenePost — #treino / #aula válidos', () => {
     await post('x'.repeat(1200), TREINO)
 
     // base = round(1200/500*10*1.8) = 43 → 0.5x = 21.5 → 22
-    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, 22, { kind: 'weapon', itemId: 'w1', units: 2.4 })
+    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, 22, expect.objectContaining({ kind: 'weapon', itemId: 'w1', units: 2.4 }), expect.anything())
   })
 
   it('cena acima de 1500 chars: xp CHEIO e maestria travada no teto de 3.0', async () => {
@@ -145,8 +160,8 @@ describe('processScenePost — #treino / #aula válidos', () => {
     const result = await post('x'.repeat(2000), TREINO)
 
     // base = round(2000/500*10*1.8) = 72, sem redução
-    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, 72, { kind: 'weapon', itemId: 'w1', units: 3 })
-    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, expect.any(Number), { kind: 'weapon', itemId: 'w1', units: 3 })
+    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, 72, expect.objectContaining({ kind: 'weapon', itemId: 'w1', units: 3 }), expect.anything())
+    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, expect.any(Number), expect.objectContaining({ kind: 'weapon', itemId: 'w1', units: 3 }), expect.anything())
     expect(result).toMatchObject({ awarded: true, xp: 72 })
   })
 })
@@ -198,17 +213,33 @@ describe('processScenePost — avisos de subida de maestria', () => {
     expect(result).toMatchObject({ awarded: true, leveledUp: true })
     expect(postTrikMessage).toHaveBeenCalledWith('ch-anuncio', expect.stringContaining('subiu de nível'))
   })
+
+  it('aviso de pontos disponíveis marca o jogador dono do personagem', async () => {
+    vi.mocked(getChannelPurposes).mockResolvedValue(ANNOUNCE)
+    vi.mocked(getOrCreateProgress).mockResolvedValue({
+      points_conduct: 1, spent_conduct: 0, points_principles: 0, spent_principles: 0,
+      points_preferences: 0, spent_preferences: 0,
+    } as any)
+    trainWith('weapon', { characterLeveledUp: true })
+
+    await post('x'.repeat(600), TREINO)
+
+    expect(getCharacterOwnerUsername).toHaveBeenCalledWith('char-1')
+    expect(postTrikMessage).toHaveBeenCalledWith(
+      'ch-anuncio', expect.stringMatching(/pontos disponíveis.*@\[Jogador Um\]\(Jogador Um\)/)
+    )
+  })
 })
 
 describe('processScenePost — teto diário de maestria (3.0 unidades / 1500 chars por dia)', () => {
   it('consulta o uso do dia do personagem, do tipo certo, contra o próprio post', async () => {
     trainWith('weapon')
     await post('x'.repeat(600), TREINO)
-    expect(getMasteryUsedToday).toHaveBeenCalledWith('char-1', 'weapon', POST_ID)
+    expect(getMasteryUsedToday).toHaveBeenCalledWith('char-1', 'weapon', POST_ID, null)
 
     trainWith('knowledge')
     await post('x'.repeat(600), AULA)
-    expect(getMasteryUsedToday).toHaveBeenLastCalledWith('char-1', 'knowledge', POST_ID)
+    expect(getMasteryUsedToday).toHaveBeenLastCalledWith('char-1', 'knowledge', POST_ID, null)
   })
 
   it('já treinou parte do dia e a cena cabe no que sobra: maestria inteira, xp reduzido', async () => {
@@ -216,7 +247,7 @@ describe('processScenePost — teto diário de maestria (3.0 unidades / 1500 cha
 
     await post('x'.repeat(600), TREINO)
 
-    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, 2, { kind: 'weapon', itemId: 'w1', units: 1.2 })
+    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, 2, expect.objectContaining({ kind: 'weapon', itemId: 'w1', units: 1.2 }), expect.anything())
   })
 
   it('a cena é maior do que sobra do dia: só o que cabe vira maestria e o xp é o cheio', async () => {
@@ -225,8 +256,8 @@ describe('processScenePost — teto diário de maestria (3.0 unidades / 1500 cha
     const result = await post('x'.repeat(600), TREINO)
 
     // 600 chars, sobra 1.0 unidade: maestria 1.0 (não 1.2), xp normal = 12 (não 2)
-    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, 12, { kind: 'weapon', itemId: 'w1', units: 1 })
-    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, expect.any(Number), { kind: 'weapon', itemId: 'w1', units: 1 })
+    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, 12, expect.objectContaining({ kind: 'weapon', itemId: 'w1', units: 1 }), expect.anything())
+    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, expect.any(Number), expect.objectContaining({ kind: 'weapon', itemId: 'w1', units: 1 }), expect.anything())
     expect(result).toMatchObject({ awarded: true, xp: 12, mastery: { units: 1 } })
   })
 
@@ -236,7 +267,7 @@ describe('processScenePost — teto diário de maestria (3.0 unidades / 1500 cha
     await post('x'.repeat(842), TREINO)
 
     // 842 chars = 1.68 unidades, mas só 1.32 cabem
-    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, expect.any(Number), { kind: 'weapon', itemId: 'w1', units: 1.32 })
+    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, expect.any(Number), expect.objectContaining({ kind: 'weapon', itemId: 'w1', units: 1.32 }), expect.anything())
   })
 
   it.each([
@@ -248,7 +279,7 @@ describe('processScenePost — teto diário de maestria (3.0 unidades / 1500 cha
     const result = await post('x'.repeat(600), TREINO)
 
     expect(result).toEqual({ awarded: true, characterId: 'char-1', xp: 12, leveledUp: false })
-    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, 12, undefined) // cena normal
+    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, 12, undefined, {}) // cena normal
   })
 
   it('teto de treino e de aula são separados: dia cheio de treino não bloqueia a aula', async () => {
@@ -258,7 +289,7 @@ describe('processScenePost — teto diário de maestria (3.0 unidades / 1500 cha
 
     const result = await post('x'.repeat(600), AULA)
 
-    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, expect.any(Number), { kind: 'knowledge', itemId: 'k1', units: 1.2 })
+    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, expect.any(Number), expect.objectContaining({ kind: 'knowledge', itemId: 'k1', units: 1.2 }), expect.anything())
     expect(result).toMatchObject({ awarded: true, xp: 2, mastery: { kind: 'knowledge' } })
   })
 })
@@ -275,7 +306,7 @@ describe('processScenePost — footer que NÃO vira treino (cena normal)', () =>
     const result = await post('x'.repeat(600), footer)
 
     expect(result).toEqual({ awarded: true, characterId: 'char-1', xp: 12, leveledUp: false })
-    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, 12, undefined)
+    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, 12, undefined, {})
     expect(getMasteryUsedToday).not.toHaveBeenCalled() // sem item do catálogo, nem chega no teto
     // Só consulta o catálogo quando há UMA tag com nome (sem par ou tags juntas nem chegam lá).
     expect(vi.mocked(findCatalogByName).mock.calls.length).toBe(looksUpCatalog ? 1 : 0)
@@ -331,5 +362,69 @@ describe('processScenePost — nomes digitados pelo jogador nos avisos do bot', 
     expect(message).toContain('subiu de maestria')
     expect(message).not.toContain('<b>@todos</b>')
     expect(message).toContain('&lt;b&gt;@​todos&lt;/b&gt;')
+  })
+})
+
+describe('processScenePost — motor de bônus (Fase 3)', () => {
+  const DAY = {
+    location_id: 'loc-1', game_date: '2020-07-27', weather_code: 61, climate: 'chuva',
+    sunrise: '06:16:00', sunset: '19:57:00', temp_max: '30', temp_min: '24', humidity_min: 70, rain_hours: null,
+  }
+  const fx = (p: object) => ({
+    id: 'e1', effect: 'multiplica', activity: 'todas', weapon_id: null, knowledge_id: null,
+    weapon_category: null, knowledge_category: null, alert_kind: null,
+    condition_kind: 'sempre', condition_value: null, value: null, ...p,
+  })
+
+  it('Data fora da semana em jogo → ❌ invalid_date, nada creditado', async () => {
+    trainWith('weapon')
+    vi.mocked(getGameWeek).mockResolvedValue('2020-07-26')
+    const result = await post('x'.repeat(600), `Data: 02/08/2020 ${TREINO}`)
+    expect(result).toEqual({ awarded: false, reason: 'invalid_date' })
+    expect(applySceneAward).not.toHaveBeenCalled()
+    expect(reactSceneRejected).toHaveBeenCalledWith(POST_ID)
+  })
+
+  it('aplica o bônus de clima/período e grava data in-game + detalhe', async () => {
+    trainWith('weapon')
+    vi.mocked(getGameWeek).mockResolvedValue('2020-07-26')
+    vi.mocked(getThreadWeatherDay).mockResolvedValue(DAY as any)
+    vi.mocked(listCharacterEffects).mockResolvedValue({
+      'char-1': [fx({ condition_kind: 'clima', condition_value: 'chuva', value: '1.25' }),
+                 fx({ id: 'e2', condition_kind: 'periodo', condition_value: 'noite', value: '1.5' })] as any,
+    })
+    await post('x'.repeat(1000), `Data: 27/07/2020 Hora: 21:00 ${TREINO}`)
+    expect(getMasteryUsedToday).toHaveBeenCalledWith('char-1', 'weapon', POST_ID, '2020-07-27')
+    expect(applySceneAward).toHaveBeenCalledWith(
+      'char-1', POST_ID, expect.any(Number),
+      expect.objectContaining({ units: 3.75, rawUnits: 2 }),
+      expect.objectContaining({ gameDate: '2020-07-27', bonusDetail: expect.objectContaining({ period: 'noite', climate: 'chuva' }) }),
+    )
+  })
+
+  it('alerta vermelho em treino: sem maestria, xp cheio, aviso no canal Alertas marcando o narrador', async () => {
+    trainWith('weapon')
+    vi.mocked(getThreadWeatherDay).mockResolvedValue({ ...DAY, temp_max: '41' } as any)
+    vi.mocked(getChannelPurposes).mockResolvedValue([{ channel_id: 'ch-alertas', purpose: 'alertas' }] as any)
+    await post('x'.repeat(600), `Data: 27/07/2020 ${TREINO}`)
+    expect(applySceneAward).toHaveBeenCalledWith(
+      'char-1', POST_ID, 12, expect.objectContaining({ units: 0, rawUnits: 0 }), expect.anything(),
+    )
+    expect(postTrikMessage).toHaveBeenCalledWith('ch-alertas', expect.stringMatching(/passando mal.*@\[Jogador Um\]\(Jogador Um\).*@oorpheas/))
+  })
+
+  it('espelho: busca parceiros jogadores do #com e usa o conjunto melhor', async () => {
+    trainWith('weapon')
+    vi.mocked(findPartnerCharacters).mockResolvedValue(['char-2'])
+    vi.mocked(listCharacterEffects).mockImplementation(async ids =>
+      ids[0] === 'char-1'
+        ? { 'char-1': [fx({ effect: 'espelho' })] as any }
+        : { 'char-2': [fx({ id: 'p1', value: '2' })] as any })
+    await post('x'.repeat(500), `${TREINO} #com Beltrano`)
+    expect(findPartnerCharacters).toHaveBeenCalledWith(['Beltrano'], 'player-1')
+    expect(applySceneAward).toHaveBeenCalledWith(
+      'char-1', POST_ID, expect.any(Number), expect.objectContaining({ units: 2 }),
+      expect.objectContaining({ bonusDetail: expect.objectContaining({ mirroredFrom: 'char-2' }) }),
+    )
   })
 })

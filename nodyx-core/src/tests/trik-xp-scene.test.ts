@@ -119,7 +119,7 @@ describe('processScenePost — marca ❌ nas cenas recusadas', () => {
     })
     expect(result).toEqual({ awarded: true, characterId: 'char-1', xp: 12, leveledUp: false })
     expect(reactSceneRejected).not.toHaveBeenCalled()
-    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, 12, undefined) // cena normal: sem bloco de maestria
+    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, 12, undefined, {}) // cena normal: sem bloco de maestria
     expect(reactSceneCounted).toHaveBeenCalledWith(POST_ID)
   })
 

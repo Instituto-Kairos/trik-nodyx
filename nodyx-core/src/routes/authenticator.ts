@@ -21,6 +21,7 @@ import { db, redis } from '../config/database'
 import { requireAuth } from '../middleware/auth'
 import { trackSession } from './auth'
 import { getClientIp } from '../utils/clientIp'
+import { isUsernameTaken } from '../models/usernameHistory'
 
 // JwkPublicKey n'est pas dans lib ES2022 sans DOM — on définit le minimum nécessaire
 type JwkPublicKey = Record<string, unknown>
@@ -550,10 +551,9 @@ export default async function authenticatorRoutes(app: FastifyInstance) {
       let finalUsername = baseUsername
       let suffix = 0
       while (true) {
-        const { rows } = await db.query(
-          `SELECT 1 FROM users WHERE username = $1`, [finalUsername]
-        )
-        if (!rows[0]) break
+        // Nome atual OU antigo de outra conta (username_history): um nome
+        // reservado por troca de nome não pode ir pra uma conta nova.
+        if (!await isUsernameTaken(finalUsername)) break
         suffix++
         finalUsername = `${baseUsername}_${suffix}`
       }

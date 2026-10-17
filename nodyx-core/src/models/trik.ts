@@ -44,7 +44,7 @@ export interface TrikCharacter {
 // 'cena' saiu na Fase 2 — o jogo ativo roda em trik_threads (tópicos do
 // fórum), não em canais de chat. 'anuncio' entrou (canal de aviso de
 // level up) — ver trik_002_xp.sql.
-export type TrikChannelPurpose = 'registro' | 'plaquinha' | 'levelup' | 'anuncio'
+export type TrikChannelPurpose = 'registro' | 'plaquinha' | 'levelup' | 'anuncio' | 'clima' | 'alertas'
 
 export interface TrikChannelEntry {
   channel_id: string
@@ -236,6 +236,11 @@ export interface TrikCharacterProgress {
   spent_principles:    number
   spent_preferences:   number
   has_goal:            boolean
+  /** Fase 3: slots de aptidão liberados/escolhidos (2 naturais + 2 adquiridas). */
+  points_natural_aptitudes:  number
+  spent_natural_aptitudes:   number
+  points_acquired_aptitudes: number
+  spent_acquired_aptitudes:  number
   updated_at:          string
 }
 
@@ -261,6 +266,8 @@ interface TrikXpLevelRow {
   reward_principles:  number
   reward_preferences: number
   reward_goal:        boolean
+  reward_natural_aptitudes:  number
+  reward_acquired_aptitudes: number
 }
 
 /**
@@ -297,12 +304,15 @@ export async function applyXpInTx(
   let pointsConduct      = current.points_conduct
   let pointsPrinciples   = current.points_principles
   let pointsPreferences  = current.points_preferences
+  let pointsNatural      = current.points_natural_aptitudes ?? 0
+  let pointsAcquired     = current.points_acquired_aptitudes ?? 0
   let hasGoal            = current.has_goal
   let leveledUp          = false
 
   while (true) {
     const { rows: levelRows } = await client.query(
-      `SELECT goal_xp, reward_conduct, reward_principles, reward_preferences, reward_goal
+      `SELECT goal_xp, reward_conduct, reward_principles, reward_preferences, reward_goal,
+              reward_natural_aptitudes, reward_acquired_aptitudes
          FROM trik_progression WHERE type = 'character' AND level = $1`,
       [level]
     )
@@ -317,6 +327,8 @@ export async function applyXpInTx(
     pointsConduct     += nextGoal.reward_conduct
     pointsPrinciples  += nextGoal.reward_principles
     pointsPreferences += nextGoal.reward_preferences
+    pointsNatural     += nextGoal.reward_natural_aptitudes ?? 0
+    pointsAcquired    += nextGoal.reward_acquired_aptitudes ?? 0
     hasGoal = hasGoal || nextGoal.reward_goal
     leveledUp = true
   }
@@ -325,10 +337,12 @@ export async function applyXpInTx(
     `UPDATE trik_character_progress
         SET progress_xp = $2, level = $3, points_conduct = $4,
             points_principles = $5, points_preferences = $6, has_goal = $7,
+            points_natural_aptitudes = $8, points_acquired_aptitudes = $9,
             updated_at = NOW()
       WHERE character_id = $1
       RETURNING *`,
-    [characterId, progressXp, level, pointsConduct, pointsPrinciples, pointsPreferences, hasGoal]
+    [characterId, progressXp, level, pointsConduct, pointsPrinciples, pointsPreferences, hasGoal,
+     pointsNatural, pointsAcquired]
   )
 
   return { progress: updatedRows[0] as TrikCharacterProgress, leveledUp }
@@ -343,6 +357,16 @@ export interface SceneMasteryAward {
   kind:   MasteryKind
   itemId: string
   units:  number
+  /** Fase 3: unidades brutas que gastaram teto (0 = penalizada/proibida). */
+  rawUnits?:     number
+  /** Fase 3: soma de reduz_requisito pro level up desta cena. */
+  reqReduction?: number
+}
+
+/** Fase 3: dados da cena gravados junto do prêmio. */
+export interface SceneAwardExtra {
+  gameDate?:    string | null
+  bonusDetail?: unknown
 }
 
 export interface SceneAwardResult {
@@ -365,7 +389,8 @@ export async function applySceneAward(
   characterId: string,
   postId: string,
   xpAwarded: number,
-  mastery?: SceneMasteryAward
+  mastery?: SceneMasteryAward,
+  extra: SceneAwardExtra = {}
 ): Promise<SceneAwardResult | null> {
   const client = await (db as any).connect()
   try {
@@ -373,8 +398,9 @@ export async function applySceneAward(
 
     const { rows: inserted } = await client.query(
       `INSERT INTO trik_scene_awards
-         (character_id, post_id, xp_awarded, weapon_id, knowledge_id, mastery_awarded, mastery_kind)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+         (character_id, post_id, xp_awarded, weapon_id, knowledge_id, mastery_awarded, mastery_kind,
+          game_date, mastery_raw, bonus_detail)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        ON CONFLICT (post_id) DO NOTHING
        RETURNING id`,
       [
@@ -383,6 +409,9 @@ export async function applySceneAward(
         mastery?.kind === 'knowledge' ? mastery.itemId : null,
         mastery?.units ?? 0,
         mastery?.kind ?? null,
+        extra.gameDate ?? null,
+        mastery?.rawUnits ?? null,
+        extra.bonusDetail === undefined ? null : JSON.stringify(extra.bonusDetail),
       ]
     )
     if (inserted.length === 0) {
@@ -392,7 +421,7 @@ export async function applySceneAward(
 
     const { leveledUp } = await applyXpInTx(client, characterId, xpAwarded)
     const masteryResult = mastery
-      ? await applyMasteryInTx(client, mastery.kind, characterId, mastery.itemId, mastery.units)
+      ? await applyMasteryInTx(client, mastery.kind, characterId, mastery.itemId, mastery.units, mastery.reqReduction ?? 0)
       : undefined
 
     await client.query('COMMIT')
@@ -580,6 +609,16 @@ export async function searchMentionableAliases(
  * narrador da mesa. Sai no mesmo formato de qualquer alias, então render e
  * notificação não precisam saber que ele existe.
  */
+/** Username do jogador dono do personagem (trik_players.id = users.id) —
+ *  pra marcar o jogador nos avisos do bot. */
+export async function getCharacterOwnerUsername(characterId: string): Promise<string | null> {
+  const { rows } = await db.query<{ username: string }>(
+    `SELECT u.username FROM trik_characters c JOIN users u ON u.id = c.player_id WHERE c.id = $1`,
+    [characterId]
+  )
+  return rows[0]?.username ?? null
+}
+
 export const NARRADOR = { alias: 'Narrador', username: 'oorpheas' } as const
 
 /** O alias do narrador quando `q` casa com "Narrador" e a conta é membro. */
@@ -854,6 +893,8 @@ export interface TrikXpLevel {
   reward_principles:   number
   reward_preferences:  number
   reward_goal:         boolean
+  reward_natural_aptitudes:  number
+  reward_acquired_aptitudes: number
 }
 
 export async function listXpLevels(type: string): Promise<TrikXpLevel[]> {
@@ -871,6 +912,9 @@ export interface XpLevelInput {
   rewardPrinciples:   number
   rewardPreferences:  number
   rewardGoal:         boolean
+  /** Slots de aptidão natural/adquirida que o nível libera (trik_010). */
+  rewardNaturalAptitudes?:  number
+  rewardAcquiredAptitudes?: number
   /** Só relevante no type 'weapon' — omitido/0 = nível máximo. */
   reqMastery?:        number
   /** Só relevante no type 'knowledge' — omitido/0 = nível máximo. */
@@ -894,10 +938,10 @@ export async function setXpLevels(type: string, levels: XpLevelInput[]): Promise
       await client.query(
         `INSERT INTO trik_progression
            (type, level, goal_xp, reward_conduct, reward_principles, reward_preferences, reward_goal,
-            req_mastery, req_education)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+            req_mastery, req_education, reward_natural_aptitudes, reward_acquired_aptitudes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [type, lvl.level, lvl.goalXp, lvl.rewardConduct, lvl.rewardPrinciples, lvl.rewardPreferences, lvl.rewardGoal,
-         lvl.reqMastery ?? 0, lvl.reqEducation ?? 0]
+         lvl.reqMastery ?? 0, lvl.reqEducation ?? 0, lvl.rewardNaturalAptitudes ?? 0, lvl.rewardAcquiredAptitudes ?? 0]
       )
     }
     await client.query('COMMIT')
@@ -1048,16 +1092,13 @@ export async function notifyCategoryPost(opts: {
 }
 
 // ─── Fase 2: catálogos e bônus do /levelup ─────────────────────────────────
-// Sem Aptidões nesta fase (orçamento ainda não definido — ver
-// plans/fase-dois-passo-a-passo.md, passo 0): listAptitudes existe porque o
-// catálogo em si (trik_aptitudes) já é criado pela migration, mas nenhuma
-// rota desta fase usa first_aptitude_id/second_aptitude_id ainda.
+// Fase 3: aptidões entram no /levelup (2 naturais + 2 adquiridas, slots
+// liberados pela curva de XP — reward_natural/acquired_aptitudes).
 
 export interface TrikCatalogEntry {
   id:        string
   name:      string
   category:  string | null
-  bonus_id:  string | null
 }
 
 export async function listAptitudes(): Promise<TrikCatalogEntry[]> {
@@ -1075,58 +1116,26 @@ export async function listGoals(): Promise<TrikCatalogEntry[]> {
   return rows
 }
 
-// ─── Fase 2/3: catálogo de tipos de bônus (trik_bonus) ─────────────────────
-// Cadastro via interface própria no admin (/admin/trik/bonus), mesmo padrão
-// de trik_weapons/trik_knowledges (TrikMastery). Ainda não consumido por
-// nenhuma regra — trik_aptitudes/preferences/goals só guardam o bonus_id.
-
-export interface TrikBonusEntry {
-  id:          string
-  bonus_type:  string
-  bonus_value: string
-  is_category: boolean
-}
-
-export async function listBonus(): Promise<TrikBonusEntry[]> {
-  const { rows } = await db.query<TrikBonusEntry>(`SELECT * FROM trik_bonus ORDER BY bonus_type`)
-  return rows
-}
-
-export async function createBonus(bonusType: string, bonusValue: string, isCategory: boolean): Promise<TrikBonusEntry> {
-  const { rows } = await db.query<TrikBonusEntry>(
-    `INSERT INTO trik_bonus (bonus_type, bonus_value, is_category) VALUES ($1, $2, $3)
-     RETURNING *`,
-    [bonusType.trim(), bonusValue.trim(), isCategory]
-  )
-  return rows[0]
-}
-
-export async function deleteBonus(id: string): Promise<boolean> {
-  const { rowCount } = await db.query(`DELETE FROM trik_bonus WHERE id = $1`, [id])
-  return (rowCount ?? 0) > 0
-}
-
 // ─── Catálogo de panteões e divindades (trik_005) ──────────────────────────
 // Cadastro em /admin/trik/panteoes; o modal de /registro lista daqui. Mesmo
-// formato de trik_aptitudes, mas sem categoria: name + bonus_id (trik_bonus).
+// formato de trik_aptitudes, mas sem categoria. Os bônus são efeitos
+// (trik_effects, models/trikEffects.ts) — pantheon_id/deity_id lá.
 
 export interface TrikDeity {
   id:       string
   name:     string
-  bonus_id: string | null
 }
 
 export interface TrikPantheon {
   id:       string
   name:     string
-  bonus_id: string | null
   deities:  TrikDeity[]
 }
 
 export async function listPantheons(): Promise<TrikPantheon[]> {
   const { rows } = await db.query<TrikPantheon>(
-    `SELECT p.id, p.name, p.bonus_id,
-            COALESCE(json_agg(json_build_object('id', d.id, 'name', d.name, 'bonus_id', d.bonus_id)
+    `SELECT p.id, p.name,
+            COALESCE(json_agg(json_build_object('id', d.id, 'name', d.name)
                               ORDER BY d.name)
                      FILTER (WHERE d.id IS NOT NULL), '[]') AS deities
        FROM trik_pantheons p
@@ -1137,18 +1146,12 @@ export async function listPantheons(): Promise<TrikPantheon[]> {
   return rows
 }
 
-export async function createPantheon(name: string, bonusId: string | null): Promise<TrikPantheon> {
+export async function createPantheon(name: string): Promise<TrikPantheon> {
   const { rows } = await db.query<Omit<TrikPantheon, 'deities'>>(
-    `INSERT INTO trik_pantheons (name, bonus_id) VALUES ($1, $2)
-     RETURNING id, name, bonus_id`,
-    [name.trim(), bonusId]
+    `INSERT INTO trik_pantheons (name) VALUES ($1) RETURNING id, name`,
+    [name.trim()]
   )
   return { ...rows[0], deities: [] }
-}
-
-export async function setPantheonBonus(id: string, bonusId: string | null): Promise<boolean> {
-  const { rowCount } = await db.query(`UPDATE trik_pantheons SET bonus_id = $2 WHERE id = $1`, [id, bonusId])
-  return (rowCount ?? 0) > 0
 }
 
 export async function deletePantheon(id: string): Promise<boolean> {
@@ -1157,19 +1160,14 @@ export async function deletePantheon(id: string): Promise<boolean> {
 }
 
 /** null = panteão não existe. */
-export async function createDeity(pantheonId: string, name: string, bonusId: string | null): Promise<TrikDeity | null> {
+export async function createDeity(pantheonId: string, name: string): Promise<TrikDeity | null> {
   const { rows } = await db.query<TrikDeity>(
-    `INSERT INTO trik_deities (pantheon_id, name, bonus_id)
-     SELECT id, $2, $3 FROM trik_pantheons WHERE id = $1
-     RETURNING id, name, bonus_id`,
-    [pantheonId, name.trim(), bonusId]
+    `INSERT INTO trik_deities (pantheon_id, name)
+     SELECT id, $2 FROM trik_pantheons WHERE id = $1
+     RETURNING id, name`,
+    [pantheonId, name.trim()]
   )
   return rows[0] ?? null
-}
-
-export async function setDeityBonus(id: string, bonusId: string | null): Promise<boolean> {
-  const { rowCount } = await db.query(`UPDATE trik_deities SET bonus_id = $2 WHERE id = $1`, [id, bonusId])
-  return (rowCount ?? 0) > 0
 }
 
 export async function deleteDeity(id: string): Promise<boolean> {
@@ -1196,8 +1194,10 @@ export async function resolvePantheonChoice(
 
 export interface TrikCharacterBonuses {
   character_id:          string
-  first_aptitude_id:      string | null
-  second_aptitude_id:     string | null
+  first_natural_aptitude_id:   string | null
+  second_natural_aptitude_id:  string | null
+  first_acquired_aptitude_id:  string | null
+  second_acquired_aptitude_id: string | null
   first_preference_id:    string | null
   second_preference_id:   string | null
   goal_id:                string | null
@@ -1213,9 +1213,20 @@ export async function getCharacterBonuses(characterId: string): Promise<TrikChar
   return rows[0] ?? null
 }
 
-// Só os slots que a Fase 2 preenche (ver nota acima sobre Aptidões).
-export type BonusSlot = 'first_preference_id' | 'second_preference_id' | 'goal_id'
-const ALLOWED_BONUS_SLOTS: BonusSlot[] = ['first_preference_id', 'second_preference_id', 'goal_id']
+// Slots que o /levelup preenche. Panteão/vínculo vêm do /registro.
+export const PREFERENCE_SLOTS = ['first_preference_id', 'second_preference_id'] as const
+export const NATURAL_APTITUDE_SLOTS = ['first_natural_aptitude_id', 'second_natural_aptitude_id'] as const
+export const ACQUIRED_APTITUDE_SLOTS = ['first_acquired_aptitude_id', 'second_acquired_aptitude_id'] as const
+export type BonusSlot =
+  | (typeof PREFERENCE_SLOTS)[number]
+  | (typeof NATURAL_APTITUDE_SLOTS)[number]
+  | (typeof ACQUIRED_APTITUDE_SLOTS)[number]
+  | 'goal_id'
+const ALLOWED_BONUS_SLOTS: BonusSlot[] = [
+  ...PREFERENCE_SLOTS, ...NATURAL_APTITUDE_SLOTS, ...ACQUIRED_APTITUDE_SLOTS, 'goal_id',
+]
+const countSlots = (fills: LevelupBonusFill[], slots: readonly string[]) =>
+  fills.filter(f => slots.includes(f.slot)).length
 
 /** Preenche um slot de trik_character_bonuses só se ainda estiver vazio —
  *  a checagem "slot livre" também é feita no service antes de chamar isto,
@@ -1286,7 +1297,9 @@ export async function applyLevelupAllocation(
 
   const spentConduct    = deltas.conductPresenca   + deltas.conductProposito  + deltas.conductSangue
   const spentPrinciples = deltas.principlesMente    + deltas.principlesCoracao + deltas.principlesCorpo
-  const spentPreferences = bonusFills.filter(f => f.slot !== 'goal_id').length
+  const spentPreferences = countSlots(bonusFills, PREFERENCE_SLOTS)
+  const spentNatural     = countSlots(bonusFills, NATURAL_APTITUDE_SLOTS)
+  const spentAcquired    = countSlots(bonusFills, ACQUIRED_APTITUDE_SLOTS)
 
   const client = await (db as any).connect()
   try {
@@ -1294,7 +1307,9 @@ export async function applyLevelupAllocation(
 
     const { rows: progressRows } = await client.query(
       `SELECT points_conduct, spent_conduct, points_principles, spent_principles,
-              points_preferences, spent_preferences, has_goal
+              points_preferences, spent_preferences, has_goal,
+              points_natural_aptitudes, spent_natural_aptitudes,
+              points_acquired_aptitudes, spent_acquired_aptitudes
          FROM trik_character_progress
         WHERE character_id = $1
           FOR UPDATE`,
@@ -1310,6 +1325,12 @@ export async function applyLevelupAllocation(
     }
     if (spentPreferences > p.points_preferences - p.spent_preferences) {
       throw new LevelupRejectedError('Sem pontos de Preferência disponíveis')
+    }
+    if (spentNatural > p.points_natural_aptitudes - p.spent_natural_aptitudes) {
+      throw new LevelupRejectedError('Sem slot de Aptidão natural disponível')
+    }
+    if (spentAcquired > p.points_acquired_aptitudes - p.spent_acquired_aptitudes) {
+      throw new LevelupRejectedError('Sem slot de Aptidão adquirida disponível')
     }
     if (bonusFills.some(f => f.slot === 'goal_id') && !p.has_goal) {
       throw new LevelupRejectedError('Objetivo ainda não desbloqueado')
@@ -1332,15 +1353,17 @@ export async function applyLevelupAllocation(
       ]
     ) as { rows: TrikCharacter[] }
 
-    if (spentConduct > 0 || spentPrinciples > 0 || spentPreferences > 0) {
+    if (spentConduct > 0 || spentPrinciples > 0 || spentPreferences > 0 || spentNatural > 0 || spentAcquired > 0) {
       await client.query(
         `UPDATE trik_character_progress
             SET spent_conduct = spent_conduct + $2,
                 spent_principles = spent_principles + $3,
                 spent_preferences = spent_preferences + $4,
+                spent_natural_aptitudes = spent_natural_aptitudes + $5,
+                spent_acquired_aptitudes = spent_acquired_aptitudes + $6,
                 updated_at = NOW()
           WHERE character_id = $1`,
-        [characterId, spentConduct, spentPrinciples, spentPreferences]
+        [characterId, spentConduct, spentPrinciples, spentPreferences, spentNatural, spentAcquired]
       )
     }
 
@@ -1357,7 +1380,9 @@ export async function applyLevelupAllocation(
       )
       if (filled.length === 0) {
         throw new LevelupRejectedError(
-          fill.slot === 'goal_id' ? 'Objetivo já escolhido' : 'Essa preferência já foi preenchida'
+          fill.slot === 'goal_id' ? 'Objetivo já escolhido'
+            : fill.slot.includes('aptitude') ? 'Esse slot de aptidão já foi preenchido'
+            : 'Essa preferência já foi preenchida'
         )
       }
     }
@@ -1368,7 +1393,7 @@ export async function applyLevelupAllocation(
     await client.query('ROLLBACK')
     // preferenceId/goalId que não existe no catálogo: erro de entrada, não de servidor.
     if ((err as { code?: string })?.code === PG_FOREIGN_KEY_VIOLATION) {
-      throw new LevelupRejectedError('Preferência ou objetivo inexistente')
+      throw new LevelupRejectedError('Aptidão, preferência ou objetivo inexistente')
     }
     throw err
   } finally {

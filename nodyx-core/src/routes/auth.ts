@@ -8,6 +8,7 @@ import { db, redis } from '../config/database'
 import { validate } from '../middleware/validate'
 import { rateLimit } from '../middleware/rateLimit'
 import { requireAuth } from '../middleware/auth'
+import { isUsernameTaken } from '../models/usernameHistory'
 import * as UserModel from '../models/user'
 import { toSelfUser } from '../utils/publicUser'
 import { isSmtpConfigured, sendPasswordResetEmail, sendVerificationEmail } from '../services/emailService'
@@ -42,7 +43,7 @@ async function getDefaultCommunityId(): Promise<string | null> {
   return _defaultCommunityId
 }
 
-const SESSION_TTL   = 7 * 24 * 60 * 60 // 7 days in seconds
+export const SESSION_TTL   = 7 * 24 * 60 * 60 // 7 days in seconds
 const RESET_TTL_SEC = 60 * 60           // 1 hour
 const BCRYPT_ROUNDS = 12
 
@@ -138,7 +139,7 @@ const LoginBody = z.object({
   password: z.string().min(1),
 })
 
-function signToken(userId: string, username: string): string {
+export function signToken(userId: string, username: string): string {
   return jwt.sign(
     { userId, username },
     process.env.JWT_SECRET!,
@@ -193,7 +194,8 @@ export default async function authRoutes(app: FastifyInstance) {
 
     const [existingEmail, existingUsername, ipBan, emailBan, memberCount] = await Promise.all([
       UserModel.findByEmail(email),
-      UserModel.findByUsername(username),
+      // Nome atual OU antigo de outra conta (username_history, trik_011).
+      isUsernameTaken(username),
       db.query(`SELECT 1 FROM ip_bans WHERE ip = $1::inet LIMIT 1`, [clientIp]),
       db.query(
         `SELECT 1 FROM email_bans

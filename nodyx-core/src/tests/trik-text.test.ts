@@ -1,7 +1,7 @@
 // Módulo RPG (trik) — services/trik/text.ts › botSafe: texto do jogador em mensagem do bot.
 
 import { describe, it, expect } from 'vitest'
-import { botSafe } from '../services/trik/text'
+import { botSafe, mentionUser } from '../services/trik/text'
 
 const ZWSP = '​'
 
@@ -32,5 +32,17 @@ describe('botSafe', () => {
 
   it('string vazia continua vazia', () => {
     expect(botSafe('')).toBe('')
+  })
+})
+
+describe('mentionUser', () => {
+  it('marca com a forma de alias, inclusive com espaço e acento', () => {
+    expect(mentionUser('orfeus')).toBe('@[orfeus](orfeus)')
+    expect(mentionUser('João Silva')).toBe('@[João Silva](João Silva)')
+  })
+  it('caractere que quebraria o alias ou seria escapado → só o nome, escapado', () => {
+    expect(mentionUser('a)b')).toBe('a)b')
+    expect(mentionUser('a&b')).toBe('a&amp;b')
+    expect(mentionUser('<x>')).toBe('&lt;x&gt;')
   })
 })

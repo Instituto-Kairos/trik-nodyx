@@ -6,6 +6,7 @@
 	import { apiFetch, API_URL } from '$lib/api'
 	import { t } from '$lib/i18n'
 	import NodyxEditor from '$lib/components/editor/NodyxEditor.svelte'
+	import TagPicker from '$lib/components/galeria/TagPicker.svelte'
 
 	const tFn = $derived($t)
 
@@ -36,7 +37,11 @@
 		created_at: string
 	}
 
+	interface Tag { id: string; name: string; image_count: number }
+
 	const albums = $derived(data.albums as Album[])
+	const catalogoTags = $derived(data.tags as Tag[])
+	const ehAdmin = $derived(data.user?.role === 'owner' || data.user?.role === 'admin')
 	const images = $derived(data.images as Imagem[])
 
 	// O backend serve os arquivos estáticos em /uploads, fora do prefixo da API,
@@ -100,7 +105,7 @@
 	let titulo       = $state('')
 	let descricao    = $state('')
 	let albumAlvo    = $state('')
-	let tags         = $state('')
+	let tags         = $state<string[]>([])
 	let enviando     = $state(false)
 	let erro         = $state('')
 
@@ -117,7 +122,7 @@
 	function limparEnvio() {
 		if (previa) URL.revokeObjectURL(previa)
 		arquivo = null; previa = null; titulo = ''; descricao = ''
-		tags = ''; erro = ''; mostrarEnvio = false
+		tags = []; erro = ''; mostrarEnvio = false
 	}
 
 	async function enviar() {
@@ -129,7 +134,7 @@
 			fd.append('title', titulo.trim())
 			if (descricao.trim()) fd.append('description', descricao)
 			if (albumAlvo)        fd.append('album_id', albumAlvo)
-			if (tags.trim())      fd.append('tags', tags.trim())
+			if (tags.length)      fd.append('tags', tags.join(','))
 			fd.append('file', arquivo)
 
 			// FormData vai no fetch cru: apiFetch põe Content-Type JSON quando há
@@ -149,6 +154,38 @@
 			erro = e instanceof Error ? e.message : tFn('galeria.upload_error')
 		} finally {
 			enviando = false
+		}
+	}
+
+	// ── Tags ──────────────────────────────────────────────────────────────────
+	let novaTag     = $state('')
+	let criandoTag  = $state(false)
+
+	async function criarTag() {
+		const nome = novaTag.trim()
+		if (!nome || criandoTag) return
+		criandoTag = true
+		try {
+			const res = await apiFetch(fetch, '/galeria/tags', {
+				method: 'POST',
+				headers: { Authorization: `Bearer ${data.token}` },
+				body: JSON.stringify({ name: nome }),
+			})
+			if (res.ok) { novaTag = ''; await invalidateAll() }
+		} finally {
+			criandoTag = false
+		}
+	}
+
+	async function apagarTag(tag: Tag) {
+		if (!confirm(tFn('galeria.tag_delete_confirm').replace('{tag}', tag.name))) return
+		const res = await apiFetch(fetch, `/galeria/tags/${tag.id}`, {
+			method: 'DELETE',
+			headers: { Authorization: `Bearer ${data.token}` },
+		})
+		if (res.ok) {
+			if (data.tag === tag.name) aplicarFiltro({ tag: '' })
+			else await invalidateAll()
 		}
 	}
 
@@ -233,8 +270,7 @@
 									<option value={a.id}>{a.name}</option>
 								{/each}
 							</select>
-							<input type="text" bind:value={tags}
-							       placeholder={tFn('galeria.tags_ph')} class="gal-input" />
+							<TagPicker bind:value={tags} catalogo={catalogoTags.map((c) => c.name)} />
 						</div>
 
 						{#if erro}<p class="gal-error">{erro}</p>{/if}
@@ -285,7 +321,27 @@
 			</div>
 		</div>
 
-		{#if data.tag}
+		<!-- Tags cadastradas viram filtros: um clique filtra, outro desliga. -->
+		<div class="gal-tagbar">
+			{#each catalogoTags as tg (tg.id)}
+				<span class="gal-tagchip {data.tag === tg.name ? 'is-active' : ''}">
+					<button type="button" class="gal-tagchip-btn"
+					        onclick={() => aplicarFiltro({ tag: data.tag === tg.name ? '' : tg.name })}>
+						#{tg.name} <span class="gal-chip-n">{tg.image_count}</span>
+					</button>
+					{#if ehAdmin}
+						<button type="button" class="gal-tagchip-x" title={tFn('galeria.tag_delete')}
+						        onclick={() => apagarTag(tg)}>×</button>
+					{/if}
+				</span>
+			{/each}
+			<input type="text" bind:value={novaTag} maxlength="30"
+			       placeholder={tFn('galeria.new_tag_ph')}
+			       onkeydown={(e) => e.key === 'Enter' && criarTag()}
+			       class="gal-input gal-input--tag" />
+		</div>
+
+		{#if data.tag && !catalogoTags.some((c) => c.name === data.tag)}
 			<p class="gal-tagfilter">
 				{tFn('galeria.filtering_tag')} <strong>#{data.tag}</strong>
 				<button type="button" class="gal-chip" onclick={() => aplicarFiltro({ tag: '' })}>×</button>
@@ -404,6 +460,17 @@
 }
 .gal-chip.is-active { background: rgb(var(--nx-accent-rgb) / 0.2); color: #fff; border-color: rgb(var(--nx-accent-rgb) / 0.5); }
 .gal-chip-n { opacity: 0.5; margin-left: 0.25rem; }
+.gal-tagbar { display: flex; flex-wrap: wrap; gap: 0.375rem; align-items: center; margin-bottom: 1rem; }
+.gal-tagchip {
+	display: inline-flex; align-items: center;
+	background: rgb(var(--nx-accent-rgb) / 0.08); color: rgb(var(--nx-accent-rgb));
+	border: 1px solid transparent; border-radius: 9999px; font-size: 0.75rem;
+}
+.gal-tagchip.is-active { background: rgb(var(--nx-accent-rgb) / 0.25); color: #fff; border-color: rgb(var(--nx-accent-rgb) / 0.5); }
+.gal-tagchip-btn { background: none; border: 0; color: inherit; cursor: pointer; padding: 0.25rem 0.625rem; font-size: inherit; }
+.gal-tagchip-x { background: none; border: 0; color: inherit; cursor: pointer; opacity: 0.5; padding: 0 0.5rem 0 0; font-size: 0.875rem; }
+.gal-tagchip-x:hover { opacity: 1; }
+.gal-input--tag { flex: 0 1 10rem; padding: 0.3125rem 0.75rem; font-size: 0.75rem; border-radius: 9999px; }
 .gal-tagfilter { font-size: 0.75rem; color: rgba(255,255,255,0.5); margin-bottom: 0.75rem; }
 
 /* ── Grade ─────────────────────────────────────────────────────────────────── */

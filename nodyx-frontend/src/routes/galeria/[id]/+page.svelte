@@ -4,6 +4,7 @@
 	import { t, locale } from '$lib/i18n'
 	import { fmtDate, fmtTime } from '$lib/datetime'
 	import NodyxEditor from '$lib/components/editor/NodyxEditor.svelte'
+	import TagPicker from '$lib/components/galeria/TagPicker.svelte'
 
 	const tFn = $derived($t)
 
@@ -38,6 +39,7 @@
 	const img    = $derived(data.image as Imagem)
 	const notas  = $derived(data.notes as Nota[])
 	const albums = $derived(data.albums as Album[])
+	const catalogoTags = $derived((data.tags as { name: string }[]).map((c) => c.name))
 	const auth   = $derived({ Authorization: `Bearer ${data.token}` })
 
 	// Espelha a autorização do backend só para decidir o que aparece; quem
@@ -56,7 +58,7 @@
 	let edTitulo    = $state('')
 	let edDescricao = $state('')
 	let edAlbum     = $state('')
-	let edTags      = $state('')
+	let edTags      = $state<string[]>([])
 	let salvando    = $state(false)
 	let erroEdicao  = $state('')
 
@@ -64,7 +66,7 @@
 		edTitulo    = img.title
 		edDescricao = img.description ?? ''
 		edAlbum     = img.album_id ?? ''
-		edTags      = img.tags.join(', ')
+		edTags      = [...img.tags]
 		erroEdicao  = ''
 		editando    = true
 	}
@@ -81,7 +83,7 @@
 					title:       edTitulo.trim(),
 					description: edDescricao.trim() ? edDescricao : null,
 					album_id:    edAlbum || null,
-					tags:        edTags.split(',').map((s) => s.trim()).filter(Boolean).slice(0, 12),
+					tags:        edTags.slice(0, 12),
 				}),
 			})
 			if (!res.ok) {
@@ -205,7 +207,7 @@
 						<option value="">{tFn('galeria.no_album')}</option>
 						{#each albums as a}<option value={a.id}>{a.name}</option>{/each}
 					</select>
-					<input type="text" bind:value={edTags} placeholder={tFn('galeria.tags_ph')} class="gp-input" />
+					<TagPicker bind:value={edTags} catalogo={catalogoTags} />
 				</div>
 				{#if erroEdicao}<p class="gp-error">{erroEdicao}</p>{/if}
 				<div class="gp-row gp-row--end">

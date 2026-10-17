@@ -4,7 +4,7 @@ import { apiFetch } from '$lib/api';
 import { POSTS_PER_PAGE, totalPages, parsePageParam } from '$lib/forumPagination';
 import { findCategoryPath } from '$lib/forumTree';
 
-export const load: PageServerLoad = async ({ fetch, params, cookies, url }) => {
+export const load: PageServerLoad = async ({ fetch, params, cookies, url, parent }) => {
 	const token = cookies.get('token') ?? null;
 
 	// Pagination : pas de plafond de messages par sujet, seulement un découpage
@@ -83,7 +83,22 @@ export const load: PageServerLoad = async ({ fetch, params, cookies, url }) => {
 	// sempre apagado pra quem ele deveria informar.
 	const xpEnabled: boolean = json.xp_enabled === true;
 
-	return { thread: json.thread, posts: json.posts, poll, token, ogImagePath, xpEnabled, page, totalPages: pages, trail };
+	// Fase 3 : região do tópico (clima/alertas) — só owner/admin veem e trocam,
+	// e só em tópico de XP (a região mora em trik_threads).
+	let trikRegion: { locationId: string | null; locations: { id: string; name: string }[] } | null = null;
+	const { user } = await parent();
+	if (xpEnabled && token && (user?.role === 'owner' || user?.role === 'admin')) {
+		const headers = { Authorization: `Bearer ${token}` };
+		const [tRes, lRes] = await Promise.all([
+			apiFetch(fetch, `/admin/trik/threads/${json.thread.id}`, { headers }),
+			apiFetch(fetch, '/admin/trik/locations', { headers })
+		]);
+		if (tRes.ok && lRes.ok) {
+			trikRegion = { locationId: (await tRes.json()).locationId ?? null, locations: (await lRes.json()).locations ?? [] };
+		}
+	}
+
+	return { thread: json.thread, posts: json.posts, poll, token, ogImagePath, xpEnabled, trikRegion, page, totalPages: pages, trail };
 };
 
 export const actions: Actions = {
@@ -235,6 +250,27 @@ export const actions: Actions = {
 		if (!res.ok) {
 			const json = await res.json();
 			return fail(res.status, { xpError: json.error });
+		}
+	},
+
+	// ── Módulo RPG (trik, Fase 3) : região do tópico (clima e alertas) ────
+	setTrikRegion: async ({ fetch, request, cookies }) => {
+		const token = cookies.get('token');
+		if (!token) error(401, 'Non connecté');
+
+		const form       = await request.formData();
+		const threadId   = String(form.get('threadId') ?? '');
+		const locationId = String(form.get('locationId') ?? '') || null;
+
+		const res = await apiFetch(fetch, `/admin/trik/threads/${threadId}/location`, {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+			body: JSON.stringify({ locationId })
+		});
+
+		if (!res.ok) {
+			const json = await res.json().catch(() => ({}));
+			return fail(res.status, { xpError: json.error ?? 'Erro ao salvar a região' });
 		}
 	},
 

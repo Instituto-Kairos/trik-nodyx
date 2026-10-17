@@ -9,16 +9,21 @@
  * RPG. Qualquer falha interna vira log + resultado "not awarded".
  */
 
-import { parseScenePost, parseFooterTags, stripTags, hasLoreTag } from './sceneParser'
+import { parseScenePost, parseFooterTags, parseFooterMeta, stripTags, hasLoreTag } from './sceneParser'
+import { computeTraining, periodOf, type AlertOutcome } from './bonusEngine'
+import { dayAlerts, addDays, type Climate } from '../weather'
 import { matchCharacterByHeader } from './matcher'
 import {
-  calculateSceneXp, calculateTrainingSceneXp, calculateMasteryUnits, remainingDailyMastery,
-  calculateNarratorXp,
+  calculateSceneXp, calculateTrainingSceneXp, calculateNarratorXp,
 } from './calc'
 import {
   getPlayer, isXpThread, applySceneAward, revertSceneAward, listAwardedPostIdsByThread,
-  getChannelPurposes, getOrCreateProgress, setSceneRejection, clearSceneRejection,
+  getChannelPurposes, getOrCreateProgress, setSceneRejection, clearSceneRejection, NARRADOR,
+  getCharacterOwnerUsername,
 } from '../../../models/trik'
+import {
+  getGameWeek, getThreadWeatherDay, listCharacterEffects, findPartnerCharacters,
+} from '../../../models/trikEffects'
 import {
   findCatalogByName, getMasteryUsedToday, type CatalogEntry, type MasteryKind,
 } from '../../../models/trikMastery'
@@ -26,9 +31,9 @@ import {
   getNarratorUserId, applyNarratorAward, revertNarratorAward, listNarratorAwardedPostIdsByThread,
 } from '../../../models/trikNarrador'
 import { postTrikMessage, reactSceneCounted, reactSceneRejected, clearSceneMarks } from '../bot'
-import { botSafe } from '../text'
+import { botSafe, mentionUser } from '../text'
 
-export type SceneRejectionReason = 'no_structure' | 'no_player' | 'no_match' | 'below_minimum'
+export type SceneRejectionReason = 'no_structure' | 'no_player' | 'no_match' | 'below_minimum' | 'invalid_date'
 
 /** Crédito de maestria de uma cena #treino/#aula (só presente quando a cena
  *  teve tag válida — ver planTraining). */
@@ -73,11 +78,15 @@ export async function notifyLevelUp(characterId: string, characterName: string):
   const hasAvailablePoints =
     progress.points_conduct     > progress.spent_conduct ||
     progress.points_principles  > progress.spent_principles ||
-    progress.points_preferences > progress.spent_preferences
+    progress.points_preferences > progress.spent_preferences ||
+    progress.points_natural_aptitudes  > progress.spent_natural_aptitudes ||
+    progress.points_acquired_aptitudes > progress.spent_acquired_aptitudes
   if (hasAvailablePoints) {
+    const owner = await getCharacterOwnerUsername(characterId)
     await postTrikMessage(
       announceChannel,
-      `✨ <strong>${botSafe(characterName)}</strong> tem pontos disponíveis pra distribuir — use /levelup.`
+      `✨ <strong>${botSafe(characterName)}</strong> tem pontos disponíveis pra distribuir — use /levelup.` +
+      (owner ? ` ${mentionUser(owner)}` : '')
     )
   }
 }
@@ -87,25 +96,37 @@ interface TrainingPlan {
   entry: CatalogEntry
   /** xp de personagem da cena, já com a redução de cena de treino. */
   xp:    number
+  /** Unidades creditadas (com bônus/penalidade). */
   units: number
+  /** Unidades brutas que gastaram teto (0 = penalizada/proibida). */
+  rawUnits:     number
+  reqReduction: number
+  gameDate:     string | null
+  outcome:      AlertOutcome
+  /** Tipos de alerta vermelho do dia (aviso de "passando mal"). */
+  redAlerts:    string[]
+  detail:       Record<string, unknown>
 }
 
+type TrainingDecision = TrainingPlan | { rejected: 'invalid_date' } | null
+
 /**
- * Decide se a cena conta como treino/estudo e quanto rende. Devolve null (cena
- * normal, sem redução de xp nem crédito de maestria) quando:
+ * Decide se a cena conta como treino/estudo e quanto rende (Fase 3: motor de
+ * bônus, plans/fase-tres-bonus.md §2.5). Devolve null (cena normal, sem
+ * redução de xp nem crédito de maestria) quando:
  *  - não há tag, ou a tag não tem nome logo depois;
  *  - #treino e #aula aparecem juntos (o plano não define prioridade, então
  *    não inventa uma regra);
  *  - o nome não existe no catálogo (só pré-cadastrado — hashtag solta é
  *    ignorada, não cria arma/matéria);
- *  - o teto diário do personagem nesse tipo já foi atingido (3.0 unidades =
- *    1500 chars por dia; treino de arma e aula têm tetos separados) — a cena
- *    vira xp básico.
+ *  - o teto diário do personagem nesse tipo (3 + limite_diario, por data
+ *    in-game) já foi atingido — a cena vira xp básico.
+ * `{ rejected }` quando a Data cai fora da semana em jogo.
  */
-async function planTraining(
-  characterId: string, postId: string, cenaLength: number, footer: string
-): Promise<TrainingPlan | null> {
-  const tags = parseFooterTags(footer)
+async function planTraining(p: {
+  characterId: string; playerId: string; threadId: string; postId: string; cenaLength: number; footer: string
+}): Promise<TrainingDecision> {
+  const tags = parseFooterTags(p.footer)
   let kind: MasteryKind
   let name: string
   if (tags.treino && !tags.aula)      { kind = 'weapon';    name = tags.treino }
@@ -115,14 +136,75 @@ async function planTraining(
   const entry = await findCatalogByName(kind, name)
   if (!entry) return null
 
-  const remaining = remainingDailyMastery(await getMasteryUsedToday(characterId, kind, postId))
-  if (remaining <= 0) return null
+  const meta = parseFooterMeta(p.footer)
+  const gameDate = meta.gameDate ?? null
+  const weekStart = await getGameWeek()
+  if (weekStart && gameDate && (gameDate < weekStart || gameDate > addDays(weekStart, 6))) {
+    return { rejected: 'invalid_date' }
+  }
 
+  const weather = gameDate ? await getThreadWeatherDay(p.threadId, gameDate) : null
+  const alerts = weather ? dayAlerts(weather) : []
+  const period = weather ? periodOf(meta.gameTime ?? null, weather.sunrise, weather.sunset) : null
+
+  const own = (await listCharacterEffects([p.characterId]))[p.characterId] ?? []
+  // Espelho: só personagens de OUTROS jogadores no #com (NPC não conta).
+  const partnerIds = own.some(e => e.effect === 'espelho')
+    ? await findPartnerCharacters(meta.companions, p.playerId)
+    : []
+  const partnerEffects = partnerIds.length > 0 ? await listCharacterEffects(partnerIds) : {}
+
+  const activity = kind === 'weapon' ? 'treino' : 'aula'
+  const usedRaw = await getMasteryUsedToday(p.characterId, kind, p.postId, gameDate)
+  const result = computeTraining(own, partnerIds.map(id => partnerEffects[id] ?? []), {
+    activity,
+    target:       { id: entry.id, category: entry.category },
+    cenaLength:   p.cenaLength,
+    usedRawToday: usedRaw,
+    climate:      (weather?.climate as Climate | null) ?? null,
+    period,
+    hasCompanion: meta.companions.length > 0,
+    alerts,
+  })
+
+  const blocked = result.outcome === 'forbidden' || result.outcome === 'zero'
+  if (!blocked && result.rawUnits <= 0) return null // teto do dia atingido
+
+  const remaining = Math.max(0, result.capTotal - usedRaw)
   return {
     kind, entry,
-    xp:    calculateTrainingSceneXp(cenaLength, remaining),
-    units: calculateMasteryUnits(cenaLength, remaining),
+    // Proibida/zerada: não houve treino de fato — xp de cena cheio.
+    xp:           blocked ? calculateSceneXp(p.cenaLength) : calculateTrainingSceneXp(p.cenaLength, remaining),
+    units:        result.units,
+    rawUnits:     result.consumesCap ? result.rawUnits : 0,
+    reqReduction: result.reqReduction,
+    gameDate,
+    outcome:      result.outcome,
+    redAlerts:    alerts.filter(a => a.level === 'vermelho').map(a => a.kind),
+    detail: {
+      activity, gameDate, gameTime: meta.gameTime ?? null,
+      climate: weather?.climate ?? null, period, alerts,
+      companions: meta.companions,
+      outcome: result.outcome, rawUnits: result.rawUnits, multiplier: result.multiplier,
+      penalty: result.penalty, bonusesBlocked: result.bonusesBlocked, capTotal: result.capTotal,
+      reqReduction: result.reqReduction, appliedEffects: result.appliedEffects,
+      mirroredFrom: result.mirroredFrom === null ? null : partnerIds[result.mirroredFrom],
+    },
   }
+}
+
+const ALERT_NAME: Record<string, string> = { calor: 'calor extremo', frio: 'frio extremo', umidade: 'ar extremamente seco' }
+
+/** Treino em alerta vermelho: aviso no canal Alertas marcando o narrador. */
+async function notifyFeelingSick(characterId: string, characterName: string, redAlerts: string[]): Promise<void> {
+  const channelId = (await getChannelPurposes()).find(p => p.purpose === 'alertas')?.channel_id
+  if (!channelId) return
+  const why = redAlerts.map(k => ALERT_NAME[k] ?? k).join(' e ')
+  const owner = await getCharacterOwnerUsername(characterId)
+  await postTrikMessage(
+    channelId,
+    `🤒 <strong>${botSafe(characterName)}</strong> tentou treinar sob alerta vermelho (${why}) e está passando mal. ${owner ? `${mentionUser(owner)} ` : ''}@${NARRADOR.username}`
+  )
 }
 
 async function notifyMasteryLevelUp(characterName: string, mastery: SceneMasteryResult): Promise<void> {
@@ -186,14 +268,28 @@ export async function processScenePost(params: {
 
     // O gate de 500 caracteres acima vale pra qualquer cena; só depois dele é
     // que o footer importa (cena curta demais já foi rejeitada).
-    const training = await planTraining(character.id, params.postId, parsed.cena.length, parsed.footer)
+    const decision = await planTraining({
+      characterId: character.id, playerId: player.id, threadId: params.threadId,
+      postId: params.postId, cenaLength: parsed.cena.length, footer: parsed.footer,
+    })
+    if (decision && 'rejected' in decision) {
+      await notifySceneRejected(params.postId, decision.rejected)
+      return { awarded: false, reason: decision.rejected }
+    }
+    const training = decision
     const xp = training?.xp ?? baseXp
 
     // Prêmio + xp + maestria numa transação só. null = o post já tinha prêmio
     // (edições concorrentes): não credita de novo nem mexe na reação.
     const applied = await applySceneAward(
       character.id, params.postId, xp,
-      training ? { kind: training.kind, itemId: training.entry.id, units: training.units } : undefined
+      training
+        ? {
+            kind: training.kind, itemId: training.entry.id, units: training.units,
+            rawUnits: training.rawUnits, reqReduction: training.reqReduction,
+          }
+        : undefined,
+      training ? { gameDate: training.gameDate, bonusDetail: training.detail } : {}
     )
     if (!applied) return { awarded: false, reason: 'already_awarded' }
 
@@ -211,6 +307,9 @@ export async function processScenePost(params: {
     }
     if (mastery?.leveledUp) {
       await notifyMasteryLevelUp(character.name, mastery)
+    }
+    if (training?.outcome === 'forbidden') {
+      await notifyFeelingSick(character.id, character.name, training.redAlerts)
     }
 
     return { awarded: true, characterId: character.id, xp, leveledUp, ...(mastery && { mastery }) }

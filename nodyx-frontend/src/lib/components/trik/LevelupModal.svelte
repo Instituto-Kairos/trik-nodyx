@@ -26,8 +26,18 @@
 			first_preference_id: string | null;
 			second_preference_id: string | null;
 			goal_id: string | null;
+			first_natural_aptitude_id?: string | null;
+			second_natural_aptitude_id?: string | null;
+			first_acquired_aptitude_id?: string | null;
+			second_acquired_aptitude_id?: string | null;
 		} | null;
-		available: { conduct: number; principles: number; preferences: number };
+		available: {
+			conduct: number;
+			principles: number;
+			preferences: number;
+			naturalAptitudes?: number;
+			acquiredAptitudes?: number;
+		};
 	}
 
 	const ZERO_DELTAS: Deltas = {
@@ -58,11 +68,14 @@
 	let characters = $state<CharacterState[]>([]);
 	let preferences = $state<CatalogEntry[]>([]);
 	let goals = $state<CatalogEntry[]>([]);
+	let aptitudes = $state<CatalogEntry[]>([]);
 
 	let selectedCharacterId = $state('');
 	let deltas = $state<Deltas>({ ...ZERO_DELTAS });
 	let preferenceId = $state('');
 	let goalId = $state('');
+	let naturalAptitudeId = $state('');
+	let acquiredAptitudeId = $state('');
 
 	let selected = $derived(characters.find((c) => c.character.id === selectedCharacterId) ?? null);
 	let conductSpent = $derived(deltas.conductPresenca + deltas.conductProposito + deltas.conductSangue);
@@ -74,11 +87,35 @@
 		!!selected?.bonuses?.first_preference_id && !!selected?.bonuses?.second_preference_id
 	);
 	let canPickGoal = $derived(!!selected?.progress.has_goal && !selected?.bonuses?.goal_id);
+	// Aptidões (Fase 3): slots liberados pela curva de XP, escolha definitiva.
+	// A mesma aptidão não pode ocupar dois slots — some da lista.
+	let ownedAptitudes = $derived(
+		new Set(
+			[
+				selected?.bonuses?.first_natural_aptitude_id,
+				selected?.bonuses?.second_natural_aptitude_id,
+				selected?.bonuses?.first_acquired_aptitude_id,
+				selected?.bonuses?.second_acquired_aptitude_id
+			].filter(Boolean)
+		)
+	);
+	let canPickNatural = $derived(
+		(selected?.available.naturalAptitudes ?? 0) > 0 &&
+			!(selected?.bonuses?.first_natural_aptitude_id && selected?.bonuses?.second_natural_aptitude_id)
+	);
+	let canPickAcquired = $derived(
+		(selected?.available.acquiredAptitudes ?? 0) > 0 &&
+			!(selected?.bonuses?.first_acquired_aptitude_id && selected?.bonuses?.second_acquired_aptitude_id)
+	);
+	const aptitudeOptions = (exclude: string) =>
+		aptitudes.filter((a) => !ownedAptitudes.has(a.id) && a.id !== exclude);
 
 	function resetSelection() {
 		deltas = { ...ZERO_DELTAS };
 		preferenceId = '';
 		goalId = '';
+		naturalAptitudeId = '';
+		acquiredAptitudeId = '';
 	}
 
 	function selectCharacter(id: string) {
@@ -110,6 +147,7 @@
 				characters = data.characters ?? [];
 				preferences = data.preferences ?? [];
 				goals = data.goals ?? [];
+				aptitudes = data.aptitudes ?? [];
 				selectedCharacterId = characters[0]?.character.id ?? '';
 			}
 		} finally {
@@ -125,8 +163,19 @@
 			error = 'Selecione um personagem';
 			return;
 		}
-		if (conductSpent === 0 && principlesSpent === 0 && !preferenceId && !goalId) {
-			error = 'Aloque algum ponto ou escolha uma preferência/objetivo antes de salvar';
+		if (
+			conductSpent === 0 &&
+			principlesSpent === 0 &&
+			!preferenceId &&
+			!goalId &&
+			!naturalAptitudeId &&
+			!acquiredAptitudeId
+		) {
+			error = 'Aloque algum ponto ou escolha uma aptidão/preferência/objetivo antes de salvar';
+			return;
+		}
+		if ((naturalAptitudeId || acquiredAptitudeId || preferenceId || goalId) &&
+			!confirm('Aptidão, preferência e objetivo são definitivos — não dá pra trocar depois. Salvar?')) {
 			return;
 		}
 		saving = true;
@@ -139,7 +188,9 @@
 					characterId: selected.character.id,
 					deltas,
 					preferenceId: preferenceId || undefined,
-					goalId: goalId || undefined
+					goalId: goalId || undefined,
+					naturalAptitudeId: naturalAptitudeId || undefined,
+					acquiredAptitudeId: acquiredAptitudeId || undefined
 				})
 			});
 			if (!res.ok) {
@@ -301,6 +352,40 @@
 								<option value="">— Nenhuma por enquanto —</option>
 								{#each preferences as p (p.id)}
 									<option value={p.id}>{p.name}</option>
+								{/each}
+							</select>
+						</div>
+					{/if}
+
+					{#if canPickNatural}
+						<div>
+							<p class="text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-1.5">
+								Aptidão natural ({selected.available.naturalAptitudes} disponível)
+							</p>
+							<select
+								bind:value={naturalAptitudeId}
+								class="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-white"
+							>
+								<option value="">— Nenhuma por enquanto —</option>
+								{#each aptitudeOptions(acquiredAptitudeId) as a (a.id)}
+									<option value={a.id}>{a.name}</option>
+								{/each}
+							</select>
+						</div>
+					{/if}
+
+					{#if canPickAcquired}
+						<div>
+							<p class="text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-1.5">
+								Aptidão adquirida ({selected.available.acquiredAptitudes} disponível)
+							</p>
+							<select
+								bind:value={acquiredAptitudeId}
+								class="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-white"
+							>
+								<option value="">— Nenhuma por enquanto —</option>
+								{#each aptitudeOptions(naturalAptitudeId) as a (a.id)}
+									<option value={a.id}>{a.name}</option>
 								{/each}
 							</select>
 						</div>

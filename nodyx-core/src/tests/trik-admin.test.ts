@@ -368,7 +368,7 @@ describe('trikAdminPlugin', () => {
         headers: { Authorization: 'Bearer admin' },
       })
       expect(res.statusCode).toBe(200)
-      expect(JSON.parse(res.body)).toEqual({ enabled: true })
+      expect(JSON.parse(res.body)).toEqual({ enabled: true, locationId: null })
       expect(TrikModel.isXpThread).toHaveBeenCalledWith(THREAD_UUID)
     })
   })
@@ -604,16 +604,21 @@ describe('trikAdminPlugin', () => {
       expect(TrikMastery.createCatalogEntry).toHaveBeenCalledWith('weapon', 'Espada Longa', 'Espadas')
     })
 
-    it('cria matéria nova → 201, sem categoria (mesmo que venha no corpo)', async () => {
+    it('cria matéria nova com categoria → 201 (trik_010)', async () => {
       vi.mocked(TrikMastery.findCatalogByName).mockResolvedValue(null)
-      vi.mocked(TrikMastery.createCatalogEntry).mockResolvedValue({ id: WEAPON_UUID, name: 'História' })
+      vi.mocked(TrikMastery.createCatalogEntry).mockResolvedValue({ id: WEAPON_UUID, name: 'Russo', category: 'Idiomas' })
 
-      const res = await post({ type: 'knowledge', name: '  História ', category: 'ignorada' })
+      const res = await post({ type: 'knowledge', name: '  Russo ', category: 'Idiomas' })
 
       expect(res.statusCode).toBe(201)
-      expect(res.json()).toEqual({ entry: { id: WEAPON_UUID, name: 'História' } })
-      expect(TrikMastery.findCatalogByName).toHaveBeenCalledWith('knowledge', 'História')
-      expect(TrikMastery.createCatalogEntry).toHaveBeenCalledWith('knowledge', 'História')
+      expect(res.json()).toEqual({ entry: { id: WEAPON_UUID, name: 'Russo', category: 'Idiomas' } })
+      expect(TrikMastery.createCatalogEntry).toHaveBeenCalledWith('knowledge', 'Russo', 'Idiomas')
+    })
+
+    it('matéria sem categoria → 400', async () => {
+      const res = await post({ type: 'knowledge', name: 'Russo' })
+      expect(res.statusCode).toBe(400)
+      expect(TrikMastery.createCatalogEntry).not.toHaveBeenCalled()
     })
 
     it('retorna 409 DUPLICATE_NAME quando já existe (mesmo padrão do /registro)', async () => {

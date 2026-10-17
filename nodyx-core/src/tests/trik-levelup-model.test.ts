@@ -77,7 +77,7 @@ describe('applyLevelupAllocation — orçamento conferido dentro da transação'
     expect(sqls[1]).toContain('FOR UPDATE') // a checagem vem antes de qualquer gasto
     expect(sqls.at(-1)).toBe('COMMIT')
     const spend = mockClient.query.mock.calls.find(c => (c[0] as string).startsWith('UPDATE trik_character_progress'))!
-    expect(spend[1]).toEqual(['char-1', 2, 1, 0])
+    expect(spend[1]).toEqual(['char-1', 2, 1, 0, 0, 0])
     expect(mockClient.release).toHaveBeenCalled()
   })
 
@@ -134,7 +134,7 @@ describe('applyLevelupAllocation — preferências e objetivo', () => {
     await applyLevelupAllocation('char-1', zero, [{ slot: 'first_preference_id', valueId: 'pref-1' }])
 
     const spend = mockClient.query.mock.calls.find(c => (c[0] as string).startsWith('UPDATE trik_character_progress'))!
-    expect(spend[1]).toEqual(['char-1', 0, 0, 1])
+    expect(spend[1]).toEqual(['char-1', 0, 0, 1, 0, 0])
     const bonus = mockClient.query.mock.calls.find(c => (c[0] as string).includes('INSERT INTO trik_character_bonuses'))!
     expect(bonus[0]).toContain('first_preference_id')
     expect(bonus[0]).toContain('RETURNING')
@@ -178,7 +178,7 @@ describe('applyLevelupAllocation — erros', () => {
     const promise = applyLevelupAllocation('char-1', zero, [{ slot: 'first_preference_id', valueId: 'nao-existe' }])
 
     await expect(promise).rejects.toBeInstanceOf(LevelupRejectedError)
-    await expect(promise).rejects.toThrow('Preferência ou objetivo inexistente')
+    await expect(promise).rejects.toThrow('Aptidão, preferência ou objetivo inexistente')
     expect(clientSqls().at(-1)).toBe('ROLLBACK')
   })
 

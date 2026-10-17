@@ -1,4 +1,4 @@
-import { error } from '@sveltejs/kit'
+import { error, redirect } from '@sveltejs/kit'
 import type { PageServerLoad } from './$types'
 import { apiFetch } from '$lib/api'
 
@@ -14,7 +14,13 @@ export const load: PageServerLoad = async ({ params, fetch, parent }) => {
 		apiFetch(fetch, `/social/${username}/posts?limit=10`),
 	])
 
-	if (profileRes.status === 404) error(404, 'Utilisateur introuvable')
+	if (profileRes.status === 404) {
+		// Nome antigo de quem trocou (username_history): leva ao perfil atual,
+		// pra links e menções antigas continuarem funcionando.
+		const resolved = await apiFetch(fetch, `/users/resolve/${encodeURIComponent(username)}`)
+		if (resolved.ok) redirect(301, `/users/${encodeURIComponent((await resolved.json()).username)}`)
+		error(404, 'Utilisateur introuvable')
+	}
 	if (!profileRes.ok)            error(500, 'Erreur serveur')
 
 	const profile = await profileRes.json()

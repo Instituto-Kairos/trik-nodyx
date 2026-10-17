@@ -50,6 +50,7 @@ vi.mock('../models/trik', () => ({
   getCharacterBonuses: vi.fn(),
   listPreferences:     vi.fn().mockResolvedValue([]),
   listGoals:           vi.fn().mockResolvedValue([]),
+  listAptitudes:       vi.fn().mockResolvedValue([]),
 }))
 
 vi.mock('../services/trik/registro', () => ({
@@ -406,7 +407,7 @@ describe('trikPlayerPlugin', () => {
       expect(res.statusCode).toBe(200)
       const body = JSON.parse(res.body)
       expect(body.characters).toHaveLength(1)
-      expect(body.characters[0].available).toEqual({ conduct: 1, principles: 0, preferences: 0 })
+      expect(body.characters[0].available).toMatchObject({ conduct: 1, principles: 0, preferences: 0 })
     })
 
     it('inclui personagem com objetivo desbloqueado e ainda não escolhido', async () => {

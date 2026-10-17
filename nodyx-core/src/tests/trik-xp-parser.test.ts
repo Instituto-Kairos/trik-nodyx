@@ -8,7 +8,7 @@
 // um único `<p>` cheio de `<br>`, sem nenhum `<p></p>` vazio).
 
 import { describe, it, expect } from 'vitest'
-import { parseScenePost } from '../services/trik/xp/sceneParser'
+import { parseScenePost, parseFooterMeta } from '../services/trik/xp/sceneParser'
 
 function scene(header: string, cena: string, footer?: string) {
   const parts = [`<p>${header}</p>`, '<p></p>', '<p></p>', `<p>${cena}</p>`]
@@ -83,5 +83,43 @@ describe('parseScenePost', () => {
       // a contagem de caracteres e o match de header em casos reais.
       expect(parsed?.cena).toBe('linha um\nlinha dois')
     })
+  })
+})
+
+describe('parseFooterMeta (Fase 3)', () => {
+  it('lê Data, Hora e #com de um footer completo', () => {
+    const footer = 'Data: 27/07/2020\nHora: 21:30\n#treino #espada #com Ana Clara, Bruno e Caio'
+    expect(parseFooterMeta(footer)).toEqual({
+      gameDate: '2020-07-27', gameTime: '21:30', companions: ['Ana Clara', 'Bruno', 'Caio'],
+    })
+  })
+
+  it('aceita variações de data e hora', () => {
+    expect(parseFooterMeta('data:1/8/20 hora: 7h').gameDate).toBe('2020-08-01')
+    expect(parseFooterMeta('Hora: 7h').gameTime).toBe('07:00')
+    expect(parseFooterMeta('Hora: 14h30').gameTime).toBe('14:30')
+    expect(parseFooterMeta('Data: 01.08.2020').gameDate).toBe('2020-08-01')
+  })
+
+  it('recusa data ou hora impossível', () => {
+    expect(parseFooterMeta('Data: 31/02/2020').gameDate).toBeUndefined()
+    expect(parseFooterMeta('Hora: 25:00').gameTime).toBeUndefined()
+    expect(parseFooterMeta('Hora: 10:75').gameTime).toBeUndefined()
+  })
+
+  it('sem nada → só lista vazia', () => {
+    expect(parseFooterMeta('#treino #espada')).toEqual({ gameDate: undefined, gameTime: undefined, companions: [] })
+  })
+
+  it('#com em hashtags para na tag reservada', () => {
+    expect(parseFooterMeta('#com #Ana #Bruno #treino #espada').companions).toEqual(['Ana', 'Bruno'])
+  })
+
+  it('#com em texto para na próxima hashtag e não repete nomes', () => {
+    expect(parseFooterMeta('#com Ana #treino #espada\n#com ana / Bruno').companions).toEqual(['Ana', 'Bruno'])
+  })
+
+  it('não confunde #comida com #com', () => {
+    expect(parseFooterMeta('#comida boa').companions).toEqual([])
   })
 })
