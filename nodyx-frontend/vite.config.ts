@@ -6,6 +6,8 @@ export default defineConfig({
 	plugins: [tailwindcss(), sveltekit()],
 
 	build: {
+		// Calcular o tamanho gzip estoura a RAM em instâncias pequenas (AWS 2 GB)
+		reportCompressedSize: false,
 		rollupOptions: {
 			output: {
 				manualChunks: (id) => {
