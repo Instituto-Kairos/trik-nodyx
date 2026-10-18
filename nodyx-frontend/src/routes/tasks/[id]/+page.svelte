@@ -75,7 +75,10 @@
 	async function api(path: string, method = 'GET', body?: unknown) {
 		const res = await fetch(`${API}${path}`, {
 			method,
-			headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+			// Pas de Content-Type sans body : Fastify rejette (400) un DELETE JSON vide
+			headers: body
+				? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+				: { Authorization: `Bearer ${token}` },
 			body: body ? JSON.stringify(body) : undefined,
 		})
 		return res.ok ? res.json() : null
