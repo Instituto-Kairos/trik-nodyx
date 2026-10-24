@@ -1095,5 +1095,9 @@
   "translate.contributors.view_pr": "Открыть pull request #{{n}}",
   "translate.contributors.view_commit": "Открыть commit",
   "translate.contributors.close": "Закрыть",
-  "translate.newlang.horizon": "Nodyx ещё не пересёк этот горизонт."
+  "translate.newlang.horizon": "Nodyx ещё не пересёк этот горизонт.",
+  "galeria.au_view": "Показать АВ",
+  "galeria.au_exit": "Выйти из АВ",
+  "galeria.album_delete": "Удалить альбом",
+  "galeria.album_delete_confirm": "Удалить альбом «{album}»? Изображения сохранятся в разделе «Без альбома»."
 }

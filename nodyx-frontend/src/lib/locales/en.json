@@ -4994,5 +4994,9 @@
   "zone.reset_one": "Back to the ambiance for this setting",
   "zone.reset_all": "Back to the ambiance",
   "zone.copy_all": "Apply to every zone",
-  "zone.others_styled": "Other zones with their own style: {{count}}"
+  "zone.others_styled": "Other zones with their own style: {{count}}",
+  "galeria.au_view": "View AU",
+  "galeria.au_exit": "Leave AU",
+  "galeria.album_delete": "Delete album",
+  "galeria.album_delete_confirm": "Delete the album \"{album}\"? Images are kept and move to \"No album\"."
 }

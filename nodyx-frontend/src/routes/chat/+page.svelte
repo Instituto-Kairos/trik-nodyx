@@ -31,6 +31,8 @@
 	import RegistroModal from '$lib/components/trik/RegistroModal.svelte';
 	import PlaquinhaModal from '$lib/components/trik/PlaquinhaModal.svelte';
 	import LevelupModal from '$lib/components/trik/LevelupModal.svelte';
+	import InteresseModal from '$lib/components/trik/InteresseModal.svelte';
+	import AliasAuModal from '$lib/components/trik/AliasAuModal.svelte';
 	const tFn = $derived($t)
 	const customEmojis = $derived($customEmojisStore)   // réactif : re-rend au chargement des emojis
 	// Barre au survol : les emojis custom que CE membre utilise le plus (sinon les premiers)
@@ -225,6 +227,8 @@
 	let showRegistroModal  = $state(false);
 	let showPlaquinhaModal = $state(false);
 	let showLevelupModal   = $state(false);
+	let showInteresseModal = $state(false);
+	let showAliasAuModal = $state(false);
 
 	// Rich editor modal — sert à la fois à composer ET à rééditer un message riche
 	let showRichModal = $state(false);
@@ -789,10 +793,12 @@
 		// mensagem de chat — ver plans/fase-um.md, seção 3. Gate de canal
 		// (trik_channels.purpose) fica pra depois (ver plano, passo 10).
 		const trikCmd = matchTrikCommand(inputText.trim());
-		if (trikCmd === 'registro' || trikCmd === 'plaquinha' || trikCmd === 'levelup') {
+		if (trikCmd === 'registro' || trikCmd === 'plaquinha' || trikCmd === 'levelup' || trikCmd === 'interesse' || trikCmd === 'alias-au') {
 			inputText = '';
 			if (trikCmd === 'registro') showRegistroModal = true;
 			else if (trikCmd === 'plaquinha') showPlaquinhaModal = true;
+			else if (trikCmd === 'interesse') showInteresseModal = true;
+			else if (trikCmd === 'alias-au') showAliasAuModal = true;
 			else showLevelupModal = true;
 			return;
 		}
@@ -1727,6 +1733,13 @@
 
 {#if showLevelupModal && token && selectedChannel}
 	<LevelupModal {token} channelId={selectedChannel.id} onclose={() => (showLevelupModal = false)} />
+{/if}
+
+{#if showAliasAuModal && token}
+	<AliasAuModal {token} onclose={() => (showAliasAuModal = false)} />
+{/if}
+{#if showInteresseModal && token && selectedChannel}
+	<InteresseModal {token} channelId={selectedChannel.id} onclose={() => (showInteresseModal = false)} />
 {/if}
 
 {#if showRichModal}

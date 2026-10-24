@@ -22,6 +22,14 @@ describe('matchTrikCommand', () => {
 		expect(matchTrikCommand('/levelup')).toBe('levelup');
 	});
 
+	it('reconhece /interesse', () => {
+		expect(matchTrikCommand('/interesse')).toBe('interesse');
+	});
+
+	it('reconhece /alias-au', () => {
+		expect(matchTrikCommand('/alias-au')).toBe('alias-au');
+	});
+
 	it('é case-insensitive', () => {
 		expect(matchTrikCommand('/REGISTRO')).toBe('registro');
 	});

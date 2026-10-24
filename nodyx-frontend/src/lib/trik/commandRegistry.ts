@@ -7,6 +7,10 @@ export const TRIK_COMMANDS = {
 	// Fase 2 — distribui pontos ganhos ao subir de nível (Conduct/Principles/
 	// Preferências) e escolhe Objetivo quando desbloqueado.
 	'/levelup': 'levelup',
+	// Fase 3 — escolhe/troca os interesses primário e secundário (troca semanal).
+	'/interesse': 'interesse',
+	// Universo Alternativo (trik_013) — aliases livres, que só valem no AU.
+	'/alias-au': 'alias-au',
 	// /teste: comando de teste — marca (@menciona) quem mandou, sem modal,
 	// só pra validar a notificação/link de @menção do bot Trik.
 	'/teste': 'teste'

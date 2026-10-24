@@ -4994,5 +4994,9 @@
   "zone.reset_one": "Revenir à l'ambiance pour ce réglage",
   "zone.reset_all": "Revenir à l'ambiance",
   "zone.copy_all": "Appliquer à toutes les zones",
-  "zone.others_styled": "Autres zones avec leur propre style : {{count}}"
+  "zone.others_styled": "Autres zones avec leur propre style : {{count}}",
+  "galeria.au_view": "Voir l’UA",
+  "galeria.au_exit": "Quitter l’UA",
+  "galeria.album_delete": "Supprimer l’album",
+  "galeria.album_delete_confirm": "Supprimer l’album « {album} » ? Les images restent, dans « Sans album »."
 }

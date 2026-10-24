@@ -25,6 +25,8 @@ import * as TrikModel from '../models/trik'
 import * as TrikMastery from '../models/trikMastery'
 import * as TrikNarrador from '../models/trikNarrador'
 import * as TrikEffects from '../models/trikEffects'
+import * as TrikInterests from '../models/trikInterests'
+import * as TrikAu from '../models/trikAu'
 import { syncGameWeek, dayAlerts } from '../services/trik/weather'
 import { getCharacterSheet } from '../models/trikSheet'
 import { getPlayerAndCharacters, submitRegistro } from '../services/trik/registro'
@@ -179,6 +181,23 @@ const LevelupBody = z.object({
   acquiredAptitudeId: z.string().uuid().optional(),
 })
 
+// /interesse (trik_012): mesmo canal do /levelup.
+const InterestBody = z.object({
+  channelId:   z.string().uuid(),
+  characterId: z.string().uuid(),
+  slot:        z.enum(TrikInterests.INTEREST_SLOTS),
+  kind:        z.enum(TrikMastery.MASTERY_KINDS),
+  category:    z.string().trim().min(1).max(60),
+})
+
+const INTEREST_ERRORS: Record<string, string> = {
+  LOCKED_SLOT:      'Este slot de interesse ainda não foi liberado',
+  WEEKLY_LIMIT:     'Este interesse já foi trocado nesta semana — a próxima troca abre no domingo',
+  UNKNOWN_CATEGORY: 'Categoria não cadastrada',
+  DUPLICATE:        'Os dois interesses não podem ter a mesma categoria',
+  UNCHANGED:        'Esse já é o interesse atual',
+}
+
 // 'character' = nível do personagem (applyXpInTx). 'weapon'
 // (maestria, #treino) e 'knowledge' (aulas, #aula) = curvas lidas por
 // models/trikMastery.ts: reqMastery/reqEducation são os "treinos/aulas
@@ -205,6 +224,9 @@ const XpLevelsBody = z.object({
     // .default(), igual reqMastery: omitido = 0 no model.
     rewardNaturalAptitudes:  z.number().int().min(0).max(32767).optional(),
     rewardAcquiredAptitudes: z.number().int().min(0).max(32767).optional(),
+    // Slots de interesse que o nível abre (trik_012) — só 'character'.
+    rewardPrimaryInterest:   z.number().int().min(0).max(1).optional(),
+    rewardSecondaryInterest: z.number().int().min(0).max(1).optional(),
     // Sem .default(): omitido continua omitido no payload repassado ao model
     // (que trata como 0). SMALLINT no banco → teto 32767.
     reqMastery:        z.number().int().min(0).max(32767).optional(),
@@ -318,6 +340,17 @@ const NotifyCategoriesBody = z.object({
   categoryIds: z.array(z.string().uuid()).max(500),
 })
 
+// /alias-au (trik_013). `]` e quebra de linha fechariam o `@[…]` da menção.
+const AuAliasBody = z.object({
+  name: z.string().trim().min(1).max(100).refine(n => !/[\]\n]/.test(n), 'O alias não pode ter "]" nem quebra de linha'),
+})
+
+/** `?category=` das buscas de menção: id inválido/ausente = universo principal. */
+async function auContext(category: string | undefined): Promise<boolean> {
+  if (!category || !/^[0-9a-f-]{36}$/i.test(category)) return false
+  return TrikAu.isAuCategory(category)
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // PLAYER PLUGIN — préfixe /api/v1/trik (requireAuth)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -371,13 +404,15 @@ export async function trikPlayerPlugin(app: FastifyInstance) {
     const communityId = await getCommunityId()
     if (!communityId) return reply.code(503).send({ error: 'Community not configured' })
 
-    const { q } = request.query as { q?: string }
+    const { q, category } = request.query as { q?: string; category?: string }
     // Um `q` longo não é um caso de uso, é um scan de tabela disfarçado.
     const termo = (q ?? '').trim().slice(0, 100)
+    // Dentro do AU (trik_013) o personagem não existe: entram os aliases AU.
+    const au = await auContext(category)
 
     const [narrador, aliases] = await Promise.all([
       TrikModel.narradorAlias(communityId, termo),
-      TrikModel.searchMentionableAliases(communityId, termo),
+      au ? TrikAu.searchAuAliases(communityId, termo) : TrikModel.searchMentionableAliases(communityId, termo),
     ])
     return reply.send({ aliases: narrador ? [narrador, ...aliases] : aliases })
   })
@@ -391,10 +426,10 @@ export async function trikPlayerPlugin(app: FastifyInstance) {
     const communityId = await getCommunityId()
     if (!communityId) return reply.code(503).send({ error: 'Community not configured' })
 
-    const { q } = request.query as { q?: string }
+    const { q, category } = request.query as { q?: string; category?: string }
     const termo = (q ?? '').trim().slice(0, 100)
 
-    const npccs = await TrikModel.searchNpccThreads(communityId, termo)
+    const npccs = await TrikModel.searchNpccThreads(communityId, termo, 8, await auContext(category))
     return reply.send({ npccs })
   })
 
@@ -406,11 +441,34 @@ export async function trikPlayerPlugin(app: FastifyInstance) {
     const communityId = await getCommunityId()
     if (!communityId) return reply.code(503).send({ error: 'Community not configured' })
 
-    const { q } = request.query as { q?: string }
+    const { q, category } = request.query as { q?: string; category?: string }
     const termo = (q ?? '').trim().slice(0, 100)
 
-    const npcs = await TrikModel.searchNpcImages(communityId, termo)
+    const npcs = await TrikModel.searchNpcImages(communityId, termo, 8, await auContext(category))
     return reply.send({ npcs })
+  })
+
+  // ── /alias-au (trik_013): aliases livres do AU, sem limite e sem ficha ────
+
+  app.get('/au-aliases', async (request, reply) => {
+    return reply.send({ aliases: await TrikAu.listMyAuAliases(request.user!.userId) })
+  })
+
+  app.post('/au-aliases', {
+    preHandler: validate({ body: AuAliasBody }),
+  }, async (request, reply) => {
+    const { name } = request.body as z.infer<typeof AuAliasBody>
+    const alias = await TrikAu.createAuAlias(request.user!.userId, name)
+    if (!alias) return reply.code(409).send({ error: 'Você já tem um alias AU com esse nome', code: 'DUPLICATE' })
+    return reply.code(201).send({ alias })
+  })
+
+  app.delete('/au-aliases/:id', {
+    preHandler: validate({ params: IdParams }),
+  }, async (request, reply) => {
+    const { id } = request.params as z.infer<typeof IdParams>
+    const ok = await TrikAu.deleteAuAlias(request.user!.userId, id)
+    return ok ? reply.code(204).send() : reply.code(404).send({ error: 'Alias não encontrado', code: 'NOT_FOUND' })
   })
 
   // Opções dos dropdowns de panteão/vínculo divino do modal de /registro.
@@ -510,6 +568,51 @@ export async function trikPlayerPlugin(app: FastifyInstance) {
       return reply.code(status).send({ error: result.message, code: result.code })
     }
     return reply.send({ character: result.character })
+  })
+
+  // GET /interesses/state: personagens do jogador com os slots abertos e o
+  // interesse atual de cada um, mais as categorias que dá pra escolher.
+  app.get('/interesses/state', async (request, reply) => {
+    const { characters } = await getPlayerAndCharacters(request.user!.userId)
+    const interests = await TrikInterests.listCharacterInterests(characters.map(c => c.id))
+    const withSlots = await Promise.all(characters.map(async c => {
+      const progress = await TrikModel.getOrCreateProgress(c.id)
+      return {
+        character: c,
+        unlocked: {
+          primario:   progress.points_primary_interest   > 0,
+          secundario: progress.points_secondary_interest > 0,
+        },
+        interests: interests[c.id] ?? [],
+      }
+    }))
+    const [weapon, knowledge] = await Promise.all([
+      TrikInterests.listCategories('weapon'),
+      TrikInterests.listCategories('knowledge'),
+    ])
+    return reply.send({
+      characters: withSlots.filter(w => w.unlocked.primario || w.unlocked.secundario),
+      categories: { weapon, knowledge },
+      reduction:  TrikInterests.INTEREST_REDUCTION,
+    })
+  })
+
+  app.post('/interesse', {
+    preHandler: validate({ body: InterestBody }),
+  }, async (request, reply) => {
+    const body = request.body as z.infer<typeof InterestBody>
+    if (!await TrikModel.isChannelPurpose(body.channelId, 'levelup')) {
+      return reply.code(403).send({ error: 'Este canal não está configurado para /interesse', code: 'FORBIDDEN_CHANNEL' })
+    }
+    const { characters } = await getPlayerAndCharacters(request.user!.userId)
+    if (!characters.some(c => c.id === body.characterId)) {
+      return reply.code(403).send({ error: 'Esse personagem não pertence a você', code: 'FORBIDDEN' })
+    }
+    const result = await TrikInterests.setCharacterInterest(body.characterId, body.slot, body.kind, body.category)
+    if (!result.ok) {
+      return reply.code(400).send({ error: INTEREST_ERRORS[result.code], code: result.code })
+    }
+    return reply.send({ interest: result.interest })
   })
 }
 
@@ -941,6 +1044,24 @@ export async function trikAdminPlugin(app: FastifyInstance) {
     if (!communityId) return reply.code(503).send({ error: 'Community not configured' })
     const { categoryIds } = request.body as z.infer<typeof NotifyCategoriesBody>
     await TrikModel.setNotifyCategories(categoryIds, communityId, request.user!.userId)
+    return reply.send({ ok: true })
+  })
+
+  // ── Universo Alternativo (trik_013): raízes AU, herdadas pela subárvore ────
+
+  app.get('/au-categories', async (_request, reply) => {
+    const communityId = await getCommunityId()
+    if (!communityId) return reply.code(503).send({ error: 'Community not configured' })
+    return reply.send({ categories: await TrikAu.listAuCategories(communityId) })
+  })
+
+  app.put('/au-categories', {
+    preHandler: validate({ body: NotifyCategoriesBody }),
+  }, async (request, reply) => {
+    const communityId = await getCommunityId()
+    if (!communityId) return reply.code(503).send({ error: 'Community not configured' })
+    const { categoryIds } = request.body as z.infer<typeof NotifyCategoriesBody>
+    await TrikAu.setAuCategories(categoryIds, communityId, request.user!.userId)
     return reply.send({ ok: true })
   })
 

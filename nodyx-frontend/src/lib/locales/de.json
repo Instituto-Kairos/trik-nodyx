@@ -1107,5 +1107,9 @@
   "translate.contributors.view_pr": "Pull Request #{{n}} ansehen",
   "translate.contributors.view_commit": "Commit ansehen",
   "translate.contributors.close": "Schließen",
-  "translate.newlang.horizon": "Nodyx hat diesen Horizont noch nicht erreicht."
+  "translate.newlang.horizon": "Nodyx hat diesen Horizont noch nicht erreicht.",
+  "galeria.au_view": "AU ansehen",
+  "galeria.au_exit": "AU verlassen",
+  "galeria.album_delete": "Album löschen",
+  "galeria.album_delete_confirm": "Album „{album}“ löschen? Die Bilder bleiben unter „Ohne Album“ erhalten."
 }

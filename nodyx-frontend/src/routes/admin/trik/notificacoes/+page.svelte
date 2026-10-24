@@ -118,7 +118,7 @@
 	{#if roots.length === 0}
 		<p class="text-sm text-gray-500">Nenhuma categoria no fórum ainda.</p>
 	{:else}
-		<form method="POST" action="?/save" use:enhance class="space-y-4">
+		<form method="POST" action="?/save" use:enhance={() => async ({ update }) => update({ reset: false })} class="space-y-4">
 			<input type="hidden" name="categoryIds" value={idsJson} />
 
 			<div class="flex flex-wrap items-end gap-3">

@@ -11,6 +11,8 @@ export const load: PageServerLoad = async ({ fetch, cookies, url }) => {
 	const album = url.searchParams.get('album') ?? ''
 	const q     = url.searchParams.get('q') ?? ''
 	const tag   = url.searchParams.get('tag') ?? ''
+	// trik_013: "Ver AU" troca a galeria pros álbuns do Universo Alternativo.
+	const au    = url.searchParams.get('au') === '1'
 
 	// `offset` vem da URL para a paginação sobreviver ao botão voltar e a um link
 	// compartilhado. Saneado aqui: um offset negativo ou não-numérico produziria
@@ -22,6 +24,7 @@ export const load: PageServerLoad = async ({ fetch, cookies, url }) => {
 	if (album) params.set('album', album)
 	if (q)     params.set('q', q)
 	if (tag)   params.set('tag', tag)
+	if (au)    params.set('au', '1')
 
 	const [resAlbums, resImages, resTags] = await Promise.all([
 		apiFetch(fetch, '/galeria/albums', { headers }),
@@ -43,7 +46,7 @@ export const load: PageServerLoad = async ({ fetch, cookies, url }) => {
 		tags,
 		images: dados.images ?? [],
 		total:  dados.total ?? 0,
-		album, q, tag,
+		album, q, tag, au,
 		offset, limite: LIMITE,
 		moduloDesligado,
 		token,

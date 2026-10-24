@@ -28,6 +28,7 @@ export interface GaleriaAlbum {
   name: string
   slug: string
   description: string | null
+  is_au: boolean   // trik_013: só aparece no "Ver AU"
   created_by: string | null
   created_at: string
   updated_at: string
@@ -92,6 +93,7 @@ export async function createAlbum(opts: {
   communityId: string
   name: string
   description?: string | null
+  isAu?: boolean
   createdBy: string
 }): Promise<GaleriaAlbum> {
   // Slug único por comunidade: tenta o base, depois -2, -3… Sem laço infinito
@@ -109,9 +111,9 @@ export async function createAlbum(opts: {
   }
 
   const { rows } = await db.query<GaleriaAlbum>(
-    `INSERT INTO galeria_albums (community_id, name, slug, description, created_by)
-     VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-    [opts.communityId, opts.name, slug, opts.description ?? null, opts.createdBy],
+    `INSERT INTO galeria_albums (community_id, name, slug, description, is_au, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+    [opts.communityId, opts.name, slug, opts.description ?? null, opts.isAu ?? false, opts.createdBy],
   )
   return rows[0]
 }
@@ -132,6 +134,8 @@ export async function listImages(opts: {
   communityId: string
   albumId?: string | null
   semAlbum?: boolean
+  /** Visão "Todas" (sem álbum escolhido): true = só álbuns AU, false = sem eles. */
+  au?: boolean
   q?: string
   tag?: string
   limit?: number
@@ -145,6 +149,10 @@ export async function listImages(opts: {
   } else if (opts.albumId) {
     params.push(opts.albumId)
     where.push(`i.album_id = $${params.length}`)
+  } else {
+    // trik_013: o AU joga na mesma galeria. Abrir o álbum direto mostra tudo;
+    // a visão geral é que não mistura os dois universos.
+    where.push(`${opts.au ? '' : 'NOT '}EXISTS (SELECT 1 FROM galeria_albums ax WHERE ax.id = i.album_id AND ax.is_au)`)
   }
   if (opts.q) {
     params.push(`%${opts.q}%`)

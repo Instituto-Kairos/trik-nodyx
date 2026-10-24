@@ -9,6 +9,7 @@
  */
 
 import { db } from '../config/database'
+import { listCharacterInterests, interestEffects } from './trikInterests'
 
 // ─── Catálogos que são dono de efeito ──────────────────────────────────────
 // Nomes de tabela/coluna vêm SÓ destes mapas (nunca de input do usuário) — por
@@ -436,7 +437,8 @@ const EFFECT_SELECT = `e.id, e.effect, e.activity, e.weapon_id, e.knowledge_id, 
 
 /**
  * Efeitos de cada personagem, juntando os 9 donos: aptidões (4 slots),
- * preferências, objetivo, panteão, vínculo divino e as 4 listas desbloqueadas.
+ * preferências, objetivo, panteão, vínculo divino e as 4 listas desbloqueadas
+ * — mais os interesses (trik_012), que viram efeitos sintéticos.
  */
 export async function listCharacterEffects(characterIds: string[]): Promise<Record<string, TrikEffect[]>> {
   const out: Record<string, TrikEffect[]> = Object.fromEntries(characterIds.map(id => [id, []]))
@@ -463,6 +465,8 @@ export async function listCharacterEffects(characterIds: string[]): Promise<Reco
     [characterIds]
   )
   for (const { character_id, ...effect } of rows) out[character_id]?.push(effect)
+  const interests = await listCharacterInterests(characterIds)
+  for (const [id, list] of Object.entries(interests)) out[id]?.push(...interestEffects(list))
   return out
 }
 

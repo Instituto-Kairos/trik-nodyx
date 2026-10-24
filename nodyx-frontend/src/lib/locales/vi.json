@@ -1095,5 +1095,9 @@
   "translate.contributors.view_pr": "Xem pull request #{{n}}",
   "translate.contributors.view_commit": "Xem commit",
   "translate.contributors.close": "Đóng",
-  "translate.newlang.horizon": "Nodyx vẫn chưa vượt qua đường chân trời này."
+  "translate.newlang.horizon": "Nodyx vẫn chưa vượt qua đường chân trời này.",
+  "galeria.au_view": "Xem AU",
+  "galeria.au_exit": "Thoát AU",
+  "galeria.album_delete": "Xóa album",
+  "galeria.album_delete_confirm": "Xóa album \"{album}\"? Ảnh vẫn được giữ trong \"Không có album\"."
 }

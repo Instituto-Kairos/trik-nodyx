@@ -4677,5 +4677,9 @@
   "games.family.community": "Comunidade",
   "games.family.esport": "Esport",
   "games.family.social": "Social",
-  "games.family.content": "Conteúdo"
+  "games.family.content": "Conteúdo",
+  "galeria.au_view": "Ver AU",
+  "galeria.au_exit": "Sair do AU",
+  "galeria.album_delete": "Apagar álbum",
+  "galeria.album_delete_confirm": "Apagar o álbum \"{album}\"? As imagens não são apagadas: vão para \"Sem álbum\"."
 }

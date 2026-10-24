@@ -43,6 +43,7 @@ const MAX_BYTES = 12 * 1024 * 1024  // 12 MB por imagem, antes do reencode
 const AlbumBody = z.object({
   name:        z.string().trim().min(1).max(100),
   description: z.string().trim().max(500).optional().nullable(),
+  is_au:       z.boolean().optional(),
 })
 
 const PatchImageBody = z.object({
@@ -101,6 +102,7 @@ export default async function galeriaRoutes(app: FastifyInstance) {
       communityId,
       name: body.name,
       description: body.description ?? null,
+      isAu: body.is_au ?? false,
       createdBy: request.user!.userId,
     })
     return reply.code(201).send({ album })
@@ -166,6 +168,7 @@ export default async function galeriaRoutes(app: FastifyInstance) {
       communityId,
       albumId:  q.album && /^[0-9a-f-]{36}$/i.test(q.album) ? q.album : null,
       semAlbum: q.album === 'none',
+      au:       q.au === '1',
       q:        q.q?.trim().slice(0, 100) || undefined,
       tag:      q.tag?.trim().slice(0, 30) || undefined,
       limit:    Number(q.limit) || 40,

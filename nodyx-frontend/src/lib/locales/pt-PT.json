@@ -1095,5 +1095,9 @@
   "translate.contributors.view_pr": "Ver o pull request #{{n}}",
   "translate.contributors.view_commit": "Ver o commit",
   "translate.contributors.close": "Fechar",
-  "translate.newlang.horizon": "O Nodyx ainda não chegou a este horizonte."
+  "translate.newlang.horizon": "O Nodyx ainda não chegou a este horizonte.",
+  "galeria.au_view": "Ver AU",
+  "galeria.au_exit": "Sair do AU",
+  "galeria.album_delete": "Apagar álbum",
+  "galeria.album_delete_confirm": "Apagar o álbum \"{album}\"? As imagens não são apagadas: passam para \"Sem álbum\"."
 }

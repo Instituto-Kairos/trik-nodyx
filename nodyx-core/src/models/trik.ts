@@ -1,5 +1,7 @@
 import { db } from '../config/database'
 import { applyMasteryInTx, revertMastery, type MasteryKind, type MasteryResult } from './trikMastery'
+import { listCharacterInterests, type CharacterInterest } from './trikInterests'
+import { AU_TREE_CTE } from './trikAu'
 
 /** Cliente de transação (pg PoolClient) — só o que as funções `*InTx` usam. */
 interface TxClient {
@@ -241,6 +243,9 @@ export interface TrikCharacterProgress {
   spent_natural_aptitudes:   number
   points_acquired_aptitudes: number
   spent_acquired_aptitudes:  number
+  /** trik_012: slot de interesse aberto (>0); sem spent — a escolha muda. */
+  points_primary_interest:   number
+  points_secondary_interest: number
   updated_at:          string
 }
 
@@ -268,6 +273,8 @@ interface TrikXpLevelRow {
   reward_goal:        boolean
   reward_natural_aptitudes:  number
   reward_acquired_aptitudes: number
+  reward_primary_interest:   number
+  reward_secondary_interest: number
 }
 
 /**
@@ -306,13 +313,16 @@ export async function applyXpInTx(
   let pointsPreferences  = current.points_preferences
   let pointsNatural      = current.points_natural_aptitudes ?? 0
   let pointsAcquired     = current.points_acquired_aptitudes ?? 0
+  let pointsPrimary      = current.points_primary_interest ?? 0
+  let pointsSecondary    = current.points_secondary_interest ?? 0
   let hasGoal            = current.has_goal
   let leveledUp          = false
 
   while (true) {
     const { rows: levelRows } = await client.query(
       `SELECT goal_xp, reward_conduct, reward_principles, reward_preferences, reward_goal,
-              reward_natural_aptitudes, reward_acquired_aptitudes
+              reward_natural_aptitudes, reward_acquired_aptitudes,
+              reward_primary_interest, reward_secondary_interest
          FROM trik_progression WHERE type = 'character' AND level = $1`,
       [level]
     )
@@ -329,6 +339,8 @@ export async function applyXpInTx(
     pointsPreferences += nextGoal.reward_preferences
     pointsNatural     += nextGoal.reward_natural_aptitudes ?? 0
     pointsAcquired    += nextGoal.reward_acquired_aptitudes ?? 0
+    pointsPrimary     += nextGoal.reward_primary_interest ?? 0
+    pointsSecondary   += nextGoal.reward_secondary_interest ?? 0
     hasGoal = hasGoal || nextGoal.reward_goal
     leveledUp = true
   }
@@ -338,11 +350,12 @@ export async function applyXpInTx(
         SET progress_xp = $2, level = $3, points_conduct = $4,
             points_principles = $5, points_preferences = $6, has_goal = $7,
             points_natural_aptitudes = $8, points_acquired_aptitudes = $9,
+            points_primary_interest = $10, points_secondary_interest = $11,
             updated_at = NOW()
       WHERE character_id = $1
       RETURNING *`,
     [characterId, progressXp, level, pointsConduct, pointsPrinciples, pointsPreferences, hasGoal,
-     pointsNatural, pointsAcquired]
+     pointsNatural, pointsAcquired, pointsPrimary, pointsSecondary]
   )
 
   return { progress: updatedRows[0] as TrikCharacterProgress, leveledUp }
@@ -544,6 +557,9 @@ export interface TrikRegistroCharacter {
   progress_xp:          number
   /** xp pra sair do nível atual; null = nível máximo (sem linha na curva). */
   goal_xp:              number | null
+  /** trik_012: slots abertos e interesses escolhidos. */
+  interest_unlocked:    { primario: boolean; secundario: boolean }
+  interests:            CharacterInterest[]
 }
 
 export interface TrikRegistroPlayer {
@@ -646,23 +662,31 @@ export interface TrikNpcc {
  * Tópicos da categoria NPCC para o autocomplete de `@npcc:`. A categoria é
  * achada pelo slug ou pelo nome `npccs`/`npcc` (o fórum do trik vive em
  * /forum/npccs).
+ *
+ * `au` (trik_013): o que separa os dois universos é estar ou não na subárvore
+ * AU. No AU o nome só precisa COMEÇAR com "npcc" ("NPCCs AU"): lá ele quase
+ * sempre leva sufixo, e a busca já está presa à subárvore AU.
  */
-export async function searchNpccThreads(communityId: string, q: string, limit = 8): Promise<TrikNpcc[]> {
+export async function searchNpccThreads(communityId: string, q: string, limit = 8, au = false): Promise<TrikNpcc[]> {
   const termo = q.trim()
   const { rows } = await db.query<TrikNpcc>(
     `WITH RECURSIVE npcc(id) AS (
        SELECT id FROM categories
-        WHERE community_id = $1 AND (slug IN ('npccs', 'npcc') OR LOWER(name) IN ('npccs', 'npcc'))
+        WHERE community_id = $1
+          AND (slug IN ('npccs', 'npcc') OR LOWER(name) IN ('npccs', 'npcc')
+               OR ($5 AND LOWER(name) LIKE 'npcc%'))
        UNION
        SELECT ch.id FROM categories ch JOIN npcc ON ch.parent_id = npcc.id
-     )
+     ),
+     ${AU_TREE_CTE}
      SELECT t.id, t.title
        FROM threads t
       WHERE t.category_id IN (SELECT id FROM npcc)
+        AND (t.category_id IN (SELECT id FROM au_tree)) = $5
         AND ($2 = '' OR t.title ILIKE $3)
       ORDER BY t.title ASC
       LIMIT $4`,
-    [communityId, termo, `%${termo}%`, limit],
+    [communityId, termo, `%${termo}%`, limit, au],
   )
   return rows
 }
@@ -676,19 +700,23 @@ export interface TrikNpcImage {
 /**
  * Imagens do álbum NPC da galeria para o autocomplete de `@npc:`. O álbum é
  * achado pelo slug ou pelo nome `npc`/`npcs`, como a categoria do `@npcc:`.
+ * `au` (trik_013): o álbum NPC do AU é um álbum `is_au` cujo nome começa
+ * com "npc" ("NPCs AU"), pelo mesmo motivo da categoria NPCC do AU.
  */
-export async function searchNpcImages(communityId: string, q: string, limit = 8): Promise<TrikNpcImage[]> {
+export async function searchNpcImages(communityId: string, q: string, limit = 8, au = false): Promise<TrikNpcImage[]> {
   const termo = q.trim()
   const { rows } = await db.query<TrikNpcImage>(
     `SELECT i.id, i.title
        FROM galeria_images i
        JOIN galeria_albums a ON a.id = i.album_id
       WHERE i.community_id = $1
-        AND (a.slug IN ('npc', 'npcs') OR LOWER(a.name) IN ('npc', 'npcs'))
+        AND (a.slug IN ('npc', 'npcs') OR LOWER(a.name) IN ('npc', 'npcs')
+             OR ($5 AND LOWER(a.name) LIKE 'npc%'))
+        AND a.is_au = $5
         AND ($2 = '' OR i.title ILIKE $3)
       ORDER BY i.title ASC
       LIMIT $4`,
-    [communityId, termo, `%${termo}%`, limit],
+    [communityId, termo, `%${termo}%`, limit, au],
   )
   return rows
 }
@@ -712,7 +740,9 @@ export async function listRegistros(): Promise<TrikRegistroPlayer[]> {
               c.template_name, c.template_signature, c.created_at, c.last_active_at,
               COALESCE(g.level, 1)       AS level,
               COALESCE(g.progress_xp, 0) AS progress_xp,
-              pr.goal_xp
+              pr.goal_xp,
+              COALESCE(g.points_primary_interest, 0)   AS points_primary_interest,
+              COALESCE(g.points_secondary_interest, 0) AS points_secondary_interest
          FROM trik_characters c
          LEFT JOIN trik_character_progress g ON g.character_id = c.id
          LEFT JOIN trik_character_bonuses cb ON cb.character_id = c.id
@@ -722,13 +752,16 @@ export async function listRegistros(): Promise<TrikRegistroPlayer[]> {
     ),
   ])
 
+  const interests = await listCharacterInterests(characters.rows.map(c => c.id))
   const byPlayer = new Map<string, TrikRegistroCharacter[]>()
-  for (const { player_id, ...c } of characters.rows) {
+  for (const { player_id, points_primary_interest, points_secondary_interest, ...c } of characters.rows) {
     const list = byPlayer.get(player_id) ?? []
     list.push({
       ...c,
       progress_xp: Number(c.progress_xp),
       goal_xp:     c.goal_xp === null ? null : Number(c.goal_xp),
+      interest_unlocked: { primario: points_primary_interest > 0, secundario: points_secondary_interest > 0 },
+      interests:   interests[c.id] ?? [],
     })
     byPlayer.set(player_id, list)
   }
@@ -895,6 +928,8 @@ export interface TrikXpLevel {
   reward_goal:         boolean
   reward_natural_aptitudes:  number
   reward_acquired_aptitudes: number
+  reward_primary_interest:   number
+  reward_secondary_interest: number
 }
 
 export async function listXpLevels(type: string): Promise<TrikXpLevel[]> {
@@ -915,6 +950,9 @@ export interface XpLevelInput {
   /** Slots de aptidão natural/adquirida que o nível libera (trik_010). */
   rewardNaturalAptitudes?:  number
   rewardAcquiredAptitudes?: number
+  /** Slots de interesse primário/secundário que o nível abre (trik_012). */
+  rewardPrimaryInterest?:   number
+  rewardSecondaryInterest?: number
   /** Só relevante no type 'weapon' — omitido/0 = nível máximo. */
   reqMastery?:        number
   /** Só relevante no type 'knowledge' — omitido/0 = nível máximo. */
@@ -938,10 +976,12 @@ export async function setXpLevels(type: string, levels: XpLevelInput[]): Promise
       await client.query(
         `INSERT INTO trik_progression
            (type, level, goal_xp, reward_conduct, reward_principles, reward_preferences, reward_goal,
-            req_mastery, req_education, reward_natural_aptitudes, reward_acquired_aptitudes)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+            req_mastery, req_education, reward_natural_aptitudes, reward_acquired_aptitudes,
+            reward_primary_interest, reward_secondary_interest)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
         [type, lvl.level, lvl.goalXp, lvl.rewardConduct, lvl.rewardPrinciples, lvl.rewardPreferences, lvl.rewardGoal,
-         lvl.reqMastery ?? 0, lvl.reqEducation ?? 0, lvl.rewardNaturalAptitudes ?? 0, lvl.rewardAcquiredAptitudes ?? 0]
+         lvl.reqMastery ?? 0, lvl.reqEducation ?? 0, lvl.rewardNaturalAptitudes ?? 0, lvl.rewardAcquiredAptitudes ?? 0,
+         lvl.rewardPrimaryInterest ?? 0, lvl.rewardSecondaryInterest ?? 0]
       )
     }
     await client.query('COMMIT')

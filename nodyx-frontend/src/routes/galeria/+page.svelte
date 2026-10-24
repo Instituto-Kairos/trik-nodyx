@@ -17,6 +17,7 @@
 		name: string
 		slug: string
 		description: string | null
+		is_au: boolean
 		image_count: number
 		cover_thumb: string | null
 	}
@@ -39,7 +40,9 @@
 
 	interface Tag { id: string; name: string; image_count: number }
 
-	const albums = $derived(data.albums as Album[])
+	// Cada universo só vê os próprios álbuns (trik_013); o resto da página não
+	// precisa saber que existe um AU.
+	const albums = $derived((data.albums as Album[]).filter((a) => !!a.is_au === !!data.au))
 	const catalogoTags = $derived(data.tags as Tag[])
 	const ehAdmin = $derived(data.user?.role === 'owner' || data.user?.role === 'admin')
 	const images = $derived(data.images as Imagem[])
@@ -64,7 +67,7 @@
 		const p = new URLSearchParams()
 		const atual: Record<string, string> = {
 			album: data.album ?? '', q: busca, tag: data.tag ?? '',
-			offset: String(data.offset ?? 0), ...patch,
+			au: data.au ? '1' : '', offset: String(data.offset ?? 0), ...patch,
 		}
 		for (const [k, v] of Object.entries(atual)) {
 			if (!v) continue
@@ -193,6 +196,20 @@
 	let novoAlbum = $state('')
 	let criando   = $state(false)
 
+	// Só admin/owner (o servidor confere). As imagens não vão junto: caem em
+	// "Sem álbum", como em deleteAlbum.
+	async function apagarAlbum(album: Album) {
+		if (!confirm(tFn('galeria.album_delete_confirm').replace('{album}', album.name))) return
+		const res = await apiFetch(fetch, `/galeria/albums/${album.id}`, {
+			method: 'DELETE',
+			headers: { Authorization: `Bearer ${data.token}` },
+		})
+		if (res.ok) {
+			if (data.album === album.id) aplicarFiltro({ album: '' })
+			else await invalidateAll()
+		}
+	}
+
 	async function criarAlbum() {
 		const nome = novoAlbum.trim()
 		if (!nome || criando) return
@@ -201,7 +218,8 @@
 			const res = await apiFetch(fetch, '/galeria/albums', {
 				method: 'POST',
 				headers: { Authorization: `Bearer ${data.token}` },
-				body: JSON.stringify({ name: nome }),
+				// Álbum criado na visão AU já nasce AU.
+				body: JSON.stringify({ name: nome, is_au: !!data.au }),
 			})
 			if (res.ok) { novoAlbum = ''; await invalidateAll() }
 		} finally {
@@ -298,14 +316,27 @@
 					{tFn('galeria.all')}
 				</button>
 				{#each albums as a}
-					<button type="button" class="gal-chip {data.album === a.id ? 'is-active' : ''}"
-					        onclick={() => aplicarFiltro({ album: a.id })}>
-						{a.name} <span class="gal-chip-n">{a.image_count}</span>
-					</button>
+					<span class="gal-albumchip">
+						<button type="button" class="gal-chip {data.album === a.id ? 'is-active' : ''}"
+						        onclick={() => aplicarFiltro({ album: a.id })}>
+							{a.name} <span class="gal-chip-n">{a.image_count}</span>
+						</button>
+						{#if ehAdmin}
+							<button type="button" class="gal-tagchip-x" title={tFn('galeria.album_delete')}
+							        onclick={() => apagarAlbum(a)}>×</button>
+						{/if}
+					</span>
 				{/each}
-				<button type="button" class="gal-chip {data.album === 'none' ? 'is-active' : ''}"
-				        onclick={() => aplicarFiltro({ album: 'none' })}>
-					{tFn('galeria.no_album')}
+				{#if !data.au}
+					<button type="button" class="gal-chip {data.album === 'none' ? 'is-active' : ''}"
+					        onclick={() => aplicarFiltro({ album: 'none' })}>
+						{tFn('galeria.no_album')}
+					</button>
+				{/if}
+				<!-- Trocar de universo limpa o álbum: um álbum de um lado não existe no outro. -->
+				<button type="button" class="gal-chip gal-chip--au {data.au ? 'is-active' : ''}"
+				        onclick={() => aplicarFiltro({ au: data.au ? '' : '1', album: '' })}>
+					{data.au ? tFn('galeria.au_exit') : tFn('galeria.au_view')}
 				</button>
 			</div>
 
@@ -460,6 +491,10 @@
 }
 .gal-chip.is-active { background: rgb(var(--nx-accent-rgb) / 0.2); color: #fff; border-color: rgb(var(--nx-accent-rgb) / 0.5); }
 .gal-chip-n { opacity: 0.5; margin-left: 0.25rem; }
+/* Álbum + "×" de apagar (admin), lado a lado. */
+.gal-albumchip { display: inline-flex; align-items: center; }
+/* Troca de universo (trik_013): fica no fim da linha, separada dos álbuns. */
+.gal-chip--au { margin-left: auto; }
 .gal-tagbar { display: flex; flex-wrap: wrap; gap: 0.375rem; align-items: center; margin-bottom: 1rem; }
 .gal-tagchip {
 	display: inline-flex; align-items: center;

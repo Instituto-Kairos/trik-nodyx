@@ -60,6 +60,15 @@ interface AliasResposta {
 export type ApiFetch = (path: string, init?: RequestInit) => Promise<Response>
 
 /**
+ * Categoria do fórum onde se está escrevendo. Decide o universo (trik_013):
+ * dentro de uma categoria AU o servidor só oferece aliases/NPCCs/NPCs do AU,
+ * fora dela nunca os oferece. Sem categoria (chat) = universo principal.
+ */
+function categoryParam(category?: string): string {
+	return category ? `&category=${encodeURIComponent(category)}` : ''
+}
+
+/**
  * Busca membros e aliases em paralelo e devolve uma lista só.
  *
  * Membros primeiro de propósito: quem digita um username o encontra na hora, e
@@ -76,13 +85,14 @@ export async function searchMentionTargets(
 	q: string,
 	token?: string,
 	limit = 8,
+	category?: string,
 ): Promise<MentionTarget[]> {
 	const init: RequestInit = token ? { headers: { Authorization: `Bearer ${token}` } } : {}
 	const busca = encodeURIComponent(q)
 
 	const [resMembros, resAliases] = await Promise.all([
 		api(`/chat/members?q=${busca}`, init).catch(() => null),
-		api(`/trik/aliases?q=${busca}`, init).catch(() => null),
+		api(`/trik/aliases?q=${busca}${categoryParam(category)}`, init).catch(() => null),
 	])
 
 	const ler = async <T>(res: Response | null, campo: string): Promise<T[]> => {
@@ -118,9 +128,9 @@ export async function searchMentionTargets(
 export const NPCC_PREFIX = 'npcc:'
 
 /** Busca os tópicos da categoria NPCC já no formato de alvo do dropdown. */
-export async function searchNpccTargets(api: ApiFetch, q: string, token?: string): Promise<MentionTarget[]> {
+export async function searchNpccTargets(api: ApiFetch, q: string, token?: string, category?: string): Promise<MentionTarget[]> {
 	const init: RequestInit = token ? { headers: { Authorization: `Bearer ${token}` } } : {}
-	const res = await api(`/trik/npcc?q=${encodeURIComponent(q)}`, init).catch(() => null)
+	const res = await api(`/trik/npcc?q=${encodeURIComponent(q)}${categoryParam(category)}`, init).catch(() => null)
 	if (!res?.ok) return []
 	let npccs: { id: string; title: string }[] = []
 	try {
@@ -144,9 +154,9 @@ export async function searchNpccTargets(api: ApiFetch, q: string, token?: string
 export const NPC_PREFIX = 'npc:'
 
 /** Busca as imagens do álbum NPC já no formato de alvo do dropdown. */
-export async function searchNpcTargets(api: ApiFetch, q: string, token?: string): Promise<MentionTarget[]> {
+export async function searchNpcTargets(api: ApiFetch, q: string, token?: string, category?: string): Promise<MentionTarget[]> {
 	const init: RequestInit = token ? { headers: { Authorization: `Bearer ${token}` } } : {}
-	const res = await api(`/trik/npc?q=${encodeURIComponent(q)}`, init).catch(() => null)
+	const res = await api(`/trik/npc?q=${encodeURIComponent(q)}${categoryParam(category)}`, init).catch(() => null)
 	if (!res?.ok) return []
 	let npcs: { id: string; title: string }[] = []
 	try {

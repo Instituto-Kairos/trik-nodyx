@@ -14,6 +14,7 @@
 		{ href: '/admin/trik/panteoes',  label: 'Panteões' },
 		{ href: '/admin/trik/clima',     label: 'Clima' },
 		{ href: '/admin/trik/notificacoes', label: 'Notificações' },
+		{ href: '/admin/trik/au',        label: 'AU' },
 		{ href: '/admin/trik/bot',       label: 'Bot' },
 	]
 </script>

@@ -13,6 +13,7 @@
 		initialContent = '',
 		compact    = false,
 		mentions   = false,
+		mentionCategory = undefined,
 		onchange   = (_html: string) => {},
 	}: {
 		name?:           string
@@ -28,6 +29,8 @@
 		 * padrão, as outras telas gravariam uma marcação que apareceria crua.
 		 */
 		mentions?:       boolean
+		/** Categoria do fórum: dentro do AU (trik_013) as menções são só do AU. */
+		mentionCategory?: string
 		onchange?:       (html: string) => void
 	} = $props()
 
@@ -786,10 +789,10 @@
 		try {
 			const api   = (path: string, init?: RequestInit) => apiFetch(fetch, path, init)
 			const alvos = npcc
-				? await searchNpccTargets(api, m[1].trim(), token)
+				? await searchNpccTargets(api, m[1].trim(), token, mentionCategory)
 				: npc
-					? await searchNpcTargets(api, m[1].trim(), token)
-					: await searchMentionTargets(api, m[1], token)
+					? await searchNpcTargets(api, m[1].trim(), token, mentionCategory)
+					: await searchMentionTargets(api, m[1], token, 8, mentionCategory)
 			if (seq !== mentionSeq) return
 			mentionItems = alvos
 			mentionOpen  = alvos.length > 0

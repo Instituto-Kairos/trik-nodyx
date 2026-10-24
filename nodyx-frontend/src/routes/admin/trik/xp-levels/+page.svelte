@@ -43,6 +43,8 @@
 		rewardGoal: boolean;
 		rewardNaturalAptitudes: number;
 		rewardAcquiredAptitudes: number;
+		rewardPrimaryInterest: number;
+		rewardSecondaryInterest: number;
 		/** Treinos (weapon) ou aulas (knowledge) pra sair do nível; sem uso no 'character'. */
 		requirement: number;
 	}
@@ -56,6 +58,8 @@
 		reward_goal: boolean;
 		reward_natural_aptitudes?: number;
 		reward_acquired_aptitudes?: number;
+		reward_primary_interest?: number;
+		reward_secondary_interest?: number;
 		req_mastery?: number;
 		req_education?: number;
 	}
@@ -76,6 +80,8 @@
 				rewardGoal: l.reward_goal,
 				rewardNaturalAptitudes: l.reward_natural_aptitudes ?? 0,
 				rewardAcquiredAptitudes: l.reward_acquired_aptitudes ?? 0,
+				rewardPrimaryInterest: l.reward_primary_interest ?? 0,
+				rewardSecondaryInterest: l.reward_secondary_interest ?? 0,
 				requirement:
 					currentType === 'weapon'
 						? (l.req_mastery ?? 0)
@@ -98,6 +104,8 @@
 				rewardGoal: false,
 				rewardNaturalAptitudes: 0,
 				rewardAcquiredAptitudes: 0,
+				rewardPrimaryInterest: 0,
+				rewardSecondaryInterest: 0,
 				// Linha nova = um degrau novo; 0 significaria "nível máximo", que não é
 				// o que quem clica em "+ Adicionar nível" espera.
 				requirement: 5
@@ -179,6 +187,8 @@
 							<th class="px-4 py-3">+Preferências</th>
 							<th class="px-4 py-3" title="Slots de aptidão natural liberados neste nível (máx. 2 no total)">+Apt. natural</th>
 							<th class="px-4 py-3" title="Slots de aptidão adquirida liberados neste nível (máx. 2 no total)">+Apt. adquirida</th>
+							<th class="px-4 py-3" title="Abre o slot de interesse primário (−2 no requisito da categoria; troca semanal)">Abre interesse 1º</th>
+							<th class="px-4 py-3" title="Abre o slot de interesse secundário (−1 no requisito da categoria; troca semanal)">Abre interesse 2º</th>
 							<th class="px-4 py-3">Desbloqueia Objetivo</th>
 						{/if}
 						<th class="px-4 py-3"></th>
@@ -257,6 +267,22 @@
 									/>
 								</td>
 								<td class="px-4 py-2">
+									<input
+										type="checkbox"
+										checked={row.rewardPrimaryInterest > 0}
+										onchange={(e) => (row.rewardPrimaryInterest = e.currentTarget.checked ? 1 : 0)}
+										class="w-4 h-4"
+									/>
+								</td>
+								<td class="px-4 py-2">
+									<input
+										type="checkbox"
+										checked={row.rewardSecondaryInterest > 0}
+										onchange={(e) => (row.rewardSecondaryInterest = e.currentTarget.checked ? 1 : 0)}
+										class="w-4 h-4"
+									/>
+								</td>
+								<td class="px-4 py-2">
 									<input type="checkbox" bind:checked={row.rewardGoal} class="w-4 h-4" />
 								</td>
 							{/if}
@@ -273,7 +299,7 @@
 					{/each}
 					{#if rows.length === 0}
 						<tr>
-							<td colspan={isCharacter ? 9 : 3} class="px-4 py-6 text-center text-gray-500">
+							<td colspan={isCharacter ? 11 : 3} class="px-4 py-6 text-center text-gray-500">
 								Nenhum nível cadastrado ainda.
 							</td>
 						</tr>

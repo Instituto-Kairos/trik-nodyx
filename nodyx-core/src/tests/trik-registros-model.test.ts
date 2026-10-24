@@ -1,6 +1,6 @@
 // Módulo RPG (trik) — models/trik.ts › listRegistros (tabela de registros do
 // admin). Só o `db` é mockado: duas queries (jogadores e personagens) que a
-// função agrupa em memória.
+// função agrupa em memória, mais a dos interesses (trik_012).
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
@@ -21,19 +21,34 @@ const character = (over: Record<string, unknown>) => ({
   template_name: null, template_signature: null,
   created_at: '2026-09-20T15:52:26.660Z', last_active_at: '2026-09-20T15:52:26.660Z',
   level: 1, progress_xp: '0', goal_xp: '500',
+  points_primary_interest: 0, points_secondary_interest: 0,
   ...over,
 })
 
-/** 1ª query = jogadores, 2ª = personagens (a ordem do Promise.all). */
-function mockRows(players: unknown[], characters: unknown[]) {
+/** 1ª query = jogadores, 2ª = personagens (a ordem do Promise.all), 3ª = interesses. */
+function mockRows(players: unknown[], characters: unknown[], interests: unknown[] = []) {
   mockDb.query
     .mockResolvedValueOnce({ rows: players })
     .mockResolvedValueOnce({ rows: characters })
+  // Sem personagens, listCharacterInterests nem consulta o banco.
+  if (characters.length > 0) mockDb.query.mockResolvedValueOnce({ rows: interests })
 }
 
 beforeEach(() => vi.clearAllMocks())
 
 describe('listRegistros', () => {
+  it('anexa slots liberados e interesses de cada personagem', async () => {
+    mockRows([PLAYER_A], [character({ id: 'c1', points_primary_interest: 1 })], [
+      { character_id: 'c1', slot: 'primario', kind: 'weapon', category: 'Espadas', chosen_at: 'x', locked: true },
+    ])
+
+    const [{ characters: [c] }] = await listRegistros()
+
+    expect(c.interest_unlocked).toEqual({ primario: true, secundario: false })
+    expect(c.interests).toEqual([{ slot: 'primario', kind: 'weapon', category: 'Espadas', chosen_at: 'x', locked: true }])
+    expect(c).not.toHaveProperty('points_primary_interest')
+  })
+
   it('agrupa os personagens no jogador certo e tira o player_id da linha', async () => {
     mockRows(
       [PLAYER_A, PLAYER_B],

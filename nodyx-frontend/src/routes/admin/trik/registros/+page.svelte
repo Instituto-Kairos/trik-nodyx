@@ -31,7 +31,15 @@
 		level: number;
 		progress_xp: number;
 		goal_xp: number | null;
+		interest_unlocked?: { primario: boolean; secundario: boolean };
+		interests?: { slot: 'primario' | 'secundario'; kind: 'weapon' | 'knowledge'; category: string; chosen_at: string; locked: boolean }[];
 	}
+
+	// Interesses (trik_012): primário −2, secundário −1 no requisito da categoria.
+	const INTEREST_SLOTS = [
+		['primario', 'Primário (−2)'],
+		['secundario', 'Secundário (−1)']
+	] as const;
 
 	interface Player {
 		id: string;
@@ -562,6 +570,24 @@ Isso apaga também o nível, o XP, as maestrias e os bônus dele. Não dá para 
 											<dt class="font-bold uppercase tracking-widest text-gray-500 text-[10px]">Princípios</dt>
 											{#each PRINCIPLES as [label, campo]}
 												<dd class="text-gray-400">{label}: <span class="text-gray-200">{character[campo]}</span></dd>
+											{/each}
+										</dl>
+
+										<dl class="space-y-1">
+											<dt class="font-bold uppercase tracking-widest text-gray-500 text-[10px]">Interesses</dt>
+											{#each INTEREST_SLOTS as [slot, label]}
+												{@const interest = character.interests?.find((i) => i.slot === slot)}
+												<dd class="text-gray-400">
+													{label}:
+													{#if !character.interest_unlocked?.[slot]}
+														<span class="text-gray-600">não liberado</span>
+													{:else if interest}
+														<span class="text-gray-200">{interest.category}</span>
+														<span class="text-gray-500">({interest.kind === 'weapon' ? 'arma' : 'matéria'} · desde {fmtDateTime(interest.chosen_at)}{interest.locked ? ' · troca no domingo' : ''})</span>
+													{:else}
+														<span class="text-gray-600">liberado, sem escolha</span>
+													{/if}
+												</dd>
 											{/each}
 										</dl>
 

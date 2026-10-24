@@ -151,7 +151,7 @@
 
 		<div>
 			<span class="block text-sm text-gray-400 mb-2">{tFn('forum.message_label')}</span>
-			<NodyxEditor mentions
+			<NodyxEditor mentions mentionCategory={finalCategoryId}
 				name="content"
 				placeholder={tFn('forum.message_placeholder')}
 			/>

@@ -157,3 +157,17 @@ describe('searchNpcTargets — `@npc:`', () => {
 		expect(await searchNpcTargets(async () => erro(503), 'x')).toEqual([])
 	})
 })
+
+describe('contexto de categoria — Universo Alternativo (trik_013)', () => {
+	it('a categoria vai junto nas três buscas do Trik', async () => {
+		const api: ApiFetch = vi.fn(async () => ok({}))
+		await searchNpccTargets(api, 'cel', undefined, 'cat-au')
+		await searchNpcTargets(api, 'cel', undefined, 'cat-au')
+		await searchMentionTargets(api, 'kae', undefined, 8, 'cat-au')
+		expect(api).toHaveBeenCalledWith('/trik/npcc?q=cel&category=cat-au', {})
+		expect(api).toHaveBeenCalledWith('/trik/npc?q=cel&category=cat-au', {})
+		expect(api).toHaveBeenCalledWith('/trik/aliases?q=kae&category=cat-au', {})
+		// Membros não dependem do universo.
+		expect(api).toHaveBeenCalledWith('/chat/members?q=kae', {})
+	})
+})

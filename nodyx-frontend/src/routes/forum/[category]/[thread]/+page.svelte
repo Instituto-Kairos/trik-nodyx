@@ -783,7 +783,7 @@
 						class="space-y-2"
 					>
 						<input type="hidden" name="post_id" value={post.id} />
-						<NodyxEditor mentions
+						<NodyxEditor mentions mentionCategory={thread.category_id}
 							name="content"
 							initialContent={post.content}
 							compact={true}
@@ -885,7 +885,7 @@
 					<p role="alert" class="text-xs text-amber-400">{form.replyError}</p>
 				{/if}
 				{#key replyKey}
-					<NodyxEditor mentions
+					<NodyxEditor mentions mentionCategory={thread.category_id}
 						name="content"
 						placeholder={tFn('forum.reply_placeholder')}
 						compact={true}
