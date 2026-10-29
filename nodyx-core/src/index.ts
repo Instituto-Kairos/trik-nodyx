@@ -27,6 +27,7 @@ import whisperRoutes      from './routes/whispers'
 import pollRoutes         from './routes/polls'
 import dmRoutes           from './routes/dm'
 import galeriaRoutes      from './routes/galeria'
+import emblemasRoutes     from './routes/emblemas'
 import eventRoutes           from './routes/events'
 import authenticatorRoutes   from './routes/authenticator'
 import taskRoutes            from './routes/tasks'
@@ -216,6 +217,7 @@ server.register(appearanceRoutes, { prefix: '/api/v1/admin/appearance' })
 server.register(octoguardAdminPlugin, { prefix: '/api/v1/admin/octoguard' })
 server.register(reportsPublicPlugin,  { prefix: '/api/v1/reports' })
 server.register(trikAdminPlugin,  { prefix: '/api/v1/admin/trik' })
+server.register(emblemasRoutes,   { prefix: '/api/v1/admin/emblemas' })
 server.register(trikPlayerPlugin, { prefix: '/api/v1/trik' })
 server.register(communityRoutes, { prefix: '/api/v1/communities' })
 server.register(forumRoutes,     { prefix: '/api/v1/forums' })
