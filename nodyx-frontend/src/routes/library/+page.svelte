@@ -16,8 +16,7 @@
 	// label/tip résolus via tFn dans le template (clés i18n, réactif à la locale).
 	const ASSET_TYPES = [
 		{ value: '',        labelKey: 'library.type.all',     tipKey: null },
-		{ value: 'frame',   labelKey: 'library.type.frame',   tipKey: 'library.type.frame_tip' },
-		{ value: 'banner',  labelKey: 'library.type.banner',  tipKey: 'library.type.banner_tip' },
+		{ value: 'image',   labelKey: 'library.type.image',   tipKey: 'library.type.image_tip' },
 		{ value: 'badge',   labelKey: 'library.type.badge',   tipKey: 'library.type.badge_tip' },
 		{ value: 'sticker', labelKey: 'library.type.sticker', tipKey: 'library.type.sticker_tip' },
 		{ value: 'font',    labelKey: 'library.type.font',    tipKey: 'library.type.font_tip' },
@@ -29,7 +28,7 @@
 	const currentTypeTip = $derived(ASSET_TYPES.find(t => t.value === uploadType)?.tipKey ?? null)
 
 	const TYPE_ICONS: Record<string, string> = {
-		frame: '🖼️', banner: '🎨', badge: '🏅', sticker: '⭐',
+		image: '🏞️', frame: '🖼️', banner: '🎨', badge: '🏅', sticker: '⭐',
 		font: '🔤', theme: '🎭', emoji: '😀', sound: '🔊',
 	}
 
@@ -41,7 +40,7 @@
 
 	let uploadName        = $state('')
 	let uploadDescription = $state('')
-	let uploadType        = $state('sticker')
+	let uploadType        = $state('image')
 	let uploadTags        = $state('')
 	let uploadShortcode   = $state('')   // emoji : raccourci texte perso (:code:)
 	let uploadFile        = $state<File | null>(null)

@@ -82,9 +82,11 @@ const PatchProfileBody = z.object({
   // Caractères CSS-sûrs uniquement — injecté dans font-family: '...' (prévention CSS injection)
   name_font_family:     z.string().max(100).regex(/^[a-zA-Z0-9 _\-]+$/).optional().nullable(),
   name_font_url:        localFontUrl,
-  banner_asset_id:      z.string().uuid().optional().nullable(),
-  frame_asset_id:       z.string().uuid().optional().nullable(),
-  badge_asset_id:       z.string().uuid().optional().nullable(),
+  // Moldura e banner da biblioteca foram desativados: só aceita null, pra
+  // limpar o que já estava equipado. O emblema não passa mais por aqui, quem
+  // dá é o admin (routes/emblemas.ts).
+  banner_asset_id:      z.null().optional(),
+  frame_asset_id:       z.null().optional(),
   metadata: z.object({
     theme: z.object({
       bg:          z.string().max(100).optional(),
@@ -316,7 +318,6 @@ export default async function userRoutes(app: FastifyInstance) {
     if (data.name_font_url       !== undefined) { fields.push(`name_font_url = $${i++}`);        values.push(data.name_font_url)       }
     if (data.banner_asset_id     !== undefined) { fields.push(`banner_asset_id = $${i++}`);      values.push(data.banner_asset_id)     }
     if (data.frame_asset_id    !== undefined) { fields.push(`frame_asset_id = $${i++}`);    values.push(data.frame_asset_id)    }
-    if (data.badge_asset_id    !== undefined) { fields.push(`badge_asset_id = $${i++}`);    values.push(data.badge_asset_id)    }
     if (data.metadata          !== undefined) { fields.push(`metadata = metadata || $${i++}::jsonb`); values.push(JSON.stringify(data.metadata)) }
 
     if (fields.length === 0) {
@@ -394,9 +395,11 @@ export default async function userRoutes(app: FastifyInstance) {
          p.name_glow, p.name_glow_intensity, p.name_animation,
          p.name_font_family, p.name_font_url,
          p.banner_asset_id, p.frame_asset_id, p.badge_asset_id, p.metadata,
-         ab.file_path  AS banner_asset_path,
-         af.file_path  AS frame_asset_path,
-         af.thumbnail_path AS frame_asset_thumb,
+         -- Moldura e banner da biblioteca desativados: quem ainda tem um
+         -- equipado de antes deixa de exibir, sem precisar limpar o banco.
+         NULL::text    AS banner_asset_path,
+         NULL::text    AS frame_asset_path,
+         NULL::text    AS frame_asset_thumb,
          ad.file_path  AS badge_asset_path,
          ad.name       AS badge_asset_name,
          (SELECT COUNT(*) FROM threads t WHERE t.author_id = u.id) AS thread_count,
@@ -406,9 +409,7 @@ export default async function userRoutes(app: FastifyInstance) {
          g.name AS grade_name, g.color AS grade_color
        FROM users u
        LEFT JOIN user_profiles p ON p.user_id = u.id
-       LEFT JOIN community_assets ab  ON ab.id  = p.banner_asset_id
-       LEFT JOIN community_assets af  ON af.id  = p.frame_asset_id
-       LEFT JOIN community_assets ad  ON ad.id  = p.badge_asset_id
+       LEFT JOIN community_assets ad  ON ad.id  = p.badge_asset_id AND ad.is_banned = false
        LEFT JOIN community_members cm ON cm.user_id = u.id
        LEFT JOIN community_grades g ON g.id = cm.grade_id
        WHERE u.username = $1

@@ -18,15 +18,6 @@
 		font: '🔤', theme: '🎭', emoji: '😀', sound: '🔊',
 	}
 
-	// Which profile field does this asset type map to?
-	const EQUIPPABLE: Record<string, string> = {
-		frame:  'frame_asset_id',
-		banner: 'banner_asset_id',
-		badge:  'badge_asset_id',
-	}
-	const equipField  = $derived(EQUIPPABLE[asset.asset_type] ?? null)
-	const canEquip    = $derived(!!equipField && !!me)
-
 	// Emoji : raccourci texte (:shortcode:) — perso (metadata) sinon dérivé du nom
 	const emojiShortcode = $derived(
 		asset.asset_type === 'emoji'
@@ -41,19 +32,9 @@
 			setTimeout(() => (copiedCode = false), 1200)
 		}).catch(() => {})
 	}
-	const equipLabel  = $derived(
-		asset.asset_type === 'frame'  ? tFn('library.equip_frame')  :
-		asset.asset_type === 'banner' ? tFn('library.equip_banner') :
-		asset.asset_type === 'badge'  ? tFn('library.equip_badge')  : ''
-	)
-
 	// Token from layout data (HttpOnly cookie — not accessible via document.cookie)
 	const token = $derived((page.data as any).token as string | null)
 
-	let equipping      = $state(false)
-	let equipToast     = $state<'ok' | 'err' | null>(null)
-	let equipTimer     = $state<ReturnType<typeof setTimeout> | null>(null)
-	let equipped       = $state(false)
 	let downloadSource = $state<'server' | 'p2p' | null>(null)
 
 	const p2pAvailable = $derived(browser && $p2pAssetPeers.has(asset.id))
@@ -115,22 +96,6 @@
 			goto(`/whisper/${room.id}`)
 		}
 	}
-
-	async function equipAsset() {
-		if (!equipField) return
-		if (!me || !token) { goto('/auth/login'); return }
-		equipping = true
-		const res = await fetch(`${PUBLIC_API_URL}/api/v1/users/me/profile`, {
-			method:  'PATCH',
-			headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-			body:    JSON.stringify({ [equipField]: asset.id }),
-		})
-		equipping = false
-		if (equipTimer) clearTimeout(equipTimer)
-		if (res.ok) { equipped = true }
-		equipToast = res.ok ? 'ok' : 'err'
-		equipTimer = setTimeout(() => { equipToast = null }, 3500)
-	}
 </script>
 
 <svelte:head>
@@ -141,24 +106,6 @@
 	<a href="/library" class="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-300 mb-6 transition-colors">
 		{tFn('library.back_to')}
 	</a>
-
-	<!-- Equip toast -->
-	{#if equipToast}
-		<div class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-5 py-3 rounded-2xl shadow-2xl border
-		            {equipToast === 'ok'
-		              ? 'bg-gray-900 border-indigo-700/60 text-gray-200'
-		              : 'bg-gray-900 border-red-700/60 text-red-300'}">
-			<span>{equipToast === 'ok' ? '✅' : '❌'}</span>
-			<span class="text-sm">
-				{#if equipToast === 'ok'}
-					{tFn('library.equipped_toast')}
-					<a href="/users/{me?.username}" class="underline text-indigo-400 hover:text-indigo-300 ml-1">{tFn('library.view_profile')}</a>
-				{:else}
-					{tFn('library.error_generic')}
-				{/if}
-			</span>
-		</div>
-	{/if}
 
 	<div class="rounded-2xl border border-gray-800 bg-gray-900 overflow-hidden">
 		<!-- Preview -->
@@ -200,16 +147,6 @@
 					{/if}
 				</div>
 				<div class="flex gap-2 shrink-0">
-					{#if canEquip}
-						<button
-							onclick={equipAsset}
-							disabled={equipping || equipped}
-							class="px-4 py-2 rounded-lg disabled:opacity-50 text-sm font-semibold text-white transition-colors
-							       {equipped ? 'bg-gray-700 cursor-default' : 'bg-emerald-700 hover:bg-emerald-600'}"
-						>
-							{equipping ? '…' : equipped ? tFn('library.equipped') : equipLabel}
-						</button>
-					{/if}
 					<button
 						onclick={downloadAsset}
 						class="relative px-4 py-2 rounded-lg text-sm font-semibold text-white transition-colors

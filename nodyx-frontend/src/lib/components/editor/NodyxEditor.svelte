@@ -1663,7 +1663,7 @@
 							<path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909"/>
 						</svg>
 						<p class="text-sm">{tFn('editor.library.empty')}</p>
-						<a href="/admin/media" target="_blank" class="text-xs text-indigo-400 hover:underline">{tFn('editor.library.open')}</a>
+						<a href="/library" target="_blank" class="text-xs text-indigo-400 hover:underline">{tFn('editor.library.open')}</a>
 					</div>
 				{:else}
 					<div class="grid grid-cols-3 sm:grid-cols-4 gap-3">

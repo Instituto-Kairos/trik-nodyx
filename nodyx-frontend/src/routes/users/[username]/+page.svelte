@@ -427,11 +427,6 @@
 							{profile.grade_name}
 						</span>
 					{/if}
-					{#if badgeSrc}
-						<img src={badgeSrc} alt={profile.badge_asset_name ?? 'Badge'}
-						     title={profile.badge_asset_name ?? 'Badge'}
-						     class="w-10 h-10 object-contain drop-shadow" />
-					{/if}
 					<span class="text-xs px-2 py-0.5 rounded-full font-medium"
 					      style="background: color-mix(in srgb, var(--p-accent) 15%, transparent); color: var(--p-accent); border: 1px solid color-mix(in srgb, var(--p-accent) 30%, transparent)">
 						{rankLabel}
@@ -680,11 +675,17 @@
 			     style="background: var(--p-card-bg); border: 1px solid var(--p-card-border)">
 				<p class="text-xs uppercase tracking-widest font-medium mb-3" style="color: var(--p-text-muted)">{tFn('user.showcase')}</p>
 				<div class="flex flex-wrap gap-2">
-					<div class="w-10 h-10 flex items-center justify-center text-lg"
-					     style="background: color-mix(in srgb, var(--p-accent) 8%, transparent); border: 1px dashed color-mix(in srgb, var(--p-accent) 20%, transparent)"
-					     title={tFn('user.coming_soon')}>
-						🔒
-					</div>
+					{#if badgeSrc}
+						<img src={badgeSrc} alt={profile.badge_asset_name ?? 'Badge'}
+						     title={profile.badge_asset_name ?? 'Badge'}
+						     class="w-10 h-10 object-contain drop-shadow" />
+					{:else}
+						<div class="w-10 h-10 flex items-center justify-center text-lg"
+						     style="background: color-mix(in srgb, var(--p-accent) 8%, transparent); border: 1px dashed color-mix(in srgb, var(--p-accent) 20%, transparent)"
+						     title={tFn('user.coming_soon')}>
+							🔒
+						</div>
+					{/if}
 					<div class="w-10 h-10 flex items-center justify-center text-lg"
 					     style="background: color-mix(in srgb, var(--p-accent) 8%, transparent); border: 1px dashed color-mix(in srgb, var(--p-accent) 20%, transparent)"
 					     title={tFn('user_profile.soon')}>
