@@ -12,7 +12,16 @@ export const load: LayoutServerLoad = async ({ fetch, cookies, url }) => {
 	})
 
 	if (res.status === 401) redirect(302, `/auth/login?redirectTo=${encodeURIComponent(url.pathname)}`)
-	if (res.status === 403) redirect(302, '/')
+	if (res.status === 403) {
+		// Narrador de AU (trik_015) não é admin: entra só nesta aba, só leitura.
+		if (url.pathname === '/admin/trik/au') {
+			const panel = await apiFetch(fetch, '/trik/au-panel', {
+				headers: { Authorization: `Bearer ${token}` },
+			})
+			if (panel.ok) return { token, stats: null, updateCheck: null, auNarrator: true }
+		}
+		redirect(302, '/')
+	}
 	if (!res.ok) error(503, 'Service temporairement indisponible')
 
 	const stats = await res.json()
@@ -22,5 +31,5 @@ export const load: LayoutServerLoad = async ({ fetch, cookies, url }) => {
 	}).catch(() => null)
 	const updateCheck = updateRes?.ok ? await updateRes.json().catch(() => null) : null
 
-	return { token, stats, updateCheck }
+	return { token, stats, updateCheck, auNarrator: false }
 }

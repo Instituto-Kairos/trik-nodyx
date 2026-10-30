@@ -281,3 +281,102 @@ export async function listAuAwardedPostIdsByThread(threadId: string): Promise<st
   )
   return rows.map(r => r.post_id)
 }
+
+// ── Narradores do AU (trik_015): acesso de leitura por raiz de AU ───────────
+
+export interface TrikAuRoot {
+  id:   string
+  name: string
+}
+
+export interface TrikAuNarrator {
+  category_id: string
+  user_id:     string
+  username:    string
+}
+
+/** Raízes que o usuário narra. Raiz desmarcada do AU deixa de contar. */
+export async function listNarratedRoots(userId: string): Promise<TrikAuRoot[]> {
+  const { rows } = await db.query<TrikAuRoot>(
+    `SELECT c.id, c.name
+       FROM trik_au_narrators n
+       JOIN trik_au_categories ac ON ac.category_id = n.category_id
+       JOIN categories c ON c.id = n.category_id
+      WHERE n.user_id = $1
+      ORDER BY c.position ASC, c.name ASC`,
+    [userId]
+  )
+  return rows
+}
+
+/**
+ * Personagens com cena premiada nessas raízes. O personagem não pertence a
+ * uma categoria, então a cena é o único vínculo: quem ainda não jogou não aparece.
+ */
+export async function listAuCharactersForRoots(rootIds: string[]): Promise<TrikAuCharacterAdmin[]> {
+  const { rows } = await db.query<TrikAuCharacterAdmin>(
+    `WITH RECURSIVE tree(id) AS (
+       SELECT unnest($1::uuid[])
+       UNION
+       SELECT c.id FROM categories c JOIN tree ON c.parent_id = tree.id
+     )
+     SELECT c.id, c.name, c.ficha_link, c.template_name, c.template_signature,
+            c.xp::int AS xp, c.created_at, u.username
+       FROM trik_au_characters c
+       JOIN users u ON u.id = c.user_id
+      WHERE EXISTS (
+        SELECT 1 FROM trik_au_scene_awards a
+          JOIN posts p ON p.id = a.post_id
+          JOIN threads t ON t.id = p.thread_id
+          JOIN tree ON tree.id = t.category_id
+         WHERE a.character_id = c.id
+      )
+      ORDER BY lower(u.username), lower(c.name)`,
+    [rootIds]
+  )
+  return rows
+}
+
+export async function listAuNarrators(communityId: string): Promise<TrikAuNarrator[]> {
+  const { rows } = await db.query<TrikAuNarrator>(
+    `SELECT n.category_id, n.user_id, u.username
+       FROM trik_au_narrators n
+       JOIN categories c ON c.id = n.category_id
+       JOIN users u ON u.id = n.user_id
+      WHERE c.community_id = $1
+      ORDER BY lower(u.username)`,
+    [communityId]
+  )
+  return rows
+}
+
+/** false = a categoria não é raiz de AU ou o username não é membro. */
+export async function addAuNarrator(
+  categoryId: string, username: string, communityId: string, adminId: string
+): Promise<boolean> {
+  const { rows } = await db.query<{ ok: number }>(
+    `WITH alvo AS (
+       SELECT ac.category_id, u.id AS user_id
+         FROM trik_au_categories ac
+         JOIN categories c ON c.id = ac.category_id AND c.community_id = $3
+         JOIN users u ON lower(u.username) = lower($2)
+         JOIN community_members cm ON cm.user_id = u.id AND cm.community_id = $3
+        WHERE ac.category_id = $1
+     ), novo AS (
+       INSERT INTO trik_au_narrators (category_id, user_id, added_by)
+       SELECT category_id, user_id, $4 FROM alvo
+       ON CONFLICT DO NOTHING
+     )
+     SELECT 1 AS ok FROM alvo`,
+    [categoryId, username, communityId, adminId]
+  )
+  return rows.length > 0
+}
+
+export async function removeAuNarrator(categoryId: string, userId: string): Promise<boolean> {
+  const { rowCount } = await db.query(
+    `DELETE FROM trik_au_narrators WHERE category_id = $1 AND user_id = $2`,
+    [categoryId, userId]
+  )
+  return (rowCount ?? 0) > 0
+}

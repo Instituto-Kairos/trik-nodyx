@@ -2,7 +2,7 @@
 	import { page } from '$app/state'
 	import TabNav from '$lib/components/trik/TabNav.svelte'
 
-	let { children }: { children: any } = $props()
+	let { children, data }: { children: any; data: { auNarrator?: boolean } } = $props()
 
 	const tabs = [
 		{ href: '/admin/trik/registros', label: 'Registros' },
@@ -20,7 +20,7 @@
 </script>
 
 <div class="space-y-6">
-	<TabNav tabs={tabs.map((t) => ({ ...t, active: page.url.pathname.startsWith(t.href) }))} />
+	<TabNav tabs={tabs.filter((t) => !data.auNarrator || t.href === '/admin/trik/au').map((t) => ({ ...t, active: page.url.pathname.startsWith(t.href) }))} />
 
 	{@render children?.()}
 </div>

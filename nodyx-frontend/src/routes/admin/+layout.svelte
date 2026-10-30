@@ -75,6 +75,13 @@
 		},
 	]
 
+	const visibleNav = $derived(data.auNarrator
+		? nav.flatMap((g) => {
+			const items = g.items.filter((i) => i.labelKey === 'anav.lbl_trik').map((i) => ({ ...i, href: '/admin/trik/au' }))
+			return items.length ? [{ ...g, items }] : []
+		})
+		: nav)
+
 	const isActive = (href: string, exact = false) =>
 		exact
 			? page.url.pathname === href
@@ -142,7 +149,7 @@
 
 		<!-- Nav -->
 		<nav class="flex-1 overflow-y-auto py-3 px-2">
-			{#each nav as group}
+			{#each visibleNav as group}
 				<div class="mb-3.5">
 					<p class="px-2.5 mb-1 text-[10px] font-semibold text-zinc-600 uppercase tracking-[0.08em]">
 						{tFn(group.sectionKey)}

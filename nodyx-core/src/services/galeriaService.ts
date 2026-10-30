@@ -437,3 +437,39 @@ export async function deleteTag(communityId: string, id: string): Promise<boolea
   )
   return true
 }
+
+// ── Reações ───────────────────────────────────────────────────────────────────
+
+export const GALERIA_EMOJIS = ['👍', '❤️', '🔥', '😂', '😮', '😢'] as const
+
+export interface GaleriaReaction {
+  emoji: string
+  count: number
+  user_reacted: boolean
+}
+
+export async function listReactions(imageId: string, userId: string): Promise<GaleriaReaction[]> {
+  const { rows } = await db.query<GaleriaReaction>(
+    `SELECT emoji, COUNT(*)::int AS count, BOOL_OR(user_id = $2) AS user_reacted
+     FROM galeria_image_reactions
+     WHERE image_id = $1
+     GROUP BY emoji`,
+    [imageId, userId],
+  )
+  return rows
+}
+
+export async function toggleReaction(imageId: string, userId: string, emoji: string): Promise<GaleriaReaction[]> {
+  const { rowCount } = await db.query(
+    `DELETE FROM galeria_image_reactions WHERE image_id = $1 AND user_id = $2 AND emoji = $3`,
+    [imageId, userId, emoji],
+  )
+  if (!rowCount) {
+    await db.query(
+      `INSERT INTO galeria_image_reactions (image_id, user_id, emoji) VALUES ($1, $2, $3)
+       ON CONFLICT DO NOTHING`,
+      [imageId, userId, emoji],
+    )
+  }
+  return listReactions(imageId, userId)
+}

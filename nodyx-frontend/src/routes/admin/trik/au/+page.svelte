@@ -14,6 +14,13 @@
 
 	const categories = $derived((data.categories ?? []) as Category[]);
 
+	// Narrador (trik_015): só leitura, sem configuração do AU.
+	const narratorRoots = $derived((data.roots ?? []) as { id: string; name: string }[]);
+	const isNarrator = $derived(narratorRoots.length > 0);
+	const narrators = $derived(
+		(data.narrators ?? []) as { category_id: string; user_id: string; username: string }[]
+	);
+
 	// Categoria cujo pai não existe na lista também é raiz (parent_id aponta
 	// para fora da comunidade ou ficou órfão) — senão ela sumiria da tela.
 	const roots = $derived.by(() => {
@@ -120,11 +127,18 @@
 <div class="space-y-6">
 	<div>
 		<h1 class="text-2xl font-bold text-white mb-1">Módulo RPG — Universo Alternativo</h1>
+		{#if isNarrator}
+		<p class="text-sm text-gray-500">
+			Você narra: <span class="text-gray-300">{narratorRoots.map((r) => r.name).join(', ')}</span>.
+			Aparecem aqui os personagens com cena premiada nessas categorias.
+		</p>
+		{:else}
 		<p class="text-sm text-gray-500">
 			Marque a categoria raiz do AU: todas as subcategorias dela também ficam no AU. Lá dentro, o
 			@ só oferece aliases do AU (/alias-au), NPCCs da categoria NPCCs do AU e NPCs dos álbuns AU
 			da galeria. Fora do AU, nada disso aparece.
 		</p>
+		{/if}
 	</div>
 
 	{#if form?.error}
@@ -138,7 +152,9 @@
 		</div>
 	{/if}
 
-	{#if roots.length === 0}
+	{#if isNarrator}
+		<!-- A configuração do AU é só de admin. -->
+	{:else if roots.length === 0}
 		<p class="text-sm text-gray-500">Nenhuma categoria no fórum ainda.</p>
 	{:else}
 		<form method="POST" action="?/save" use:enhance={() => async ({ update }) => update({ reset: false })} class="space-y-4">
@@ -219,6 +235,48 @@
 				Salvar
 			</button>
 		</form>
+	{/if}
+
+	{#if !isNarrator}
+		<section class="space-y-3">
+			<div>
+				<h2 class="text-lg font-semibold text-white">Narradores</h2>
+				<p class="text-xs text-gray-500">
+					O narrador vê nesta aba só os personagens da raiz dele, sem poder alterar nada.
+				</p>
+			</div>
+			<form method="POST" action="?/addNarrator" use:enhance class="flex flex-wrap items-end gap-3">
+				<label class="flex flex-col gap-1 text-xs text-gray-400">
+					Raiz do AU
+					<select name="categoryId" required class="min-w-56 rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-white">
+						{#each categories.filter((c) => c.enabled) as c (c.id)}
+							<option value={c.id}>{c.name}</option>
+						{/each}
+					</select>
+				</label>
+				<label class="flex flex-col gap-1 text-xs text-gray-400">
+					Username
+					<input name="username" required maxlength="100" class="min-w-56 rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-white" />
+				</label>
+				<button type="submit" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-sm font-medium text-white transition-colors">
+					Adicionar
+				</button>
+			</form>
+			{#if narrators.length > 0}
+				<ul class="rounded-xl border border-gray-800 bg-gray-900/40 divide-y divide-gray-800">
+					{#each narrators as n (n.category_id + ':' + n.user_id)}
+						<li class="flex items-center justify-between gap-4 px-5 py-2.5 text-sm">
+							<span class="text-white">@{n.username} <span class="text-gray-500">· {nameById.get(n.category_id) ?? '—'}</span></span>
+							<form method="POST" action="?/removeNarrator" use:enhance>
+								<input type="hidden" name="categoryId" value={n.category_id} />
+								<input type="hidden" name="userId" value={n.user_id} />
+								<button type="submit" class="text-xs text-gray-500 hover:text-red-400 transition-colors">Remover</button>
+							</form>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</section>
 	{/if}
 
 	<section class="space-y-3">

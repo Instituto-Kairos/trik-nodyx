@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms'
+	import { invalidateAll } from '$app/navigation'
 	import { apiFetch } from '$lib/api'
 	import { PUBLIC_API_URL } from '$env/static/public'
 	import { t } from '$lib/i18n'
@@ -124,6 +125,19 @@
 		await navigator.clipboard.writeText(fullUrl(asset))
 		copiedId = asset.id
 		setTimeout(() => { copiedId = null }, 2000)
+	}
+
+	// ── Rename ───────────────────────────────────────────────────────────────
+	async function renameAsset(asset: AssetRow) {
+		const name = prompt(tFn('common.edit'), asset.name)?.trim()
+		if (!name || name === asset.name) return
+		const res = await apiFetch(fetch, `/assets/${asset.id}`, {
+			method: 'PATCH',
+			headers: { Authorization: `Bearer ${data.token}` },
+			body: JSON.stringify({ name }),
+		})
+		if (res.ok) await invalidateAll()
+		else alert((await res.json().catch(() => ({}))).error ?? tFn('amedia.err_network'))
 	}
 
 	function fmtSize(bytes: number): string {
@@ -277,6 +291,18 @@
 									</svg>
 									URL
 								{/if}
+							</button>
+
+							<button
+								type="button"
+								onclick={() => renameAsset(asset)}
+								class="p-1.5 rounded-lg bg-gray-800 text-gray-600 hover:bg-indigo-900/40 hover:text-indigo-300 border border-gray-700/50 hover:border-indigo-700/50 transition-all"
+								title={tFn('common.edit')}
+								aria-label={tFn('common.edit')}
+							>
+								<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" d="M15.2 5.2l3.6 3.6M4 20l1-4.5L16.6 3.9a1.5 1.5 0 012.1 0l1.4 1.4a1.5 1.5 0 010 2.1L8.5 19 4 20z"/>
+								</svg>
 							</button>
 
 							<form method="POST" action="?/delete" use:enhance={({ cancel }) => {

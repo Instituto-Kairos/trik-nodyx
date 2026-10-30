@@ -105,8 +105,30 @@
 		if (res.ok) goto('/galeria')
 	}
 
+	// ── Reações ───────────────────────────────────────────────────────────────
+	const EMOJIS = ['👍', '❤️', '🔥', '😂', '😮', '😢']
+	let reagindo = $state(false)
+
+	const reacao = (emoji: string) =>
+		(data.reactions as { emoji: string; count: number; user_reacted: boolean }[]).find((r) => r.emoji === emoji)
+
+	async function reagir(emoji: string) {
+		if (reagindo) return
+		reagindo = true
+		try {
+			const res = await apiFetch(fetch, `/galeria/images/${img.id}/reactions`, {
+				method: 'POST',
+				headers: auth,
+				body: JSON.stringify({ emoji }),
+			})
+			if (res.ok) await invalidateAll()
+		} finally {
+			reagindo = false
+		}
+	}
+
 	// ── Anotações ─────────────────────────────────────────────────────────────
-	let novaNota     = $state('')
+	let novaNota    = $state('')
 	let editorChave  = $state(0)   // trocar a chave remonta o editor vazio
 	let enviandoNota = $state(false)
 	let erroNota     = $state('')
@@ -247,6 +269,15 @@
 			{/if}
 		{/if}
 
+		<div class="gp-reactions">
+			{#each EMOJIS as emoji (emoji)}
+				{@const r = reacao(emoji)}
+				<button type="button" class="gp-reaction" class:gp-reaction--on={r?.user_reacted} aria-pressed={!!r?.user_reacted} disabled={reagindo} onclick={() => reagir(emoji)}>
+					{emoji}{#if r}<span>{r.count}</span>{/if}
+				</button>
+			{/each}
+		</div>
+
 		<!-- ── Anotações ───────────────────────────────────────────────────── -->
 		<section class="gp-notes">
 			<h2 class="gp-notes-title">{tFn('galeria.notes_title')}</h2>
@@ -335,6 +366,14 @@
 .gp-tags  { display: flex; flex-wrap: wrap; gap: 0.375rem; }
 .gp-tag   { font-size: 0.75rem; color: rgb(var(--nx-accent-rgb)); background: rgb(var(--nx-accent-rgb) / 0.12); border-radius: 9999px; padding: 0.125rem 0.5rem; text-decoration: none; }
 .gp-actions { justify-content: flex-end; }
+
+.gp-reactions { display: flex; flex-wrap: wrap; gap: 0.375rem; }
+.gp-reaction {
+	display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.25rem 0.5rem;
+	font-size: 0.875rem; color: rgba(255,255,255,0.75); cursor: pointer;
+	background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); border-radius: 9999px;
+}
+.gp-reaction--on { background: rgb(var(--nx-accent-rgb) / 0.15); border-color: rgb(var(--nx-accent-rgb) / 0.6); }
 
 .gp-card  { border: 1px solid rgba(255,255,255,0.1); border-radius: 0.75rem; padding: 1rem; background: rgba(255,255,255,0.02); }
 .gp-stack { display: flex; flex-direction: column; gap: 0.625rem; }

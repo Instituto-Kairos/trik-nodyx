@@ -355,6 +355,16 @@ const RegistroAuBody = z.object({
   fichaLink: z.string().url().max(500),
 })
 
+const AuNarratorBody = z.object({
+  categoryId: z.string().uuid(),
+  username:   z.string().trim().min(1).max(100),
+})
+
+const AuNarratorParams = z.object({
+  categoryId: z.string().uuid(),
+  userId:     z.string().uuid(),
+})
+
 /** `?category=` das buscas de menção: id inválido/ausente = universo principal. */
 async function auContext(category: string | undefined): Promise<boolean> {
   if (!category || !/^[0-9a-f-]{36}$/i.test(category)) return false
@@ -479,6 +489,15 @@ export async function trikPlayerPlugin(app: FastifyInstance) {
     const { id } = request.params as z.infer<typeof IdParams>
     const ok = await TrikAu.deleteAuAlias(request.user!.userId, id)
     return ok ? reply.code(204).send() : reply.code(404).send({ error: 'Alias não encontrado', code: 'NOT_FOUND' })
+  })
+
+  // Aba AU para quem narra (trik_015): só leitura e só as raízes dele. A lista
+  // de raízes é o que autoriza; admin usa as rotas de /admin/trik.
+  app.get('/au-panel', async (request, reply) => {
+    const roots = await TrikAu.listNarratedRoots(request.user!.userId)
+    if (roots.length === 0) return reply.code(403).send({ error: 'Forbidden', code: 'FORBIDDEN' })
+    const characters = await TrikAu.listAuCharactersForRoots(roots.map(r => r.id))
+    return reply.send({ roots, characters })
   })
 
   // ── /registro-au (trik_014): personagens AU — nome + ficha, xp sem nível ──
@@ -1113,6 +1132,31 @@ export async function trikAdminPlugin(app: FastifyInstance) {
     const { categoryIds } = request.body as z.infer<typeof NotifyCategoriesBody>
     await TrikAu.setAuCategories(categoryIds, communityId, request.user!.userId)
     return reply.send({ ok: true })
+  })
+
+  app.get('/au-narrators', async (_request, reply) => {
+    const communityId = await getCommunityId()
+    if (!communityId) return reply.code(503).send({ error: 'Community not configured' })
+    return reply.send({ narrators: await TrikAu.listAuNarrators(communityId) })
+  })
+
+  app.post('/au-narrators', {
+    preHandler: validate({ body: AuNarratorBody }),
+  }, async (request, reply) => {
+    const communityId = await getCommunityId()
+    if (!communityId) return reply.code(503).send({ error: 'Community not configured' })
+    const { categoryId, username } = request.body as z.infer<typeof AuNarratorBody>
+    const ok = await TrikAu.addAuNarrator(categoryId, username, communityId, request.user!.userId)
+    if (!ok) return reply.code(404).send({ error: 'Membro ou raiz de AU não encontrados', code: 'NOT_FOUND' })
+    return reply.code(201).send({ ok: true })
+  })
+
+  app.delete('/au-narrators/:categoryId/:userId', {
+    preHandler: validate({ params: AuNarratorParams }),
+  }, async (request, reply) => {
+    const { categoryId, userId } = request.params as z.infer<typeof AuNarratorParams>
+    const ok = await TrikAu.removeAuNarrator(categoryId, userId)
+    return ok ? reply.code(204).send() : reply.code(404).send({ error: 'Narrador não encontrado', code: 'NOT_FOUND' })
   })
 
   // ── Xp de narrador (#lore) — ver models/trikNarrador.ts ───────────────────

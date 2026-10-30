@@ -57,6 +57,10 @@ const TagBody = z.object({
   name: z.string().trim().min(1).max(30),
 })
 
+const ReactionBody = z.object({
+  emoji: z.enum(Galeria.GALERIA_EMOJIS),
+})
+
 const NoteBody = z.object({
   content: z.string().min(1).max(20000),
 })
@@ -294,6 +298,27 @@ export default async function galeriaRoutes(app: FastifyInstance) {
 
     await Galeria.deleteImage(communityId, id)
     return reply.code(204).send()
+  })
+
+  // ── Reações ────────────────────────────────────────────────────────────────
+
+  app.get('/images/:id/reactions', { preHandler: [rateLimit, requireAuth] }, async (request, reply) => {
+    const communityId = await getCommunityId()
+    if (!communityId) return reply.code(503).send({ error: 'Community not configured' })
+    const { id } = request.params as { id: string }
+    if (!(await Galeria.getImage(communityId, id))) return reply.code(404).send({ error: 'Imagem não encontrada.' })
+    return reply.send({ reactions: await Galeria.listReactions(id, request.user!.userId) })
+  })
+
+  app.post('/images/:id/reactions', {
+    preHandler: [rateLimit, requireAuth, validate({ body: ReactionBody })],
+  }, async (request, reply) => {
+    const communityId = await getCommunityId()
+    if (!communityId) return reply.code(503).send({ error: 'Community not configured' })
+    const { id } = request.params as { id: string }
+    const { emoji } = request.body as z.infer<typeof ReactionBody>
+    if (!(await Galeria.getImage(communityId, id))) return reply.code(404).send({ error: 'Imagem não encontrada.' })
+    return reply.send({ reactions: await Galeria.toggleReaction(id, request.user!.userId, emoji) })
   })
 
   // ── Anotações ──────────────────────────────────────────────────────────────

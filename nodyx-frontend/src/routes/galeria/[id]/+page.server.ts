@@ -11,11 +11,12 @@ export const load: PageServerLoad = async ({ fetch, cookies, params }) => {
 	if (!/^[0-9a-f-]{36}$/i.test(params.id)) error(404, 'Imagem não encontrada.')
 
 	const headers = { Authorization: `Bearer ${token}` }
-	const [resImg, resNotes, resAlbums, resTags] = await Promise.all([
+	const [resImg, resNotes, resAlbums, resTags, resReactions] = await Promise.all([
 		apiFetch(fetch, `/galeria/images/${params.id}`, { headers }),
 		apiFetch(fetch, `/galeria/images/${params.id}/notes`, { headers }),
 		apiFetch(fetch, '/galeria/albums', { headers }),
 		apiFetch(fetch, '/galeria/tags', { headers }),
+		apiFetch(fetch, `/galeria/images/${params.id}/reactions`, { headers }),
 	])
 
 	if (resImg.status === 503) error(503, 'O módulo Galeria está desativado.')
@@ -26,6 +27,7 @@ export const load: PageServerLoad = async ({ fetch, cookies, params }) => {
 		notes:  resNotes.ok ? (await resNotes.json()).notes ?? [] : [],
 		albums: resAlbums.ok ? (await resAlbums.json()).albums ?? [] : [],
 		tags:   resTags.ok ? (await resTags.json()).tags ?? [] : [],
+		reactions: resReactions.ok ? (await resReactions.json()).reactions ?? [] : [],
 		token,
 	}
 }

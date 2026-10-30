@@ -45,8 +45,8 @@
 			.filter(k => k.startsWith(':') && k.endsWith(':'))
 			.map(k => bySc.get(k.slice(1, -1)))
 			.filter((e): e is (typeof customEmojis)[number] => !!e)
-		const seen = new Set(top.map(e => e.shortcode))
-		return [...top, ...customEmojis.filter(e => !seen.has(e.shortcode))].slice(0, 6)
+		// Map por shortcode: a lista vem do servidor e pode repetir shortcodes
+		return [...new Map([...top, ...customEmojis].map(e => [e.shortcode, e])).values()].slice(0, 6)
 	})
 
 	let { data }: { data: PageData } = $props();
@@ -415,6 +415,8 @@
 				}
 				return;
 			}
+			// Corrida entre chat:history e chat:message logo após entrar no canal
+			if (messages.some(m => m.id === msg.id)) return;
 			messages = [...messages, normalizeMsg(msg)];
 			// Son uniquement si le message vient de quelqu'un d'autre
 			if (msg.author_id !== userId) playMessage();
@@ -697,6 +699,7 @@
 		isLoadingOld = true;
 		const before    = messages[0]?.created_at;
 		const prevHeight = messagesEl.scrollHeight;
+		const prevTop    = messagesEl.scrollTop;
 
 		try {
 			const { PUBLIC_API_URL } = await import('$env/static/public');
@@ -709,9 +712,10 @@
 				if (older.length === 0) {
 					noMoreHistory = true;
 				} else {
-					messages = [...older.map(normalizeMsg), ...messages];
+					const known = new Set(messages.map(m => m.id));
+					messages = [...older.filter((m: Message) => !known.has(m.id)).map(normalizeMsg), ...messages];
 					await tick();
-					if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight - prevHeight;
+					if (messagesEl) messagesEl.scrollTop = prevTop + messagesEl.scrollHeight - prevHeight;
 					return true;
 				}
 			}
@@ -1075,12 +1079,13 @@
 	}
 
 	function groupByDay(msgs: Message[]) {
-		const groups: Array<{ day: string; messages: Message[] }> = [];
+		// `key` inclui o ano: o rótulo `day` se repete entre anos ("30 de out.")
+		const groups: Array<{ key: string; day: string; messages: Message[] }> = [];
 		for (const msg of msgs) {
-			const day  = formatDate(msg.created_at);
-			const last = groups.at(-1);
-			if (last?.day === day) { last.messages.push(msg); }
-			else { groups.push({ day, messages: [msg] }); }
+			const key   = new Date(msg.created_at).toDateString();
+			const group = groups.find(g => g.key === key);
+			if (group) { group.messages.push(msg); }
+			else { groups.push({ key, day: formatDate(msg.created_at), messages: [msg] }); }
 		}
 		return groups;
 	}
@@ -1217,6 +1222,7 @@
                 class="absolute inset-0 overflow-y-auto px-0 py-3 space-y-0 custom-scrollbar"
                 bind:this={messagesEl}
                 onscroll={handleScroll}
+                onloadcapture={() => { if (isAtBottom && messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight; }}
                 style="scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--nx-text) 6%, transparent) transparent"
             >
 				{#if isLoadingOld}
@@ -1226,7 +1232,7 @@
 					<p class="text-center text-xs text-[var(--nx-text-muted)] py-2">{tFn('chat.history_start')}</p>
 				{/if}
 
-				{#each messageGroups as group (group.day)}
+				{#each messageGroups as group (group.key)}
 					<!-- Day separator -->
 					<div class="flex items-center gap-3 my-4 px-4">
 						<div class="flex-1 h-px" style="background: linear-gradient(to right, transparent, color-mix(in srgb, var(--nx-text) 6%, transparent))"></div>

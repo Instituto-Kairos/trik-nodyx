@@ -79,6 +79,10 @@ const SearchQuery = z.object({
   offset: z.coerce.number().min(0).default(0),
 })
 
+const RenameBody = z.object({
+  name: z.string().trim().min(1).max(100),
+})
+
 export default async function assetRoutes(app: FastifyInstance) {
 
   // ── POST /api/v1/assets — Upload a new asset ───────────────────────────────
@@ -219,6 +223,19 @@ export default async function assetRoutes(app: FastifyInstance) {
     await fs.unlink(path.join(process.cwd(), 'uploads', file_path)).catch(() => {})
     if (thumbnail_path) await fs.unlink(path.join(process.cwd(), 'uploads', thumbnail_path)).catch(() => {})
     return reply.send({ ok: true })
+  })
+
+  // ── PATCH /api/v1/assets/:id — Admin rename ────────────────────────────────
+  app.patch<{ Params: { id: string } }>('/:id', {
+    preHandler: [adminOnly, validate({ body: RenameBody })],
+  }, async (req, reply) => {
+    const { name } = req.body as z.infer<typeof RenameBody>
+    const { rows } = await db.query<{ name: string }>(
+      `UPDATE community_assets SET name = $2 WHERE id = $1 RETURNING name`,
+      [req.params.id, name]
+    )
+    if (!rows[0]) return reply.code(404).send({ error: 'Asset introuvable.' })
+    return reply.send({ name: rows[0].name })
   })
 
   // ── PATCH /api/v1/assets/:id/ban — Admin toggle ban ────────────────────────

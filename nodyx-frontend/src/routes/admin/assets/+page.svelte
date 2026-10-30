@@ -1,6 +1,8 @@
 <script lang="ts">
 	import type { PageData } from './$types'
 	import { enhance } from '$app/forms'
+	import { invalidateAll } from '$app/navigation'
+	import { apiFetch } from '$lib/api'
 	import { PUBLIC_API_URL } from '$env/static/public'
 
 	import { t } from '$lib/i18n'
@@ -17,6 +19,18 @@
 	function thumbUrl(asset: { thumbnail_path?: string; file_path: string }) {
 		const base = PUBLIC_API_URL.replace('/api/v1', '')
 		return `${base}/uploads/${asset.thumbnail_path ?? asset.file_path}`
+	}
+
+	async function renameAsset(asset: { id: string; name: string }) {
+		const name = prompt(tFn('common.edit'), asset.name)?.trim()
+		if (!name || name === asset.name) return
+		const res = await apiFetch(fetch, `/assets/${asset.id}`, {
+			method: 'PATCH',
+			headers: { Authorization: `Bearer ${data.token}` },
+			body: JSON.stringify({ name }),
+		})
+		if (res.ok) await invalidateAll()
+		else alert((await res.json().catch(() => ({}))).error ?? 'Erro ao renomear')
 	}
 
 	function confirmDelete(name: string) {
@@ -81,6 +95,10 @@
 							</td>
 							<td class="px-4 py-3">
 								<div class="flex items-center justify-end gap-2">
+									<button type="button" onclick={() => renameAsset(asset)}
+										class="px-2.5 py-1 rounded text-xs font-medium bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors">
+										{tFn('common.edit')}
+									</button>
 									<!-- Ban / Unban -->
 									<form method="POST" action="?/ban" use:enhance>
 										<input type="hidden" name="id" value={asset.id} />
