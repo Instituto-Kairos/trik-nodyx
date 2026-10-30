@@ -24,7 +24,9 @@
 	import MiniProfileCard from '$lib/components/MiniProfileCard.svelte';
 	import { buildNameStyle, buildAnimClass, ensureFontLoaded } from '$lib/nameEffects';
 	// FloatingReactions : retiré, géré globalement dans +layout.svelte
-	import { t } from '$lib/i18n';
+	import { t, locale } from '$lib/i18n';
+	import { isDarkTheme } from '$lib/theme';
+	import { messagesVisibles, marquerSupprime } from '$lib/chatFil';
 	import { unreadCountsStore, flashChannelIdStore } from '$lib/unreadStore';
 	import { playMessage, playMention } from '$lib/sounds';
 	import { matchTrikCommand } from '$lib/trik/commandRegistry';
@@ -440,7 +442,8 @@
 		});
 
 		sock.on('chat:message_deleted', ({ messageId }: { messageId: string }) => {
-			messages = messages.map((m) => m.id === messageId ? { ...m, is_deleted: true, content: null } : m);
+			messages = marquerSupprime(messages, messageId);
+			if (pinnedMessage?.id === messageId) pinnedMessage = null;
 		});
 
 		sock.on('chat:pinned', ({ channelId, message }: { channelId: string; message: Message | null }) => {
@@ -1064,11 +1067,11 @@
 
 	// ── Format ───────────────────────────────────────────────────────────────
 	function formatTime(iso: string): string {
-		return new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+		return new Date(iso).toLocaleTimeString($locale, { hour: '2-digit', minute: '2-digit' });
 	}
 
 	function formatDate(iso: string): string {
-		return new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+		return new Date(iso).toLocaleDateString($locale, { day: 'numeric', month: 'short' });
 	}
 
 	function groupByDay(msgs: Message[]) {
@@ -1082,7 +1085,7 @@
 		return groups;
 	}
 
-	const messageGroups = $derived(groupByDay(messages));
+	const messageGroups = $derived(groupByDay(messagesVisibles(messages)));
 
 	// ── Current user info (for voice room display) ─────────────────────────────
 	const myUsername = $derived(((data as unknown as { user?: { username?: string } }).user?.username) ?? '');
@@ -1102,7 +1105,7 @@
 <svelte:head><title>Chat · Nodyx</title></svelte:head>
 
 <!-- Full-height layout — left and right offsets dynamically adjusted on collapse/expand -->
-<div class="chat-shell fixed top-12 bottom-0 left-0 right-0 flex overflow-hidden z-10 bg-[#080810]">
+<div class="chat-shell fixed top-12 bottom-0 left-0 right-0 flex overflow-hidden z-10 bg-[var(--nx-sheet-bg,var(--nx-bg))]">
 
 	<!-- ── Channel sidebar — mobile drawer only (layout sidebar handles desktop) ── -->
 	<div class="lg:hidden">
@@ -1151,9 +1154,9 @@
 			{:else}
 				<!-- ── Text chat ──────────────────────────────────────────────────── -->
 				<!-- Header -->
-				<div class="h-11 shrink-0 flex items-center gap-3 px-4" style="background: #0d0d12; border-bottom: 1px solid rgba(255,255,255,.06)">
+				<div class="h-11 shrink-0 flex items-center gap-3 px-4" style="background: var(--nx-surface); border-bottom: 1px solid color-mix(in srgb, var(--nx-text) 6%, transparent)">
 					<!-- Mobile hamburger -->
-					<button class="lg:hidden shrink-0 p-1.5 transition-colors" style="color: #6b7280"
+					<button class="lg:hidden shrink-0 p-1.5 transition-colors" style="color: var(--nx-text-muted)"
 					        onclick={() => drawerOpen = true} aria-label={tFn('chat.open_channels_aria')} aria-expanded={drawerOpen} aria-controls="channels-drawer">
 						<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 							<path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/>
@@ -1162,9 +1165,9 @@
 					<!-- Channel name -->
 					<div class="flex items-center gap-2 min-w-0">
 						<span class="text-sm font-black shrink-0" style="color: var(--nx-accent-2-soft); font-family: 'Space Grotesk', sans-serif">#</span>
-						<span class="text-sm font-bold truncate" style="color: #e2e8f0; font-family: 'Space Grotesk', sans-serif">{selectedChannel.name}</span>
+						<span class="text-sm font-bold truncate" style="color: var(--nx-text); font-family: 'Space Grotesk', sans-serif">{selectedChannel.name}</span>
 						{#if selectedChannel.description}
-							<span class="hidden sm:inline text-[11px] truncate" style="color: #374151; border-left: 1px solid rgba(255,255,255,.08); padding-left: 0.75rem; margin-left: 0.25rem">{selectedChannel.description}</span>
+							<span class="hidden sm:inline text-[11px] truncate" style="color: var(--nx-text-muted); border-left: 1px solid color-mix(in srgb, var(--nx-text) 8%, transparent); padding-left: 0.75rem; margin-left: 0.25rem">{selectedChannel.description}</span>
 						{/if}
 					</div>
 					<!-- P2P indicator -->
@@ -1182,9 +1185,9 @@
 								<span class="text-[10px] font-black tabular-nums" style="color: #ca8a04">{$p2pPeerCount}</span>
 							</div>
 						{:else if $p2pStatus === 'connecting'}
-							<div class="flex items-center gap-1.5 px-2 h-6" style="border: 1px solid rgba(255,255,255,.05)">
-								<span class="w-1.5 h-1.5 rounded-full animate-pulse" style="background: #374151"></span>
-								<span class="text-[10px] font-black uppercase tracking-wider" style="color: #374151">P2P</span>
+							<div class="flex items-center gap-1.5 px-2 h-6" style="border: 1px solid color-mix(in srgb, var(--nx-text) 5%, transparent)">
+								<span class="w-1.5 h-1.5 rounded-full animate-pulse" style="background: var(--nx-text-faint)"></span>
+								<span class="text-[10px] font-black uppercase tracking-wider" style="color: var(--nx-text-muted)">P2P</span>
 							</div>
 						{/if}
 					</div>
@@ -1193,17 +1196,17 @@
 			<!-- Pinned message banner -->
 			{#if pinnedMessage && showPinned}
 				<div class="shrink-0 flex items-center gap-2.5 px-4 py-1.5 text-xs" style="background: rgb(var(--nx-accent-2-rgb) / .06); border-bottom: 1px solid rgb(var(--nx-accent-2-rgb) / .15)">
-					<svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="#a78bfa"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5v6h2v-6h5v-2l-2-2z"/></svg>
+					<svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="var(--nx-accent-2-soft)"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5v6h2v-6h5v-2l-2-2z"/></svg>
 					<span class="font-black uppercase tracking-wider shrink-0 text-[10px]" style="color: var(--nx-accent-2-soft); font-family: 'Space Grotesk', sans-serif">{tFn('chat.pinned')}</span>
-					<span class="truncate flex-1" style="color: #6b7280">
-						<span class="font-semibold" style="color: #4b5563">{pinnedMessage.author_username} · </span>{pinnedMessage.content?.replace(/<[^>]*>/g, '').slice(0, 120) ?? ''}
+					<span class="truncate flex-1" style="color: var(--nx-text-muted)">
+						<span class="font-semibold" style="color: var(--nx-text-muted)">{pinnedMessage.author_username} · </span>{pinnedMessage.content?.replace(/<[^>]*>/g, '').slice(0, 120) ?? ''}
 					</span>
 					{#if isAdmin}
 						<button onclick={() => s?.emit('chat:pin', { channelId: selectedChannel?.id, messageId: null })}
-						        class="ml-auto shrink-0 transition-colors w-4 h-4 flex items-center justify-center text-sm leading-none" style="color: #374151" title={tFn('chat.unpin')}>×</button>
+						        class="ml-auto shrink-0 transition-colors w-4 h-4 flex items-center justify-center text-sm leading-none" style="color: var(--nx-text-muted)" title={tFn('chat.unpin')}>×</button>
 					{:else}
 						<button onclick={() => showPinned = false}
-						        class="ml-auto shrink-0 transition-colors w-4 h-4 flex items-center justify-center text-sm leading-none" style="color: #374151" title={tFn('chat.hide')}>×</button>
+						        class="ml-auto shrink-0 transition-colors w-4 h-4 flex items-center justify-center text-sm leading-none" style="color: var(--nx-text-muted)" title={tFn('chat.hide')}>×</button>
 					{/if}
 				</div>
 			{/if}
@@ -1214,21 +1217,21 @@
                 class="absolute inset-0 overflow-y-auto px-0 py-3 space-y-0 custom-scrollbar"
                 bind:this={messagesEl}
                 onscroll={handleScroll}
-                style="scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.06) transparent"
+                style="scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--nx-text) 6%, transparent) transparent"
             >
 				{#if isLoadingOld}
-					<p class="text-center text-xs text-gray-600 py-2">{tFn('common.loading')}</p>
+					<p class="text-center text-xs text-[var(--nx-text-muted)] py-2">{tFn('common.loading')}</p>
 				{/if}
 				{#if noMoreHistory && messages.length > 0}
-					<p class="text-center text-xs text-gray-700 py-2">{tFn('chat.history_start')}</p>
+					<p class="text-center text-xs text-[var(--nx-text-muted)] py-2">{tFn('chat.history_start')}</p>
 				{/if}
 
 				{#each messageGroups as group (group.day)}
 					<!-- Day separator -->
 					<div class="flex items-center gap-3 my-4 px-4">
-						<div class="flex-1 h-px" style="background: linear-gradient(to right, transparent, rgba(255,255,255,.06))"></div>
-						<span class="text-[10px] font-black uppercase tracking-[.15em] px-3 py-1 shrink-0" style="color: #374151; background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.05); font-family: 'Space Grotesk', sans-serif">{group.day}</span>
-						<div class="flex-1 h-px" style="background: linear-gradient(to left, transparent, rgba(255,255,255,.06))"></div>
+						<div class="flex-1 h-px" style="background: linear-gradient(to right, transparent, color-mix(in srgb, var(--nx-text) 6%, transparent))"></div>
+						<span class="text-[10px] font-black uppercase tracking-[.15em] px-3 py-1 shrink-0" style="color: var(--nx-text-muted); background: color-mix(in srgb, var(--nx-text) 3%, transparent); border: 1px solid color-mix(in srgb, var(--nx-text) 5%, transparent); font-family: 'Space Grotesk', sans-serif">{group.day}</span>
+						<div class="flex-1 h-px" style="background: linear-gradient(to left, transparent, color-mix(in srgb, var(--nx-text) 6%, transparent))"></div>
 					</div>
 
 					{#each group.messages as msg, i (msg.id)}
@@ -1242,28 +1245,28 @@
 						class="group message-row relative flex items-start gap-3 px-4 transition-all {shouldGroup ? 'py-px' : 'pt-2.5 pb-px'} {flashMsgId === msg.id ? 'msg-flash' : ''}"
 						style="background: transparent"
 						role="listitem"
-						onmouseenter={(e) => (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,.018)'}
+						onmouseenter={(e) => (e.currentTarget as HTMLElement).style.background = 'color-mix(in srgb, var(--nx-text) 1.8%, transparent)'}
 						onmouseleave={(e) => (e.currentTarget as HTMLElement).style.background = 'transparent'}
 						ontouchstart={() => handleTouchStart(msg.id)}
 						ontouchend={handleTouchEnd}
 						ontouchmove={handleTouchEnd}
 					>
 						<!-- Left accent bar on hover -->
-						<span class="absolute left-0 top-0 bottom-0 w-0.5 opacity-0 group-hover:opacity-100 transition-opacity" style="background: linear-gradient(to bottom, #7c3aed44, #06b6d444)"></span>
+						<span class="absolute left-0 top-0 bottom-0 w-0.5 opacity-0 group-hover:opacity-100 transition-opacity" style="background: linear-gradient(to bottom, color-mix(in srgb, var(--nx-accent-2-strong) 27%, transparent), color-mix(in srgb, var(--nx-cyan) 27%, transparent))"></span>
 						<!-- Avatar / time -->
 						<div class="w-9 shrink-0 flex justify-center" style="padding-top: 2px">
 							{#if !shouldGroup}
 								{#if msg.author_avatar}
 									<img src={msg.author_avatar} alt={msg.author_username}
-										class="w-9 h-9 object-cover" style="outline: 1px solid rgba(255,255,255,.07)" />
+										class="w-9 h-9 object-cover" style="outline: 1px solid color-mix(in srgb, var(--nx-text) 7%, transparent)" />
 								{:else}
 									<div class="w-9 h-9 flex items-center justify-center font-black text-[11px] text-white select-none"
-									     style="background: linear-gradient(135deg, #7c3aed80, var(--nx-cyan-deep))">
+									     style="background: linear-gradient(135deg, var(--nx-accent-2-strong), var(--nx-cyan-deep))">
 										{msg.author_username.charAt(0).toUpperCase()}
 									</div>
 								{/if}
 							{:else}
-								<span class="text-[9px] tabular-nums opacity-0 group-hover:opacity-100 transition-opacity select-none" style="color: #374151; padding-top: 3px">
+								<span class="text-[9px] tabular-nums opacity-0 group-hover:opacity-100 transition-opacity select-none" style="color: var(--nx-text-muted); padding-top: 3px">
 									{formatTime(msg.created_at)}
 								</span>
 							{/if}
@@ -1276,16 +1279,16 @@
 									<button
 										type="button"
 										class="chat-username text-sm font-black cursor-pointer hover:brightness-125 transition-all {buildAnimClass({ nameAnimation: msg.author_name_animation })}"
-										style={buildNameStyle({ nameColor: msg.author_name_color, nameGlow: msg.author_name_glow, nameGlowIntensity: msg.author_name_glow_intensity, nameFontFamily: msg.author_name_font_family }, '#e2e8f0')}
+										style={buildNameStyle({ nameColor: msg.author_name_color, nameGlow: msg.author_name_glow, nameGlowIntensity: msg.author_name_glow_intensity, nameFontFamily: msg.author_name_font_family }, 'var(--nx-text)', $isDarkTheme)}
 										onclick={(e) => openProfilePopup(e, msg.author_username)}
 									>
 										{msg.author_username}
 									</button>
-									<span class="text-[10px] tabular-nums" style="color: #374151">
+									<span class="text-[10px] tabular-nums" style="color: var(--nx-text-muted)">
 										{formatTime(msg.created_at)}
 									</span>
 									{#if msg.edited_at && !msg.is_deleted}
-										<span class="text-[10px] italic" style="color: #374151">{tFn('chat.edited')}</span>
+										<span class="text-[10px] italic" style="color: var(--nx-text-muted)">{tFn('chat.edited')}</span>
 									{/if}
 								</div>
 							{/if}
@@ -1299,14 +1302,14 @@
 									class="flex w-full min-w-0 items-center gap-2 mb-1.5 pl-2 py-0.5 text-left opacity-70 hover:opacity-100 transition-opacity cursor-pointer"
 									style="border-left: 2px solid var(--nx-accent-2-strong)">
 									<span class="text-[10px] font-bold shrink-0" style="color: var(--nx-accent-2-soft)">{msg.reply_to_username}</span>
-									<span class="text-[10px] truncate" style="color: #4b5563">{msg.reply_to_content?.replace(/<[^>]*>/g, '').slice(0, 100) ?? tFn('chat.deleted')}</span>
+									<span class="text-[10px] truncate" style="color: var(--nx-text-muted)">{msg.reply_to_content?.replace(/<[^>]*>/g, '').slice(0, 100) ?? tFn('chat.deleted')}</span>
 								</button>
 							{/if}
 
 							{#if msg.is_deleted}
-								<em class="text-xs text-gray-600 italic select-none">{tFn('chat.deleted')}</em>
+								<em class="text-xs text-[var(--nx-text-muted)] italic select-none">{tFn('chat.deleted')}</em>
 							{:else if editingMsg?.id === msg.id}
-								<div class="bg-gray-800 p-2 rounded-xl border border-indigo-500/50 mt-1 shadow-2xl">
+								<div class="bg-[var(--nx-surface-raised)] p-2 rounded-xl border border-indigo-500/50 mt-1 shadow-2xl">
 									<textarea
 										class="w-full bg-transparent text-sm text-white outline-hidden resize-none custom-scrollbar"
 										rows={2}
@@ -1314,18 +1317,18 @@
 										onkeydown={handleEditKeydown}
 									></textarea>
 									<div class="flex justify-end gap-2 mt-2">
-										<button onclick={() => { editingMsg = null }} class="text-[10px] font-black text-gray-500 hover:text-white uppercase tracking-widest">{tFn('common.cancel')}</button>
-										<button onclick={confirmEdit} class="text-[10px] font-black text-indigo-400 hover:text-indigo-300 uppercase tracking-widest underline">{tFn('common.validate')}</button>
+										<button onclick={() => { editingMsg = null }} class="text-[10px] font-black text-[var(--nx-text-muted)] hover:text-white uppercase tracking-widest">{tFn('common.cancel')}</button>
+										<button onclick={confirmEdit} class="text-[10px] font-black text-[var(--nx-accent-soft)] hover:text-[var(--nx-accent-strong)] uppercase tracking-widest underline">{tFn('common.validate')}</button>
 									</div>
 								</div>
 							{:else if msg.poll_id}
 							<!-- ── Sondage intégré ── -->
 							<PollCard pollId={msg.poll_id} inline={true} {token} socket={s} />
 						{:else}
-								<div class="nodyx-prose text-sm leading-relaxed break-words" style="color: #d1d5db">
+								<div class="nodyx-prose text-sm leading-relaxed break-words" style="color: var(--nx-text)">
 									{@html renderCustomEmojis(linkifyHtml(msg.content ?? ''), customEmojis)}
 									{#if shouldGroup && msg.edited_at}
-										<span class="text-[9px] text-gray-700 italic ml-2">{tFn('chat.edited')}</span>
+										<span class="text-[9px] italic ml-2" style="color: var(--nx-text-muted)">{tFn('chat.edited')}</span>
 									{/if}
 								</div>
 								<!-- Link preview card -->
@@ -1336,7 +1339,7 @@
 											href={previewUrl}
 											target="_blank"
 											rel="noopener noreferrer"
-											class="mt-2 flex gap-3 bg-gray-800/60 border border-gray-700/60 rounded-xl overflow-hidden max-w-sm hover:border-indigo-600/40 transition-colors no-underline"
+											class="mt-2 flex gap-3 bg-[var(--nx-surface-raised)]/60 border border-gray-700/60 rounded-xl overflow-hidden max-w-sm hover:border-indigo-600/40 transition-colors no-underline"
 											style="display:flex; text-decoration:none;"
 										>
 											{#if preview.image}
@@ -1344,13 +1347,13 @@
 											{/if}
 											<div class="flex-1 p-2.5 min-w-0">
 												{#if preview.siteName}
-													<p class="text-[10px] text-indigo-400 font-bold uppercase tracking-wide truncate">{preview.siteName}</p>
+													<p class="text-[10px] text-[var(--nx-accent-soft)] font-bold uppercase tracking-wide truncate">{preview.siteName}</p>
 												{/if}
 												{#if preview.title}
 													<p class="text-xs font-semibold text-white truncate mt-0.5">{preview.title}</p>
 												{/if}
 												{#if preview.description}
-													<p class="text-[11px] text-gray-400 line-clamp-2 mt-0.5">{preview.description}</p>
+													<p class="text-[11px] text-[var(--nx-text-muted)] line-clamp-2 mt-0.5">{preview.description}</p>
 												{/if}
 											</div>
 										</a>
@@ -1382,14 +1385,14 @@
 							<div
 								data-msg-actions
 								class="{actionsVisible ? 'flex' : 'hidden group-hover:flex'} items-center gap-0.5 absolute right-4 -top-4 px-1 py-1 shadow-2xl z-20"
-								style="background: #0d0d12; border: 1px solid rgba(255,255,255,.08)"
+								style="background: var(--nx-surface); border: 1px solid color-mix(in srgb, var(--nx-text) 8%, transparent)"
 							>
 								<!-- Emojis Perso (instance) en tête, direct au survol -->
 									{#each hoverBarEmojis as ce (ce.shortcode)}
 										<button
 											onclick={() => reactTo(msg.id, `:${ce.shortcode}:`)}
 											title={`:${ce.shortcode}:`}
-											class="w-7 h-7 flex items-center justify-center rounded transition-all hover:scale-125 hover:bg-white/[0.07]">
+											class="w-7 h-7 flex items-center justify-center rounded transition-all hover:scale-125 hover:bg-[color-mix(in_srgb,var(--nx-text)_7%,transparent)]">
 											<img src={ce.url} alt={`:${ce.shortcode}:`} class="w-5 h-5 object-contain" draggable="false" />
 										</button>
 									{/each}
@@ -1399,17 +1402,17 @@
 									<button
 										onclick={() => reactTo(msg.id, qe)}
 										title={qe}
-										class="w-7 h-7 flex items-center justify-center text-base rounded transition-all hover:scale-125 hover:bg-white/[0.07]">
+										class="w-7 h-7 flex items-center justify-center text-base rounded transition-all hover:scale-125 hover:bg-[color-mix(in_srgb,var(--nx-text)_7%,transparent)]">
 										{qe}
 									</button>
 								{/each}
-								<span class="w-px h-4 mx-0.5" style="background: rgba(255,255,255,.07)"></span>
+								<span class="w-px h-4 mx-0.5" style="background: color-mix(in srgb, var(--nx-text) 7%, transparent)"></span>
 								<!-- Réagir (full picker) -->
 								<div data-picker class="relative">
 									<button onclick={() => toggleEmojiPicker(msg.id)} title={tFn('chat.more')}
-									        class="w-7 h-7 flex items-center justify-center transition-colors" style="color: #4b5563"
+									        class="w-7 h-7 flex items-center justify-center transition-colors" style="color: var(--nx-text-muted)"
 									        onmouseenter={(e) => (e.currentTarget as HTMLElement).style.color = 'var(--nx-accent-2-soft)'}
-									        onmouseleave={(e) => (e.currentTarget as HTMLElement).style.color = '#4b5563'}>
+									        onmouseleave={(e) => (e.currentTarget as HTMLElement).style.color = 'var(--nx-text-muted)'}>
 										<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path stroke-linecap="round" d="M8 13s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
 									</button>
 									{#if pickerMsgId === msg.id}
@@ -1418,46 +1421,46 @@
 										</div>
 									{/if}
 								</div>
-								<span class="w-px h-4 mx-0.5" style="background: rgba(255,255,255,.07)"></span>
+								<span class="w-px h-4 mx-0.5" style="background: color-mix(in srgb, var(--nx-text) 7%, transparent)"></span>
 								<!-- Répondre -->
 								<button onclick={() => startReply(msg)} title={tFn('chat.reply')}
-								        class="w-7 h-7 flex items-center justify-center transition-colors" style="color: #4b5563"
+								        class="w-7 h-7 flex items-center justify-center transition-colors" style="color: var(--nx-text-muted)"
 								        onmouseenter={(e) => (e.currentTarget as HTMLElement).style.color = 'var(--nx-accent-2-soft)'}
-								        onmouseleave={(e) => (e.currentTarget as HTMLElement).style.color = '#4b5563'}>
+								        onmouseleave={(e) => (e.currentTarget as HTMLElement).style.color = 'var(--nx-text-muted)'}>
 									<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/></svg>
 								</button>
 								{#if msg.author_id === userId}
 									<!-- Modifier -->
 									<button onclick={() => startEdit(msg)} title={tFn('common.edit')}
-									        class="w-7 h-7 flex items-center justify-center transition-colors" style="color: #4b5563"
+									        class="w-7 h-7 flex items-center justify-center transition-colors" style="color: var(--nx-text-muted)"
 									        onmouseenter={(e) => (e.currentTarget as HTMLElement).style.color = 'var(--nx-accent-2-soft)'}
-									        onmouseleave={(e) => (e.currentTarget as HTMLElement).style.color = '#4b5563'}>
+									        onmouseleave={(e) => (e.currentTarget as HTMLElement).style.color = 'var(--nx-text-muted)'}>
 										<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
 									</button>
 								{/if}
 								{#if isAdmin}
 									<!-- Épingler -->
 									<button onclick={() => pinMessage(msg)} title={pinnedMessage?.id === msg.id ? tFn('common.unpin') : tFn('common.pin')}
-									        class="w-7 h-7 flex items-center justify-center transition-colors" style="color: {pinnedMessage?.id === msg.id ? 'var(--nx-accent-2-soft)' : '#4b5563'}"
+									        class="w-7 h-7 flex items-center justify-center transition-colors" style="color: {pinnedMessage?.id === msg.id ? 'var(--nx-accent-2-soft)' : 'var(--nx-text-muted)'}"
 									        onmouseenter={(e) => (e.currentTarget as HTMLElement).style.color = 'var(--nx-accent-2-soft)'}
-									        onmouseleave={(e) => (e.currentTarget as HTMLElement).style.color = pinnedMessage?.id === msg.id ? 'var(--nx-accent-2-soft)' : '#4b5563'}>
+									        onmouseleave={(e) => (e.currentTarget as HTMLElement).style.color = pinnedMessage?.id === msg.id ? 'var(--nx-accent-2-soft)' : 'var(--nx-text-muted)'}>
 										<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/></svg>
 									</button>
 								{/if}
 								{#if msg.author_id === userId || isAdmin}
 									<!-- Supprimer -->
 									<button onclick={() => confirmDelete(msg.id)} title={tFn('common.delete')}
-									        class="w-7 h-7 flex items-center justify-center transition-colors" style="color: #4b5563"
+									        class="w-7 h-7 flex items-center justify-center transition-colors" style="color: var(--nx-text-muted)"
 									        onmouseenter={(e) => (e.currentTarget as HTMLElement).style.color = '#ef4444'}
-									        onmouseleave={(e) => (e.currentTarget as HTMLElement).style.color = '#4b5563'}>
+									        onmouseleave={(e) => (e.currentTarget as HTMLElement).style.color = 'var(--nx-text-muted)'}>
 										<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
 									</button>
 								{/if}
 								<!-- Copier -->
 								<button onclick={() => { navigator.clipboard.writeText(msg.content?.replace(/<[^>]*>/g, '') ?? '') }} title={tFn('common.copy')}
-								        class="w-7 h-7 flex items-center justify-center transition-colors" style="color: #4b5563"
-								        onmouseenter={(e) => (e.currentTarget as HTMLElement).style.color = '#9ca3af'}
-								        onmouseleave={(e) => (e.currentTarget as HTMLElement).style.color = '#4b5563'}>
+								        class="w-7 h-7 flex items-center justify-center transition-colors" style="color: var(--nx-text-muted)"
+								        onmouseenter={(e) => (e.currentTarget as HTMLElement).style.color = 'var(--nx-text-muted)'}
+								        onmouseleave={(e) => (e.currentTarget as HTMLElement).style.color = 'var(--nx-text-muted)'}>
 									<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
 								</button>
 							</div>
@@ -1469,10 +1472,10 @@
 				{#if messages.length === 0}
 					<div class="flex flex-col items-center justify-center gap-3 mt-16 px-8">
 						<div class="w-12 h-12 flex items-center justify-center" style="background: rgb(var(--nx-accent-2-rgb) / .08); border: 1px solid rgb(var(--nx-accent-2-rgb) / .15)">
-							<svg class="w-6 h-6" fill="none" stroke="#7c3aed" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+							<svg class="w-6 h-6" fill="none" stroke="var(--nx-accent-2-strong)" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
 						</div>
-						<p class="text-sm font-semibold text-center" style="color: #4b5563; font-family: 'Space Grotesk', sans-serif">{tFn('chat.no_messages')}</p>
-						<p class="text-xs text-center" style="color: #374151">{tFn('chat.empty_channel', { channel: selectedChannel.name })}</p>
+						<p class="text-sm font-semibold text-center" style="color: var(--nx-text-muted); font-family: 'Space Grotesk', sans-serif">{tFn('chat.no_messages')}</p>
+						<p class="text-xs text-center" style="color: var(--nx-text-muted)">{tFn('chat.empty_channel', { channel: selectedChannel.name })}</p>
 					</div>
 				{/if}
 			</div>
@@ -1482,13 +1485,13 @@
 				<button
 					onclick={() => scrollToBottom()}
 					class="absolute bottom-3 right-4 z-10 flex items-center gap-2 pl-3 pr-2.5 py-1.5 transition-all duration-200 scroll-bottom-btn"
-					style="background: rgba(13,13,20,0.95); border: 1px solid rgb(var(--nx-accent-2-rgb) / 0.4); box-shadow: 0 4px 20px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.03);"
+					style="background: color-mix(in srgb, var(--nx-surface) 95%, transparent); border: 1px solid rgb(var(--nx-accent-2-rgb) / 0.4); box-shadow: 0 4px 20px rgba(0,0,0,0.5), 0 0 0 1px color-mix(in srgb, var(--nx-text) 3%, transparent);"
 					transition:fade={{ duration: 120 }}
 				>
 					<span class="text-xs font-semibold" style="color: var(--nx-accent-2-soft);">
 						{#if unreadWhileScrolled > 0}{tFn('chat.new_count', { n: unreadWhileScrolled })}{:else}{tFn('chat.back_to_bottom')}{/if}
 					</span>
-					<svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="#a78bfa" stroke-width="2.5" viewBox="0 0 24 24">
+					<svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="var(--nx-accent-2-soft)" stroke-width="2.5" viewBox="0 0 24 24">
 						<path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
 					</svg>
 				</button>
@@ -1505,7 +1508,7 @@
 							<span class="typing-dot" style="animation-delay: 160ms"></span>
 							<span class="typing-dot" style="animation-delay: 320ms"></span>
 						</div>
-						<span class="text-[10px] font-semibold italic" style="color: #4b5563">
+						<span class="text-[10px] font-semibold italic" style="color: var(--nx-text-muted)">
 							{#if typingUsers.length === 1}
 								<span style="color: var(--nx-accent-2-soft)">{typingUsers[0]}</span> {tFn('chat.typing_suffix_one')}
 							{:else if typingUsers.length === 2}
@@ -1519,7 +1522,7 @@
 			</div>
 
 			<!-- Float reaction bar -->
-			<div class="px-4 py-1.5 flex items-center gap-1 overflow-x-auto" style="scrollbar-width: none; border-top: 1px solid rgba(255,255,255,.04)">
+			<div class="px-4 py-1.5 flex items-center gap-1 overflow-x-auto" style="scrollbar-width: none; border-top: 1px solid color-mix(in srgb, var(--nx-text) 4%, transparent)">
 				{#each FLOAT_EMOJIS as emoji}
 					<button
 						onclick={() => floatReact(emoji)}
@@ -1535,14 +1538,14 @@
 				<!-- @mention dropdown -->
 				{#if showMentions && mentionSuggestions.length > 0}
 					<div class="relative">
-						<div class="absolute bottom-full left-0 mb-1 w-56 bg-gray-800 border border-gray-600 rounded-lg shadow-xl overflow-hidden z-20">
+						<div class="absolute bottom-full left-0 mb-1 w-56 bg-[var(--nx-surface-raised)] border border-gray-600 rounded-lg shadow-xl overflow-hidden z-20">
 							{#each mentionSuggestions as m, i}
 								<button
 									onclick={() => selectMention(m)}
 									class="w-full text-left flex items-center gap-2 px-3 py-2 text-sm transition-colors
-									       {i === mentionIndex ? 'bg-indigo-700 text-white' : 'text-gray-300 hover:bg-gray-700'}"
+									       {i === mentionIndex ? 'bg-indigo-700 text-white' : 'text-[var(--nx-text)] hover:bg-[var(--nx-border)]'}"
 								>
-									<span class="w-5 h-5 rounded-full bg-indigo-700 flex items-center justify-center text-xs font-bold shrink-0">
+									<span class="w-5 h-5 rounded-full bg-indigo-700 text-white flex items-center justify-center text-xs font-bold shrink-0">
 										{(m.alias ?? m.username).charAt(0).toUpperCase()}
 									</span>
 									{#if m.alias}
@@ -1565,11 +1568,11 @@
 				<!-- Reply preview bar -->
 				{#if replyTo}
 					<div class="flex items-center gap-2.5 px-3 py-1.5 mb-2 text-xs" style="background: rgb(var(--nx-accent-2-rgb) / .08); border-left: 2px solid var(--nx-accent-2-strong)">
-						<svg class="w-3 h-3 shrink-0" fill="none" stroke="#a78bfa" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/></svg>
+						<svg class="w-3 h-3 shrink-0" fill="none" stroke="var(--nx-accent-2-soft)" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/></svg>
 						<span class="font-bold shrink-0" style="color: var(--nx-accent-2-soft)">{replyTo.author_username}</span>
-						<span class="truncate flex-1" style="color: #4b5563">{replyTo.content?.replace(/<[^>]*>/g, '').slice(0, 80) ?? ''}</span>
+						<span class="truncate flex-1" style="color: var(--nx-text-muted)">{replyTo.content?.replace(/<[^>]*>/g, '').slice(0, 80) ?? ''}</span>
 						<button onclick={() => replyTo = null} title={tFn('common.cancel')}
-						        class="shrink-0 w-4 h-4 flex items-center justify-center text-sm leading-none transition-colors" style="color: #374151">×</button>
+						        class="shrink-0 w-4 h-4 flex items-center justify-center text-sm leading-none transition-colors" style="color: var(--nx-text-muted)">×</button>
 					</div>
 				{/if}
 
@@ -1602,22 +1605,22 @@
 									el?.focus();
 									ajusterHauteur(el);
 								}}
-								class="inline-flex items-center gap-1.5 px-2 py-1 border border-white/[0.08] bg-white/[0.03] hover:bg-white/[0.07] hover:border-indigo-700/50 transition-colors text-left"
+								class="inline-flex items-center gap-1.5 px-2 py-1 border border-[color-mix(in_srgb,var(--nx-text)_8%,transparent)] bg-[color-mix(in_srgb,var(--nx-text)_3%,transparent)] hover:bg-[color-mix(in_srgb,var(--nx-text)_7%,transparent)] hover:border-[color-mix(in_srgb,var(--nx-accent)_50%,transparent)] transition-colors text-left"
 							>
-								<span class="text-xs font-semibold text-indigo-300">/{c.nom}</span>
-								{#if c.args}<span class="text-[10px] text-gray-600">{c.args}</span>{/if}
-								<span class="text-[11px] text-gray-500">{tFn(c.cle)}</span>
+								<span class="text-xs font-semibold text-[var(--nx-accent-soft)]">/{c.nom}</span>
+								{#if c.args}<span class="text-[10px] text-[var(--nx-text-muted)]">{c.args}</span>{/if}
+								<span class="text-[11px] text-[var(--nx-text-muted)]">{tFn(c.cle)}</span>
 							</button>
 						{/each}
 					</div>
 				{/if}
 
-				<div class="flex items-end gap-2 px-3 py-2 transition-all" style="background: rgba(255,255,255,.04); border: 1px solid {isRateLimited ? 'rgba(239,68,68,.4)' : 'rgba(255,255,255,.08)'}">
+				<div class="flex items-end gap-2 px-3 py-2 transition-all" style="background: color-mix(in srgb, var(--nx-text) 4%, transparent); border: 1px solid {isRateLimited ? 'rgba(239,68,68,.4)' : 'color-mix(in srgb, var(--nx-text) 8%, transparent)'}">
 					<!-- Textarea -->
 					<textarea
 						id="chat-input"
 						class="flex-1 bg-transparent py-1.5 text-sm resize-none outline-hidden max-h-32 disabled:opacity-50"
-						style="color: #e2e8f0; font-family: inherit; scrollbar-width: thin"
+						style="color: var(--nx-text); font-family: inherit; scrollbar-width: thin"
 						placeholder={isRateLimited ? tFn('chat.antispam_loading') : tFn('chat.input_placeholder', { channel: selectedChannel.name })}
 						rows={1}
 						maxlength={2000}
@@ -1634,7 +1637,7 @@
 							        title={tFn('editor.more_options')} aria-label={tFn('editor.more_options')}
 							        aria-haspopup="menu" aria-expanded={showComposerMenu}
 							        class="w-7 h-7 flex items-center justify-center transition-colors"
-							        style="color: {showComposerMenu || showComposerEmoji ? 'var(--nx-accent-2-soft)' : '#4b5563'}">
+							        style="color: {showComposerMenu || showComposerEmoji ? 'var(--nx-accent-2-soft)' : 'var(--nx-text-muted)'}">
 								<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
 							</button>
 							{#if showComposerMenu}
@@ -1664,11 +1667,11 @@
 							{/if}
 						</div>
 						<!-- Divider -->
-						<span class="w-px h-4 mx-1" style="background: rgba(255,255,255,.07)"></span>
+						<span class="w-px h-4 mx-1" style="background: color-mix(in srgb, var(--nx-text) 7%, transparent)"></span>
 						<!-- Send -->
 						<button onclick={sendMessage} disabled={!inputText.trim() || isRateLimited}
 						        class="w-7 h-7 flex items-center justify-center transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-						        style="background: {isRateLimited ? 'rgba(239,68,68,.3)' : inputText.trim() ? 'linear-gradient(135deg, var(--nx-accent-2-strong), var(--nx-cyan-deep))' : 'rgba(255,255,255,.06)'}; color: {inputText.trim() ? '#fff' : '#4b5563'}"
+						        style="background: {isRateLimited ? 'rgba(239,68,68,.3)' : inputText.trim() ? 'linear-gradient(135deg, var(--nx-accent-2-strong), var(--nx-cyan-deep))' : 'color-mix(in srgb, var(--nx-text) 6%, transparent)'}; color: {inputText.trim() ? '#fff' : 'var(--nx-text-muted)'}"
 						        title={isRateLimited ? tFn('chat.antispam_loading') : tFn('chat.send')}>
 							{#if isRateLimited}
 								<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
@@ -1678,7 +1681,7 @@
 						</button>
 					</div>
 				</div>
-				<p class="text-[10px] mt-1" style="color: #1f2937">{tFn('chat.composer_hint')}</p>
+				<p class="text-[10px] mt-1" style="color: var(--nx-text-muted)">{tFn('chat.composer_hint')}</p>
 			</div>
 
 			{/if}<!-- end voice/text branch -->
@@ -1688,7 +1691,7 @@
 
 		{:else}
 			<!-- No channel -->
-			<div class="flex-1 flex items-center justify-center flex-col gap-3 text-gray-600">
+			<div class="flex-1 flex items-center justify-center flex-col gap-3 text-[var(--nx-text-muted)]">
 				<span class="text-5xl">💬</span>
 				<p class="text-sm">{tFn('chat.no_channel')}</p>
 				<p class="text-xs">{tFn('chat.no_channel_hint')}</p>
@@ -1717,11 +1720,11 @@
 <!-- ── P2P fallback toast ──────────────────────────────────────────────────── -->
 {#if $p2pFallback}
 	<div
-		class="fixed bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2.5 px-4 py-2.5 bg-gray-900/95 border border-gray-700/60 rounded-xl shadow-2xl backdrop-blur-xs z-50"
+		class="fixed bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2.5 px-4 py-2.5 bg-[var(--nx-surface-raised)] border border-gray-700/60 rounded-xl shadow-2xl backdrop-blur-xs z-50"
 		transition:fade={{ duration: 280 }}
 	>
 		<div class="w-1.5 h-1.5 rounded-full bg-gray-500 shrink-0"></div>
-		<span class="text-xs text-gray-400 font-medium whitespace-nowrap">{tFn('chat.p2p_fallback')}</span>
+		<span class="text-xs text-[var(--nx-text-muted)] font-medium whitespace-nowrap">{tFn('chat.p2p_fallback')}</span>
 	</div>
 {/if}
 
@@ -1757,13 +1760,13 @@
     onkeydown={(e) => { if (e.key === 'Escape') closeRichModal(); }}
 >
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-3xl flex flex-col max-h-[90vh]"
+		<div class="bg-[var(--nx-surface-raised)] border border-gray-700 rounded-xl shadow-2xl w-full max-w-3xl flex flex-col max-h-[90vh]"
 		 onclick={(e) => e.stopPropagation()}>
 			<div class="flex items-center justify-between px-6 py-4 border-b border-gray-800">
 			 
 			
 				<h2 class="text-lg font-semibold text-white">{editingRichId ? tFn('chat.edit_message') : tFn('chat.compose_rich')}</h2>
-				<button onclick={closeRichModal} class="text-gray-400 hover:text-white text-xl leading-none">×</button>
+				<button onclick={closeRichModal} class="text-[var(--nx-text-muted)] hover:text-white text-xl leading-none">×</button>
 			</div>
 			
 			
@@ -1778,7 +1781,7 @@
 				{/key}
 			</div>
 			<div class="px-6 py-4 border-t border-gray-800 flex justify-end gap-3">
-				<button onclick={closeRichModal} class="px-4 py-2 rounded bg-gray-700 hover:bg-gray-600 text-sm text-gray-200 transition-colors">
+				<button onclick={closeRichModal} class="px-4 py-2 rounded bg-[var(--nx-border)] hover:bg-[var(--nx-border-soft)] text-sm text-[var(--nx-text)] transition-colors">
 					{tFn('common.cancel')}
 				</button>
 				<button
@@ -1909,14 +1912,14 @@
 	.chat-reaction-pill:hover { transform: scale(1.1); }
 
 	.chat-reaction-other {
-		background: rgba(255,255,255,.04);
-		border: 1px solid rgba(255,255,255,.08);
-		color: #6b7280;
+		background: color-mix(in srgb, var(--nx-text) 4%, transparent);
+		border: 1px solid color-mix(in srgb, var(--nx-text) 8%, transparent);
+		color: var(--nx-text-muted);
 	}
 	.chat-reaction-other:hover {
-		background: rgba(255,255,255,.08);
-		border-color: rgba(255,255,255,.15);
-		color: #e2e8f0;
+		background: color-mix(in srgb, var(--nx-text) 8%, transparent);
+		border-color: color-mix(in srgb, var(--nx-text) 15%, transparent);
+		color: var(--nx-text);
 	}
 	.chat-reaction-mine {
 		background: rgb(var(--nx-accent-2-rgb) / .18);
@@ -1964,8 +1967,8 @@
 	}
 	.fr-bar-btn:hover:not(:disabled) {
 		transform:    scale(1.3);
-		background:   rgba(255, 255, 255, 0.06);
-		border-color: rgba(255, 255, 255, 0.1);
+		background:   color-mix(in srgb, var(--nx-text) 6%, transparent);
+		border-color: color-mix(in srgb, var(--nx-text) 10%, transparent);
 	}
 	.fr-bar-btn:active:not(:disabled) {
 		transform: scale(0.9);
@@ -1990,7 +1993,7 @@
     /* Style pour le contenu des messages (Rich Text) */
     :global(.nodyx-prose) {
         line-height: 1.6;
-        color: #d1d5db; /* gray-300 */
+        color: var(--nx-text); /* gray-300 */
     }
 
     :global(.nodyx-prose p) {
@@ -1998,7 +2001,7 @@
     }
 
     :global(.nodyx-prose strong) {
-        color: #ffffff;
+        color: var(--nx-text);
         font-weight: 700;
     }
 
@@ -2006,7 +2009,7 @@
     /* SCROLLBAR CUSTOM - On force le style pour écraser Windows */
     .custom-scrollbar {
         scrollbar-width: thin;
-        scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+        scrollbar-color: color-mix(in srgb, var(--nx-text) 10%, transparent) transparent;
     }
 
     /* Pour Chrome, Edge, Safari */
@@ -2019,7 +2022,7 @@
     }
 
     .custom-scrollbar::-webkit-scrollbar-thumb {
-        background-color: rgba(255, 255, 255, 0.1) !important;
+        background-color: color-mix(in srgb, var(--nx-text) 10%, transparent) !important;
         border-radius: 20px !important;
     }
 

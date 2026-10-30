@@ -22,6 +22,7 @@
 	import MemberScreenPreview from '$lib/components/MemberScreenPreview.svelte';
 	import VoiceEqualizer from '$lib/components/VoiceEqualizer.svelte';
 	import MaintenanceBanner from '$lib/components/MaintenanceBanner.svelte';
+	import { surveillerServiceWorker } from '$lib/swReload';
 	import { overlayScroll } from '$lib/actions/overlayScroll';
 	import { editZone } from '$lib/actions/editZone';
 	import EditOverlay from '$lib/components/appearance/EditOverlay.svelte';
@@ -38,6 +39,7 @@
 	import { get } from 'svelte/store';
 	import { voiceStore, voiceChannelMembersStore, voiceEventsStore, screenShareStore, remoteScreenStore } from '$lib/voice';
 	import { locale, t, LOCALES, type Locale } from '$lib/i18n';
+	import { filAriane } from '$lib/filAriane';
 	import { themePreference } from '$lib/theme';
 	import { registerPublicKey } from '$lib/e2e';
 	import { shouldOfferRestore } from '$lib/e2eBackupClient';
@@ -228,14 +230,18 @@
 			window.location.reload();
 		}
 
+		// Seul le REMPLACEMENT d'une version par une autre recharge : la première
+		// prise de contrôle (première visite) ne périme rien (cf $lib/swReload).
+		const signal = surveillerServiceWorker(navigator.serviceWorker.controller, rechargerPourNouvelleVersion);
 		const onMessage = (e: MessageEvent) => {
-			if ((e.data as any)?.type === 'sw:updated') rechargerPourNouvelleVersion();
+			if ((e.data as any)?.type === 'sw:updated') signal(e.source as ServiceWorker | null);
 		};
+		const onControllerChange = () => signal(navigator.serviceWorker.controller);
 		navigator.serviceWorker.addEventListener('message', onMessage);
-		navigator.serviceWorker.addEventListener('controllerchange', rechargerPourNouvelleVersion);
+		navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
 		return () => {
 			navigator.serviceWorker.removeEventListener('message', onMessage);
-			navigator.serviceWorker.removeEventListener('controllerchange', rechargerPourNouvelleVersion);
+			navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
 		};
 	});
 	beforeNavigate((nav) => {
@@ -572,6 +578,16 @@
 		if (ch.name_underline) parts.push('text-decoration: underline')
 		return parts.join(';')
 	}
+	// Pages migrées sur le thème (couleurs --nx-*) : c'est la feuille (main) qui
+	// peint le fond du thème, au lieu du fond sombre historique (--shell-bg). La
+	// page, elle, reste TRANSPARENTE : les réglages de la zone « feuille » posés
+	// sur main par l'écran Apparence (opacité, image, flou) restent visibles.
+	// Une page qui peignait son propre fond les masquait (vieuxlooters, 29/10).
+	// main porte aussi .nx-themed : contenu rédigé, éditeur et menus déroulants
+	// de la page suivent le thème (variables --prose-*, variante themed:, app.css).
+	const SHEET_THEMED = ['/feed', '/members', '/forum', '/wiki', '/calendar', '/tasks']
+	const sheetThemed = $derived(SHEET_THEMED.some(p => page.url.pathname === p || page.url.pathname.startsWith(p + '/')))
+
 	const showChannelSidebar = $derived(
 		!isBanned &&
 		!page.url.pathname.startsWith('/admin') &&
@@ -719,48 +735,12 @@
 	}
 
 	// ── Contextual breadcrumb ──────────────────────────────────────────────────
-	const breadcrumbs = $derived((() => {
-		const path = page.url.pathname;
-		const d = page.data as any;
-		if (path === '/') return [];
-		const crumbs: { label: string; href?: string }[] = [];
-		if (path.startsWith('/forum')) {
-			crumbs.push({ label: tFn('nav.forum'), href: '/forum' });
-			if (d?.category?.name) {
-				const name = (d.category.name as string).replace(/^\p{Emoji}\s*/u, '');
-				crumbs.push({ label: name, href: `/forum/${d.category.slug ?? d.category.id}` });
-			}
-			if (d?.thread?.title) crumbs.push({ label: d.thread.title });
-		} else if (path.startsWith('/chat')) {
-			crumbs.push({ label: tFn('nav.chat') });
-			const chId = page.url.searchParams.get('channel');
-			if (chId) {
-				const ch = layoutChannels.find(c => c.id === chId);
-				if (ch) crumbs.push({ label: (ch.type === 'voice' ? '🔊 ' : '# ') + ch.name });
-			}
-		} else if (path.startsWith('/dm'))           { crumbs.push({ label: tFn('nav.dm') });
-		} else if (path.startsWith('/calendar'))     { crumbs.push({ label: tFn('nav.calendar') });
-		} else if (path.startsWith('/discover'))     { crumbs.push({ label: tFn('nav.discover') });
-		} else if (path.startsWith('/admin'))        { crumbs.push({ label: tFn('nav.admin') });
-		} else if (path.startsWith('/notifications')){ crumbs.push({ label: tFn('nav.notifications') });
-		} else if (path.startsWith('/settings'))     { crumbs.push({ label: tFn('nav.settings') });
-		} else if (path.startsWith('/users/me/edit')){ crumbs.push({ label: tFn('nav.edit_profile') });
-		} else if (path.startsWith('/users/'))       { crumbs.push({ label: path.split('/')[2] ?? tFn('nav.profile') });
-		} else if (path.startsWith('/communities'))  { crumbs.push({ label: tFn('nav.communities') });
-		} else if (path.startsWith('/polls'))        { crumbs.push({ label: tFn('nav.polls') });
-		} else if (path.startsWith('/tasks'))        { crumbs.push({ label: tFn('nav.tasks') });
-		} else if (path.startsWith('/wiki'))         { crumbs.push({ label: tFn('nav.wiki') });
-		} else if (path.startsWith('/galeria'))      { crumbs.push({ label: tFn('nav.galeria') });
-		} else if (path.startsWith('/library'))      { crumbs.push({ label: tFn('nav.library') });
-		} else if (path.startsWith('/musique'))      { crumbs.push({ label: tFn('nav.music') });
-		} else if (path.startsWith('/search'))       { crumbs.push({ label: tFn('nav.search') });
-		} else if (path.startsWith('/garden'))       { crumbs.push({ label: tFn('nav.garden') });
-		} else {
-			const seg = path.split('/')[1];
-			if (seg) crumbs.push({ label: seg.charAt(0).toUpperCase() + seg.slice(1) });
-		}
-		return crumbs;
-	})())
+	const breadcrumbs = $derived(filAriane(page.url.pathname, {
+		tFn,
+		data:   page.data as any,
+		canal:  page.url.searchParams.get('channel'),
+		salons: layoutChannels,
+	}))
 
 	// ── Header search ──────────────────────────────────────────────────────────
 	let searchQ      = $state('');
@@ -941,7 +921,9 @@
 		     sous les sidebars. On clippe l'horizontal, plus jamais de scrollbar. -->
 		<main bind:this={mainEl} data-nx-zone="sheet" use:overlayScroll use:editZone={{ zone: page.url.pathname === '/' ? 'home' : 'sheet', label: page.url.pathname === '/' ? tFn('edit.zone_home') : tFn('edit.zone_sheet') }} class="app-shell-main {langView ? 'h-[calc(100dvh-48px)] overflow-hidden' : 'h-full overflow-y-auto overflow-x-hidden'} min-w-0 pb-[var(--bottom-nav-h)]"
 		      class:panel-collapsed={isBanned || !showChannelSidebar || panelCollapsed}
-		      class:members-collapsed={membersCollapsed}>
+		      class:members-collapsed={membersCollapsed}
+		      class:sheet-themed={sheetThemed}
+		      class:nx-themed={sheetThemed}>
 
             <!-- ── System announcement banner ─────────────────────────────────── -->
             {#if showAnnouncement && announcement}
@@ -971,7 +953,7 @@
             {/if}
 
 
-            <div class="w-full flex-1 flex flex-col {langView ? 'lang-view-wrap h-full' : (page.url.pathname === '/' || page.url.pathname.startsWith('/chat') || page.url.pathname.startsWith('/admin') || page.url.pathname.startsWith('/users/') || page.url.pathname.startsWith('/feed') || page.url.pathname.startsWith('/settings') || page.url.pathname.startsWith('/garden') || page.url.pathname.startsWith('/calendar') || page.url.pathname.startsWith('/discover') || page.url.pathname.startsWith('/wiki') || page.url.pathname.startsWith('/library') || page.url.pathname.startsWith('/musique') || page.url.pathname.startsWith('/dm') || page.url.pathname.startsWith('/auth/') ? 'h-full' : (page.url.pathname.startsWith('/forum') || page.url.pathname.startsWith('/tasks')) ? 'px-4 sm:px-6 py-8' : page.url.pathname.startsWith('/galeria') ? '' : 'max-w-5xl mx-auto px-4 py-8')}">
+            <div class="w-full flex-1 flex flex-col {langView ? 'lang-view-wrap h-full' : (page.url.pathname === '/' || page.url.pathname.startsWith('/forum') || page.url.pathname.startsWith('/chat') || page.url.pathname.startsWith('/admin') || page.url.pathname.startsWith('/users/') || page.url.pathname.startsWith('/feed') || page.url.pathname === '/members' || page.url.pathname.startsWith('/settings') || page.url.pathname.startsWith('/garden') || page.url.pathname.startsWith('/calendar') || page.url.pathname.startsWith('/discover') || page.url.pathname.startsWith('/wiki') || page.url.pathname.startsWith('/library') || page.url.pathname.startsWith('/musique') || page.url.pathname.startsWith('/dm') || page.url.pathname.startsWith('/auth/') ? 'h-full' : page.url.pathname.startsWith('/tasks') ? 'px-4 sm:px-6 py-8' : page.url.pathname.startsWith('/galeria') ? '' : 'max-w-5xl mx-auto px-4 py-8')}">
                 {#if langView}
                     <!-- svelte-ignore a11y_no_static_element_interactions -->
                     <div class="fixed inset-0 bg-black/40 backdrop-blur-xs z-40" onclick={closeLang} in:fade={{ duration: 200 }}></div>
@@ -1311,6 +1293,14 @@
 
 :global(main.app-shell-main) {
   transition: margin-left .42s var(--ease-out-soft), margin-right .42s var(--ease-out-soft);
+}
+
+/* Page migrée sur le thème (sheetThemed) : la feuille prend le fond du thème,
+   à toutes les largeurs. Seule la COULEUR change : l'image de zone posée par
+   la règle de bureau ci-dessous (background-image) reste en place. Plus
+   spécifique que :global(main.app-shell-main), donc gagne quel que soit l'ordre. */
+:global(main.app-shell-main.sheet-themed) {
+  background-color: var(--nx-sheet-bg, var(--nx-bg));
 }
 
 .layout-dragging :global(main.app-shell-main) {

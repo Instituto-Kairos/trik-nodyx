@@ -14,6 +14,7 @@
 import type { Server, Socket } from 'socket.io'
 import { db } from '../config/database'
 import { checkRateLimit } from './rateLimiter'
+import { parseCanvasElement } from '../utils/canvasSchema'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -90,12 +91,6 @@ const flushTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 const FLUSH_DELAY_MS = 10_000   // 10 s d'inactivité → flush DB
 const MAX_ELEMENTS   = 5_000    // limite par board
-// Sans plafond, `data` (non typé au-delà de `typeof === 'object'`) pouvait
-// porter jusqu'à maxHttpBufferSize de Socket.IO (1 Mo, jamais réduit) par
-// élément, jusqu'à plusieurs Go en mémoire et en JSONB pour un board plein
-// (trouvé en audit le 16/09). Un board réel (formes, texte, collants) tient
-// très large dans cette limite.
-const MAX_OP_DATA_BYTES = 64_000
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -160,34 +155,22 @@ function scheduleFlush(boardId: string): void {
   flushTimers.set(boardId, t)
 }
 
+/**
+ * Oublie la copie en mémoire d'un tableau (sans la sauvegarder), pour qu'une
+ * écriture faite ailleurs (PATCH de l'API) fasse foi : sinon la vieille copie
+ * est servie aux arrivants puis réécrite en base au premier coup de crayon.
+ */
+export function forgetBoard(boardId: string): void {
+  const existing = flushTimers.get(boardId)
+  if (existing) { clearTimeout(existing); flushTimers.delete(boardId) }
+  snapshots.delete(boardId)
+}
+
 /** Flush immédiat + annule le debounce. */
 async function flushNow(boardId: string): Promise<void> {
   const existing = flushTimers.get(boardId)
   if (existing) { clearTimeout(existing); flushTimers.delete(boardId) }
   await flushToDB(boardId)
-}
-
-// ── Validation légère des ops entrantes ───────────────────────────────────────
-
-const VALID_KINDS = new Set(['pen','sticky','rect','circle','text','arrow','image','eraser'])
-
-function isValidOp(op: unknown): op is CanvasElement {
-  if (!op || typeof op !== 'object') return false
-  const o = op as Record<string, unknown>
-  if (!(
-    isUuid(o.id) &&
-    typeof o.ts === 'number' &&
-    isUuid(o.author) &&
-    typeof o.kind === 'string' && VALID_KINDS.has(o.kind) &&
-    // `typeof null === 'object'` : exclu explicitement, `data` doit être un
-    // vrai objet de contenu.
-    typeof o.data === 'object' && o.data !== null
-  )) return false
-  try {
-    return JSON.stringify(o.data).length <= MAX_OP_DATA_BYTES
-  } catch {
-    return false
-  }
 }
 
 // ── Registration ──────────────────────────────────────────────────────────────
@@ -266,7 +249,11 @@ export function registerCanvasHandlers(io: Server, socket: Socket): void {
     if (checkRateLimit(userId, 'canvas:op')) return
     if (!payload || typeof payload !== 'object') return
     const { boardId, op } = payload as Record<string, unknown>
-    if (!isUuid(boardId) || !isValidOp(op)) return
+    if (!isUuid(boardId)) return
+    // Chaque élément est validé selon son type, et seule sa version nettoyée
+    // est gardée (cf utils/canvasSchema.ts, plafond de 64 Ko compris).
+    const parsed = parseCanvasElement(op)
+    if (!parsed) return
 
     // Must have joined the board first (canvas:join enforces access control)
     if (!socket.rooms.has(roomName(boardId as string))) return
@@ -274,7 +261,7 @@ export function registerCanvasHandlers(io: Server, socket: Socket): void {
     if (!writePerms.get(boardId as string)) return
 
     // Security: force author to the authenticated user
-    const safeOp: CanvasElement = { ...(op as CanvasElement), author: userId }
+    const safeOp: CanvasElement = { ...parsed, author: userId }
 
     let map = snapshots.get(boardId)
     if (!map) {
@@ -351,15 +338,18 @@ export function registerCanvasHandlers(io: Server, socket: Socket): void {
   })
 
   // ── Nettoyage à la déconnexion ─────────────────────────────────────────────
-  socket.on('disconnect', async () => {
-    // Flush toutes les rooms canvas que ce socket avait rejointes
-    for (const room of socket.rooms) {
+  // `disconnecting` et non `disconnect` : à `disconnect`, Socket.IO 4 a déjà
+  // vidé `socket.rooms`, et cette boucle ne faisait rien (tableaux jamais
+  // libérés, ni sauvegardés au départ du dernier). Ici le socket est encore
+  // dans ses salons : il est seul si le salon ne compte que lui.
+  socket.on('disconnecting', async () => {
+    for (const room of [...socket.rooms]) {
       if (!room.startsWith('canvas:')) continue
       const boardId = room.slice('canvas:'.length)
       socket.to(room).emit('canvas:peer:left', { boardId, userId })
 
       const remaining = io.sockets.adapter.rooms.get(room)
-      if (!remaining || remaining.size === 0) {
+      if (!remaining || remaining.size <= 1) {
         await flushNow(boardId)
         snapshots.delete(boardId)
       }

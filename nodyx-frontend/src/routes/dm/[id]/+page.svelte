@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { t } from '$lib/i18n'
+	import { t, locale } from '$lib/i18n'
 	import { onMount, onDestroy, tick, untrack } from 'svelte'
 	import { getSocket, dmUnreadStore } from '$lib/socket'
 	import { apiFetch } from '$lib/api'
@@ -746,7 +746,7 @@
 		if (!iso) return ''
 		try {
 			const d = new Date(iso)
-			return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
+			return d.toLocaleDateString($locale, { day: 'numeric', month: 'long', year: 'numeric' })
 		} catch { return '' }
 	}
 
@@ -1036,6 +1036,9 @@
 		const groups: { date: string; msgs: DmMessage[] }[] = []
 		let currentDate = ''
 		for (const m of messages) {
+			// Un message supprimé disparaît du fil (même règle que le chat, cf $lib/chatFil).
+			// Il reste dans `messages` : le chargement de l'historique s'appuie dessus.
+			if (m.deleted_at) continue
 			const d = formatDate(m.created_at)
 			if (d !== currentDate) {
 				currentDate = d

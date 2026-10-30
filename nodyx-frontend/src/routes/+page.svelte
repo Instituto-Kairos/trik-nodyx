@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { PageData } from './$types';
 	import { onMount, onDestroy } from 'svelte';
-	import { t } from '$lib/i18n';
+	import { t, locale } from '$lib/i18n';
 	import { datetime } from '$lib/datetime';
 	import { replyCount } from '$lib/forumCounts';
 	import WidgetZone from '$lib/components/homepage/WidgetZone.svelte';

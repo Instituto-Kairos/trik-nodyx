@@ -5,6 +5,9 @@
 
   const { data } = $props()
 
+  /** Adresse publique de cette page dans une langue (l'anglais n'a pas de préfixe). */
+  const pageUrl = (l: string) => `https://nodyx.dev${l === 'en' ? '' : '/' + l}/${data.slug}`
+
   // L'anglais vit a la racine, les autres langues sous leur code.
   const prefixe = $derived(langPrefix(data.lang))
 
@@ -130,15 +133,24 @@
 <svelte:head>
   <title>{data.docTitle} · Nodyx Docs</title>
   <meta name="description"        content={data.description} />
-  <link rel="canonical"           href="https://nodyx.dev/{data.slug}" />
+  <!-- Adresse canonique = la page dans la langue SERVIE (avant le 10/10/2026, toujours
+       l'anglaise : les moteurs prenaient les pages fr/es pour des doublons et ne les
+       indexaient pas). Une page non traduite sert l'anglais : canonique anglaise. -->
+  <link rel="canonical"           href={pageUrl(data.lang)} />
+  {#if data.translations.length > 1}
+    {#each data.translations as t}
+      <link rel="alternate" hreflang={t} href={pageUrl(t)} />
+    {/each}
+    <link rel="alternate" hreflang="x-default" href={pageUrl('en')} />
+  {/if}
 
   <!-- Open Graph -->
   <meta property="og:type"        content="article" />
   <meta property="og:title"       content="{data.docTitle} · Nodyx Docs" />
   <meta property="og:description" content={data.description} />
-  <meta property="og:url"         content="https://nodyx.dev/{data.slug}" />
+  <meta property="og:url"         content={pageUrl(data.lang)} />
   <meta property="og:site_name"   content="Nodyx Docs" />
-  <meta property="og:image"       content="https://nodyx.dev/og-default.svg" />
+  <meta property="og:image"       content="https://nodyx.dev/og-default.png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
 
@@ -146,7 +158,7 @@
   <meta name="twitter:card"        content="summary_large_image" />
   <meta name="twitter:title"       content="{data.docTitle} · Nodyx Docs" />
   <meta name="twitter:description" content={data.description} />
-  <meta name="twitter:image"       content="https://nodyx.dev/og-default.svg" />
+  <meta name="twitter:image"       content="https://nodyx.dev/og-default.png" />
 
   <!-- JSON-LD: TechArticle + BreadcrumbList -->
   {@html `<script type="application/ld+json">${JSON.stringify([
@@ -400,7 +412,9 @@
 
 .doc-nav-inner {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* minmax(0, 1fr) : une colonne 1fr ne rétrécit pas sous la largeur de son
+     titre, et ces deux boutons faisaient déborder chaque page sur téléphone. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 1rem;
   max-width: var(--content-max);
 }
@@ -468,6 +482,11 @@
 }
 
 /* Responsive: hide TOC on smaller screens */
+@media (max-width: 640px) {
+  .doc-nav-inner { grid-template-columns: minmax(0, 1fr); }
+  .doc-nav-title { overflow-wrap: anywhere; }
+}
+
 @media (max-width: 1200px) {
   .toc { display: none; }
   .doc-layout { display: block; }

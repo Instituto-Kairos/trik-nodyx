@@ -7,8 +7,132 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versio
 
 ## [Unreleased]
 
-Un mois de travail depuis la 2.12.0, sur plusieurs chantiers en parallèle. Résumé par thème,
+---
+
+## [2.13.0] — 2026-10-29
+
+Deux mois et demi de travail depuis la 2.12.0, sur plusieurs chantiers en parallèle. Résumé par thème,
 pas par commit : le détail de chacun reste dans son historique git et ses PR.
+
+### Apparence : le contenant flottant et les ambiances
+
+L'apparence d'une instance se règle désormais en profondeur (#767). Sur grand écran, le contenu
+flotte en plaques de verre sur le papier peint de l'instance. L'admin choisit une **ambiance** :
+l'Originel sobre par défaut, « Ta bannière » qui reprend ses couleurs, ou un univers tout prêt
+(Matrix, Cyberpunk, Synthwave, Gazette, Sépia, Océan…, 14 en tout, avec de vraies photos sous
+licence libre). Il peut aussi régler lui-même l'accent, les fonds, le décor et l'intensité. Le
+contraste est calculé (au moins 4,5:1), et rien ne change pour les membres avant « Publier » :
+brouillon côté serveur, annuler et rétablir, code d'ambiance à partager. Deux entrées pour un
+même brouillon, l'écran Administration → Apparence et un stylo directement sur le site, qui permet
+aussi de styler chaque zone (fond, flou, arrondi, image, police) avec des réglages bornés et
+revalidés par le cœur, jamais de CSS libre.
+
+### Canvas : ce qui est dessiné reste dessiné
+
+- **Les cadres, les formes avancées (triangle, losange, étoile, hexagone, nuage) et les
+  connecteurs disparaissaient au rechargement** depuis la 2.2 : le serveur ne connaissait que 8
+  types d'éléments sur 11, et ignorait les autres en silence. Une définition unique des éléments,
+  miroir exact du frontend, sert maintenant à la sauvegarde en direct comme à l'API, et un test
+  compare les deux : un type ajouté d'un seul côté fait tomber la CI (#817).
+- Un tableau restait en mémoire jusqu'au redémarrage, et sa vieille copie pouvait masquer puis
+  écraser une sauvegarde faite par l'API (#818).
+- Les retours à la ligne tapés dans une note étaient perdus à l'affichage (#819).
+
+### Voix : plus de fantômes, et le partage d'écran pour tout le monde
+
+- **Un onglet fermé ou une connexion perdue pendant un appel laissait un fantôme** : les autres
+  le voyaient toujours, sa place n'était jamais rendue (au bout de 25, salon « plein » jusqu'au
+  redémarrage), et la bascule vers le SFU le comptait. Le nettoyage de fin de connexion ne
+  s'exécutait jamais (#820).
+- **Quelqu'un qui arrivait pendant un partage d'écran ne le recevait jamais**, seulement ceux
+  qui étaient là au lancement. Le partageur propose maintenant son écran aux arrivants (#827).
+  Vérifié en direct à deux sur nodyx.org.
+
+### Sécurité : un chemin d'envoi ne remonte plus hors de son dossier
+
+Les chemins de fichiers envoyés (avatar, bannière, police de pseudo…) n'étaient vérifiés que sur
+leur début : un chemin contenant `..` était accepté, et la carte de profil le lisait. Une règle
+unique refuse désormais tout segment douteux, à tous les endroits concernés (#779). Aucune
+exploitation constatée. Dépendances mises à jour pour fermer des alertes publiées (envoi de
+fichiers, analyseur d'adresses e-mail, sérialisation) : #770, #771, #773, #777, #811.
+
+### Désinstallation : `uninstall.sh` réécrit
+
+L'ancien script ne désinstallait pas vraiment Nodyx et pouvait abîmer ce qui ne lui appartient
+pas : écraser tout un Caddyfile partagé, effacer les sessions Redis d'autres applications, laisser
+le pare-feu grand ouvert, supprimer la base sans sauvegarde. Il est réécrit à partir de l'inventaire
+exact de ce que posent les installeurs, avec son banc d'essai (#780).
+
+### Vitrine et documentation
+
+- Les README anglais, français et espagnol sont réécrits autour de captures récentes de
+  nodyx.org (#825, #826, #828). nodyx.dev sert désormais directement les images de `docs/img/`,
+  au lieu d'une copie manuelle jamais resynchronisée (#826).
+- nodyx.dev et start.nodyx.org accueillent les moteurs de recherche et les assistants IA :
+  `robots.txt`, plan du site multilingue, `llms.txt`, pages françaises et espagnoles enfin
+  indexables, données structurées (#816). Vraies images d'aperçu pour les liens partagés (#838).
+- start.nodyx.org refait pour les personnes qui animent une communauté, en anglais et en
+  français, avec uniquement du vrai : chiffres de l'annuaire et de GitHub servis en direct, une
+  vraie photo, plus de démonstration scénarisée (#844). L'accueil de nodyx.dev est réécrit, et la
+  documentation se lit enfin sur téléphone : les 45 pages débordaient à 390 pixels, aucune
+  aujourd'hui (#841, #843).
+- Guide d'installation réécrit dans les trois langues, d'après ce que font réellement
+  `install.sh` et `uninstall.sh` (#842). Page Architecture réécrite d'après le code actuel
+  (#848). Feuille de route mise à jour (#840).
+
+### Interface : chaque page suit l'ambiance, thème clair compris
+
+- **Le chat, le fil d'actu, les membres, le forum entier, le wiki, l'agenda et les tâches
+  suivent l'écran Apparence.** Ils avaient chacun leur décor écrit en dur (plus de 230 couleurs
+  fixes rien que pour le chat et le fil, environ 650 pour le forum) et restaient un bloc noir et
+  violet quelle que soit l'ambiance, y compris au milieu d'un thème clair (#859, #860, #861,
+  #891, #894, #896). Le forum couvre ses quatre pages et tout ce qu'elles affichent : éditeur,
+  sondages, réactions, cartes de profil, menus déroulants. Le titre posé sur la couverture d'un
+  événement reste lisible sur l'image dans les deux thèmes. Les avatars sans image gardent une
+  lettre lisible sur fond clair (#862).
+- **Les réglages de la feuille restent visibles sur ces pages.** Opacité (effet verre), image et
+  flou réglés dans l'Apparence étaient repeints par la page elle-même : sur vieuxlooters, une
+  feuille réglée à 49 % s'affichait à environ 74 % (#895). Passé le premier écran, le fond clair
+  de la page des membres et du fil s'arrêtait net et la suite défilait sur fond noir (#893).
+- Les badges d'état (épinglé, sans réponse, erreurs, sondages) et les menus déroulants sont
+  lisibles en thème clair : couleurs d'état propres à chaque thème, au lieu de teintes pâles
+  pensées pour le noir (#894).
+- **Une couleur de pseudo ou de canal illisible garde sa teinte.** Le filet de contraste mesure
+  désormais un vrai contraste (3:1) et, au lieu de remplacer la couleur choisie par la couleur
+  par défaut, l'éclaircit ou l'assombrit juste assez : un vert fluo reste vert en thème clair,
+  simplement plus foncé. Il laissait passer un gris à 1,9:1 sur fond sombre (#892).
+- Petits textes lisibles : heures, séparateurs de jours et titres de colonnes passent le seuil de
+  contraste AA (4,5:1) dans le chat, le fil, le profil et la barre du haut. Certains étaient à
+  1,9:1 (#856).
+- Salon vocal : la première personne arrivée ne voit plus une scène vide, mais un mot d'accueil
+  et un bouton pour copier le lien du salon (#857).
+- Les boutons grisés « bientôt », qui ne faisaient rien, sont retirés du profil et du salon
+  vocal en attendant que la fonction existe (#855).
+- Barre du haut : le fil d'Ariane est traduit sur toutes les pages, au lieu du nom technique d'un
+  dossier (« Auth », « Whisper »), et un nom de communauté long ne l'écrase plus jusqu'à une seule
+  lettre ni ne coupe le nom du salon (#853, #858).
+- Fil d'actu : les onglets Découvrir et Abonnements restent collés au bon endroit en défilant
+  (#854).
+- Tableau blanc : l'outil de chaque participant s'affiche traduit au lieu de son nom technique
+  (« pen »), et le français dit « Cadre » et « Aimant » plutôt que « Frame » et « Snap » (#890).
+
+### Sécurité : dépendances
+
+Chaque alerte a été lue une par une pour savoir si Nodyx était réellement exposé, et les
+correctifs qui touchent du code servi sont prouvés par un test qui échoue sur l'ancienne version.
+
+- engine.io 6.6.11, le transport de Socket.IO, ouvert au public (#766).
+- @fastify/busboy 3.2.2 : deux dénis de service sur l'envoi de fichiers, dont une boucle infinie
+  déclenchée par une requête envoyée en deux morceaux (#770).
+- nodemailer 10 dans le cœur et le hub : analyseur d'adresses quadratique (#771).
+- devalue 5.9.4 dans les six applications SvelteKit : fuite de mémoire du processus vers le
+  navigateur, aucune page exposée aujourd'hui (#773). Dernières alertes du cœur, du frontend et
+  du hub fermées (#777).
+- sanitize-html 2.18.1 (récursion sans fin, déni de service), fastify 5.12.7 (validation
+  d'en-têtes contournable) et dix autres mises à jour du cœur (#878). fast-uri 3.1.9 et 4.2.3,
+  qu'utilise fastify pour valider les requêtes : confusion d'hôte et usurpation de schéma dans
+  l'analyse d'adresses (#898). Outils de développement
+  (vite, vitest) à jour dans toutes les applications (#869, #870, #872 à #875, #883).
 
 ### Sécurité : l'IP des visiteurs n'arrivait pas jusqu'à Nodyx (installations standard)
 
@@ -145,6 +269,14 @@ jamais les données vivantes (`uploads/`, `backups/`), et les restes d'une mise 
 interrompue sont effacés à la suivante. Seules les 5 sauvegardes de mise à jour les plus
 récentes sont gardées ; celles d'un `--wipe` ou d'une réinstallation ne sont jamais supprimées.
 
+### Installeur : la mise à jour garantit Node.js 22
+
+`install.sh --upgrade` et `install_tunnel.sh --upgrade` ne vérifiaient jamais la version de
+Node.js : seule l'installation initiale le faisait. Une instance installée en tunnel avant le
+04/10/2026 restait donc en Node 20, alors que le vocal exige Node 22. La mise à jour installe
+maintenant Node.js 22 avant de compiler s'il manque, et s'arrête proprement (le site garde sa
+version) si l'installation échoue.
+
 ### Installeur : sans terminal, et sans secret dans la ligne de commande
 
 L'installation silencieuse documentée en tête d'`install.sh` n'a jamais pu aboutir : le mot de
@@ -242,6 +374,12 @@ sélecteur de langue enfin traduit lui-même. Une cinquième porte i18n couvre d
 fichiers `.ts`, angle mort des quatre portes précédentes. Fusionner une traduction déploie
 maintenant automatiquement (avant, une traduction mergée pouvait rester invisible plusieurs jours).
 
+Neuvième langue : le **chinois simplifié**, traduit à 100 % (#847, #849). Les navigateurs réglés
+en chinois traditionnel ne le reçoivent pas d'office. Le module Canvas s'appelle désormais
+Tableau blanc (Whiteboard, 白板), sans changer son adresse. Les dates et les nombres suivent
+enfin la langue active : un membre anglais ou chinois lisait « 13 oct. » sur chaque message du
+chat (49 formats écrits en dur en français, dans 26 fichiers, #852).
+
 ### Réseau et sécurité du relais
 
 Le relais écoute en double pile et journalise l'adresse réelle du client derrière le proxy
@@ -264,6 +402,10 @@ découvrir après coup.
   trouvée en vérifiant cette correction : les secrets étaient générés avec `openssl` AVANT
   l'installation des paquets (qui l'apporte), et « libérer les ports » ne faisait rien sans
   `psmisc` ; un échec d'`apt` arrêtait aussi l'installeur tunnel sans le moindre message.
+- Développement : `npm run dev`, `seed` et `generate-esy` ne démarraient plus. TypeScript 7 est
+  désormais un compilateur natif dont le paquet npm n'expose plus l'API sur laquelle reposait
+  ts-node. Remplacé par `tsx`, qui n'en dépend pas ; la compilation de production (`tsc`) n'était
+  pas touchée.
 - Carte de profil partageable (`card.png`) : sur toute instance autre que nodyx.org, l'avatar
   manquait (remplacé par l'initiale), le dossier des fichiers envoyés étant écrit en dur. Il se
   déduit désormais de l'instance.
@@ -280,8 +422,28 @@ découvrir après coup.
   l'écran sur téléphone.
 - Responsive : tableaux d'administration passés en cartes sous les petits écrans (14 tableaux),
   page d'édition de profil, sidebar mobile qui mangeait 224 des 390 pixels disponibles.
+- Première visite : la page se chargeait deux fois (le service worker qui s'installait était pris
+  pour une mise à jour), et consommait deux fois le quota de requêtes du visiteur ; assez, sur la
+  page des sondages, pour afficher « Sondage indisponible » (#821).
+- Forum sur écran de bureau : entre les barres latérales, les noms de catégories étaient écrasés
+  sur trois lignes (#822). Nom de l'instance rogné en tête de barre latérale chez les
+  administrateurs (#823). Carte résumé des sondages : type affiché brut et compteur sans nombre
+  (#824).
+- Chat : un message supprimé disparaît du fil, en direct et au rechargement, au lieu de laisser
+  une ligne « message supprimé » qui coupait aussi le regroupement des messages de son auteur.
+  Seule la citation d'une réponse qui lui était adressée en garde la trace (#851).
+- Administration : le graphe « Activité · 7 derniers jours » ignorait tout le chat et effaçait
+  les jours sans message de forum, inscriptions comprises. Sur la semaine la plus active de
+  nodyx.org, il montrait une barre au lieu de 214 messages et 10 inscriptions en un jour. Les
+  jours étaient aussi décalés d'un cran sur un serveur qui n'est pas en UTC (#889).
+- Développement : la suite de tests du cœur ne peut plus joindre les vrais services (#813).
 
 ### Exploration (pas encore une décision)
+
+Page d'accueil en thème clair et sombre : l'admin dessine sa grille une fois, sombre ou claire,
+et Nodyx en calculera la version pour l'autre thème par inversion de contraste (luminosité
+inversée, teintes gardées, contraste garanti). Le calcul et ses tests sont prêts (#897), il
+n'est pas encore branché sur l'accueil. Détail dans `SPECS/NODYX_ACCUEIL_THEME_CDC.md`.
 
 Spike de la Phase A du moteur média Rust natif (`str0m`), pour lever le verrou "zéro port ouvert"
 qui touche encore le SFU vocal (mediasoup est ICE-Lite, un auto-hébergeur derrière une box doit

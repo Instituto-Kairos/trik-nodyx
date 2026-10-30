@@ -161,7 +161,7 @@
 		<span class="label">{tFn('common.members')}</span>
 		<div class="online-count">
 			<span class="online-dot"></span>
-			<span class="online-num">{onlineMembers.length}</span>
+			<span class="online-num" style="color: {$isDarkTheme ? '#4ade80' : '#15803d'}">{onlineMembers.length}</span>
 		</div>
 	</div>
 
@@ -193,7 +193,7 @@
 							{#if member.avatar}
 								<img src={member.avatar} alt="" class="avatar object-cover" />
 							{:else}
-								<div class="avatar" style="background: linear-gradient(135deg, {avatarColor}80, var(--nx-cyan-deep))">{member.username.charAt(0).toUpperCase()}</div>
+								<div class="avatar avatar--tint" style="background: linear-gradient(135deg, {avatarColor}, var(--nx-cyan-deep))">{member.username.charAt(0).toUpperCase()}</div>
 							{/if}
 							<span class="status-dot">
 								{#if isSharing}
@@ -209,7 +209,7 @@
 						</div>
 						<div class="info">
 							<div class="name-row">
-								<span class="name {buildAnimClass(member)}" style={buildNameStyle(member, isMe ? 'var(--nx-accent-2-soft2)' : '#9ca3af', $isDarkTheme)}>{member.username}</span>
+								<span class="name {buildAnimClass(member)}" style={buildNameStyle(member, isMe ? 'var(--nx-header-accent)' : 'var(--nx-text-muted)', $isDarkTheme)}>{member.username}</span>
 								{#if isMe}<span class="you-tag">{tFn('common.you')}</span>{/if}
 							</div>
 							{#if isSharing || isStreaming}
@@ -254,7 +254,7 @@
 							{#if member.avatar}
 								<img src={member.avatar} alt="" class="avatar object-cover" />
 							{:else}
-								<div class="avatar bg-linear-to-br from-[#7c3aed80] to-[var(--nx-cyan-deep)]">{member.username.charAt(0).toUpperCase()}</div>
+								<div class="avatar avatar--tint" style="background: linear-gradient(135deg, var(--nx-accent-2-strong), var(--nx-cyan-deep))">{member.username.charAt(0).toUpperCase()}</div>
 							{/if}
 							<span class="status-dot">
 								{#if isSharing}
@@ -270,7 +270,7 @@
 						</div>
 						<div class="info">
 							<div class="name-row">
-								<span class="name {buildAnimClass(member)}" style={buildNameStyle(member, isMe ? 'var(--nx-accent-2-soft2)' : '#9ca3af', $isDarkTheme)}>{member.username}</span>
+								<span class="name {buildAnimClass(member)}" style={buildNameStyle(member, isMe ? 'var(--nx-header-accent)' : 'var(--nx-text-muted)', $isDarkTheme)}>{member.username}</span>
 								{#if isMe}<span class="you-tag">{tFn('common.you')}</span>{/if}
 							</div>
 							{#if isSharing || isStreaming}
@@ -490,7 +490,7 @@
 	  font-weight: 700;
 	  text-transform: uppercase;
 	  letter-spacing: 0.1em;
-	  color: var(--nx-text-faint);
+	  color: var(--nx-text-muted);
 	}
 
 	.members-c.collapsed .members-header .label {
@@ -560,7 +560,7 @@
 	  font-weight: 600;
 	  text-transform: uppercase;
 	  letter-spacing: 0.08em;
-	  color: var(--nx-text-faint);
+	  color: var(--nx-text-muted);
 	  overflow: hidden;
 	}
 
@@ -653,10 +653,16 @@
 	  justify-content: center;
 	  font-size: 11px;
 	  font-weight: 700;
-	  color: #fff;
+	  color: var(--nx-text-muted);
 	  background: var(--nx-surface-raised);
 	  border: 1px solid var(--nx-border);
 	  user-select: none;
+	}
+	/* Fond coloré plein : la lettre blanche reste lisible sur un thème clair
+	   comme sombre, même quand la couleur du grade est pâle. */
+	.members-c .member .avatar.avatar--tint {
+	  color: #fff;
+	  text-shadow: 0 1px 2px rgb(0 0 0 / 0.45);
 	}
 
 	.members-c .member .status-dot {

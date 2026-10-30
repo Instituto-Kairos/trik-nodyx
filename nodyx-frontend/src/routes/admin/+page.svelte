@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { PageData } from './$types'
-	import { t } from '$lib/i18n'
+	import { t, locale } from '$lib/i18n'
 
 	const tFn = $derived($t)
 
@@ -30,19 +30,27 @@
 	])
 
 	function buildChartDays(rows: any[]) {
+		// The core returns all 7 days as YYYY-MM-DD text: take its axis as is,
+		// the browser's clock and timezone must not shift it. Older cores
+		// returned only the days with forum posts: rebuild the axis then.
 		const axis: string[] = []
-		for (let i = 6; i >= 0; i--) {
-			const d = new Date(); d.setDate(d.getDate() - i)
-			axis.push(d.toISOString().slice(0, 10))
+		if (rows.length === 7 && rows.every(r => typeof r.day === 'string')) {
+			for (const r of rows) axis.push(r.day.slice(0, 10))
+		} else {
+			for (let i = 6; i >= 0; i--) {
+				const d = new Date(); d.setDate(d.getDate() - i)
+				axis.push(d.toISOString().slice(0, 10))
+			}
 		}
 		const byDay: Record<string, { posts: number; new_members: number }> = {}
 		for (const row of rows) {
 			const key = typeof row.day === 'string' ? row.day.slice(0, 10) : new Date(row.day).toISOString().slice(0, 10)
-			byDay[key] = { posts: row.posts ?? 0, new_members: row.new_members ?? 0 }
+			// "Messages" = forum posts + chat messages
+			byDay[key] = { posts: (row.posts ?? 0) + (row.chat_messages ?? 0), new_members: row.new_members ?? 0 }
 		}
 		return axis.map(d => ({
 			day: d,
-			label: new Date(d + 'T12:00:00').toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }),
+			label: new Date(d + 'T12:00:00').toLocaleDateString($locale, { day: '2-digit', month: '2-digit' }),
 			posts: byDay[d]?.posts ?? 0,
 			new_members: byDay[d]?.new_members ?? 0,
 		}))
@@ -63,7 +71,7 @@
 		if (m < 60) return tFn('adash.ago_min', { n: m })
 		if (h < 24) return tFn('adash.ago_h', { n: h })
 		if (day < 30) return tFn('adash.ago_j', { n: day })
-		return new Date(d).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })
+		return new Date(d).toLocaleDateString($locale, { day: '2-digit', month: 'short' })
 	}
 
 	const quickActions = [
@@ -95,7 +103,7 @@
 					</svg>
 				</div>
 				<div class="flex items-baseline gap-2">
-					<span class="text-2xl font-semibold text-zinc-100 tabular-nums leading-none">{card.value.toLocaleString('fr-FR')}</span>
+					<span class="text-2xl font-semibold text-zinc-100 tabular-nums leading-none">{card.value.toLocaleString($locale)}</span>
 					{#if card.live}
 						<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 mb-0.5"></span>
 					{/if}

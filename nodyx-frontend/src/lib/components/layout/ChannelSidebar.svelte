@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { ajusterTaille } from '$lib/actions/ajusterTaille';
 	import { page } from '$app/state';
 	import { tick } from 'svelte';
 	import { overlayScroll } from '$lib/actions/overlayScroll';
@@ -225,7 +226,7 @@
 
 	<!-- Panel head -->
 	<div class="panel-head">
-		<span class="community-name" id="variant-a-community">{displayCommunityName}</span>
+		<span class="community-name" id="variant-a-community" use:ajusterTaille={displayCommunityName}>{displayCommunityName}</span>
 		{#if user?.role === 'owner' || user?.role === 'admin'}
 		<a href="/admin" title={tFn('nav.admin')} class="head-icon text-gray-600">
 			<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -262,7 +263,7 @@
 		<!-- Modules section -->
 		<div class="nav-section">
 			{#each [
-				{ href: '/canvas',   label: 'Canvas',             icon: 'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',                                                                                                                                                              show: !!mods.canvas },
+				{ href: '/canvas',   label: tFn('nav.canvas'),    icon: 'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',                                                                                                                                                              show: !!mods.canvas },
 				{ href: '/calendar', label: tFn('nav.calendar'),   icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z',                                                                                                                                                                                                          show: mods.calendar !== false },
 				{ href: '/polls',    label: tFn('nav.polls'),     icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z',                                                                                          show: mods.polls !== false },
 				{ href: '/tasks',    label: tFn('nav.tasks'),       icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4',                                                                                                                                                    show: mods.tasks !== false },
@@ -516,7 +517,7 @@
 	.nodyx-sb .panel .panel-scroll .nav-link .badge { margin-left: auto; background: #ef4444; color: #fff; font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 8px; }
 	.nodyx-sb .panel .panel-scroll .channel-group-label {
 	  font-size: 10px; padding: 12px 10px 4px;
-	  letter-spacing: .08em; font-weight: 600; color: var(--nx-text-faint); text-transform: uppercase;
+	  letter-spacing: .08em; font-weight: 600; color: var(--nx-text-muted); text-transform: uppercase;
 	}
 	.nodyx-sb .panel .panel-scroll .channel {
 	  position: relative; z-index: 1;

@@ -138,8 +138,10 @@
 	<!-- Desktop: logo + breadcrumb -->
 	<div class="hidden lg:flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden">
 		<!-- Logo toujours visible -->
-		<a href="/" class="shrink-0 flex items-center gap-1.5 font-bold text-sm" style="color: var(--nx-text)">
-			<span>{communityName}</span>
+		<!-- Le nom peut rétrécir (points de suspension) : déclaré « ne rétrécit
+		     jamais », un nom long écrasait le fil d'Ariane jusqu'à une lettre. -->
+		<a href="/" class="min-w-0 shrink-[4] flex items-center gap-1.5 font-bold text-sm" style="color: var(--nx-text)" title={communityName}>
+			<span class="truncate max-w-[16rem]">{communityName}</span>
 		</a>
 		<!-- Breadcrumb dynamique (masqué sur la homepage) -->
 		{#if breadcrumbs.length > 0}
@@ -152,12 +154,20 @@
 						<path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
 					</svg>
 				{/if}
-				{#if crumb.href && i < breadcrumbs.length - 1}
-					<a href={crumb.href}
-					   class="nx-breadcrumb-link text-xs font-medium shrink-0 transition-colors truncate max-w-40">{crumb.label}</a>
+				{#if i < breadcrumbs.length - 1}
+					<!-- Miettes intermédiaires : largeur bornée mais jamais écrasées
+					     (« Chat », sans lien, finissait réduit à « C »). -->
+					{#if crumb.href}
+						<a href={crumb.href}
+						   class="nx-breadcrumb-link text-xs font-medium shrink-0 transition-colors truncate max-w-40">{crumb.label}</a>
+					{:else}
+						<span class="text-xs font-medium shrink-0 truncate max-w-40" style="color: var(--nx-text-muted)">{crumb.label}</span>
+					{/if}
 				{:else}
-					<span class="text-xs font-semibold truncate min-w-0"
-					      style="color: var(--nx-text)">{crumb.label}</span>
+					<!-- La dernière miette (salon, sujet) garde sa taille jusqu'à 14rem :
+					     c'est le nom de la communauté, seul à rétrécir, qui cède la place. -->
+					<span class="text-xs font-semibold truncate shrink-0 max-w-[14rem]"
+					      style="color: var(--nx-text)" title={crumb.label}>{crumb.label}</span>
 				{/if}
 			{/each}
 		{/if}
@@ -340,11 +350,6 @@
 							<div class="py-1.5">
 								<a href="/settings" onclick={() => dropdownOpen = false} class="nx-dropdown-item flex items-center gap-3 px-4 py-2 text-sm transition-colors"><span class="text-base">⚙️</span><span>{tFn('nav.settings')}</span></a>
 								<a href="https://nodyx.dev" target="_blank" rel="noopener" onclick={() => dropdownOpen = false} class="nx-dropdown-item flex items-center gap-3 px-4 py-2 text-sm transition-colors"><span class="text-base">📖</span><span>{tFn('nav.documentation')}</span></a>
-								{#each [{ icon: '📊', label: tFn('user.my_activity') }, { icon: '👫', label: tFn('user.friends') }, { icon: '🏆', label: tFn('user.badges') }] as item}
-									<div class="flex items-center gap-3 px-4 py-2 text-sm cursor-not-allowed select-none" style="color: var(--nx-text-faint)">
-										<span class="text-base opacity-50">{item.icon}</span><span class="flex-1">{item.label}</span><span class="text-[10px] uppercase tracking-wider font-medium" style="color: var(--nx-text-faint)">{tFn('common.soon')}</span>
-									</div>
-								{/each}
 							</div>
 							<div class="mx-3" style="border-top: 1px solid var(--nx-border)"></div>
 							<div class="py-1.5">
@@ -445,7 +450,8 @@
 		border: 1px solid var(--nx-border);
 		padding: 0.05rem 0.28rem;
 		border-radius: 4px;
-		color: var(--nx-text-faint);
+		/* muted (AA garanti) et non faint (3:1) : texte de 9,6px, il doit rester lisible. */
+		color: var(--nx-text-muted);
 		font-family: ui-monospace, monospace;
 	}
 	.nx-icon-btn {
@@ -489,7 +495,7 @@
 	.nx-admin-pen:focus-visible { outline: 2px solid var(--nx-header-accent); outline-offset: 2px; }
 	/* Admin pill in top bar */
 	.nx-admin-pill {
-		color: var(--nx-text-faint);
+		color: var(--nx-text-muted);
 		background: transparent;
 		border: 1px solid var(--nx-border);
 	}
