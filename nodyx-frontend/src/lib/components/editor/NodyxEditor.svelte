@@ -1314,7 +1314,7 @@
 
 	<!-- ── Toolbar ─────────────────────────────────────────────────────── -->
 	{#if editor}
-	<div class="nodyx-toolbar flex flex-wrap items-center gap-0.5 px-2 py-1.5 border-b border-gray-800 themed:border-[var(--nx-border)] bg-gray-900/95 themed:bg-[var(--nx-surface)]/95 backdrop-blur relative z-10 rounded-t-xl shrink-0"
+	<div class="nodyx-toolbar flex flex-wrap items-center gap-0.5 px-2 py-1.5 border-b border-gray-800 themed:border-[var(--nx-border)] bg-gray-900/95 themed:bg-[var(--nx-surface)]/95 backdrop-blur relative z-10 rounded-t-xl shrink-0 {moreOpen ? 'more-open' : ''}"
 		role="toolbar"
 		tabindex="0"
 		onmousedown={(e) => {
