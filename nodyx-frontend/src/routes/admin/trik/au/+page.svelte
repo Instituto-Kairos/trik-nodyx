@@ -90,6 +90,29 @@
 	);
 
 	const idsJson = $derived(JSON.stringify(Array.from(selected)));
+
+	interface AuCharacter {
+		id: string;
+		name: string;
+		ficha_link: string;
+		xp: number;
+		username: string;
+	}
+
+	const characters = $derived((data.characters ?? []) as AuCharacter[]);
+	let charQuery = $state('');
+	const filteredCharacters = $derived.by(() => {
+		const q = charQuery.trim().toLowerCase();
+		if (!q) return characters;
+		return characters.filter(
+			(c) => c.name.toLowerCase().includes(q) || c.username.toLowerCase().includes(q)
+		);
+	});
+
+	// Só http(s) vira link: a ficha é texto do jogador.
+	function safeHref(url: string): string | null {
+		return /^https?:\/\//i.test(url) ? url : null;
+	}
 </script>
 
 <svelte:head><title>RPG — Universo Alternativo</title></svelte:head>
@@ -197,4 +220,57 @@
 			</button>
 		</form>
 	{/if}
+
+	<section class="space-y-3">
+		<div class="flex flex-wrap items-end justify-between gap-3">
+			<div>
+				<h2 class="text-lg font-semibold text-white">Personagens do AU</h2>
+				<p class="text-xs text-gray-500">
+					{characters.length} personagem{characters.length === 1 ? '' : 's'} cadastrado{characters.length === 1 ? '' : 's'} via /registro-au.
+				</p>
+			</div>
+			<input
+				type="search"
+				bind:value={charQuery}
+				placeholder="Buscar por personagem ou jogador"
+				class="min-w-56 rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-white"
+			/>
+		</div>
+
+		{#if filteredCharacters.length === 0}
+			<p class="text-sm text-gray-500">
+				{characters.length === 0 ? 'Nenhum personagem AU ainda.' : 'Nada encontrado.'}
+			</p>
+		{:else}
+			<div class="rounded-xl border border-gray-800 bg-gray-900/40 overflow-x-auto">
+				<table class="w-full text-sm">
+					<thead class="text-xs text-gray-500 text-left">
+						<tr>
+							<th class="px-5 py-2 font-medium">Personagem</th>
+							<th class="px-5 py-2 font-medium">Jogador</th>
+							<th class="px-5 py-2 font-medium text-right">XP</th>
+							<th class="px-5 py-2 font-medium">Ficha</th>
+						</tr>
+					</thead>
+					<tbody class="divide-y divide-gray-800">
+						{#each filteredCharacters as c (c.id)}
+							{@const href = safeHref(c.ficha_link)}
+							<tr>
+								<td class="px-5 py-2.5 text-white">{c.name}</td>
+								<td class="px-5 py-2.5 text-gray-400">@{c.username}</td>
+								<td class="px-5 py-2.5 text-right text-gray-300 tabular-nums">{c.xp}</td>
+								<td class="px-5 py-2.5">
+									{#if href}
+										<a {href} target="_blank" rel="noopener noreferrer" class="text-indigo-400 hover:text-indigo-300">abrir</a>
+									{:else}
+										<span class="text-gray-600">{c.ficha_link}</span>
+									{/if}
+								</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		{/if}
+	</section>
 </div>

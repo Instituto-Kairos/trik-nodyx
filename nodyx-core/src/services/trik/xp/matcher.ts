@@ -31,15 +31,22 @@ function normalizeWhitespace(s: string): string {
  * personagem errado.
  */
 export async function matchCharacterByHeader(playerId: string, header: string): Promise<TrikCharacter | null> {
+  return matchByHeader(await getCharactersWithTemplate(playerId), header, playerId)
+}
+
+/** O match em si, sobre qualquer lista de candidatos com plaquinha — também
+ *  usado pelos personagens do AU (trik_014). */
+export function matchByHeader<T extends { template_name: string | null; template_signature: string | null }>(
+  candidates: T[], header: string, ownerId: string
+): T | null {
   const normalizedHeader = normalizeWhitespace(header)
-  const candidates = await getCharactersWithTemplate(playerId)
   const matches = candidates.filter(c =>
     normalizedHeader.includes(normalizeWhitespace(c.template_name!)) &&
     normalizedHeader.includes(normalizeWhitespace(c.template_signature!))
   )
   if (matches.length === 1) return matches[0]
   if (matches.length > 1) {
-    console.warn(`[trik:xp] header ambíguo pro jogador ${playerId}: ${matches.length} personagens batem, nenhum creditado`)
+    console.warn(`[trik:xp] header ambíguo pro jogador ${ownerId}: ${matches.length} personagens batem, nenhum creditado`)
   }
   return null
 }

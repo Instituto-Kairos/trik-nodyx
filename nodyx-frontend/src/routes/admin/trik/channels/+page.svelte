@@ -18,6 +18,12 @@
 			description: 'Abre o modal de cadastro de jogador e personagem.'
 		},
 		{
+			value: 'registro-au',
+			label: 'Registro AU',
+			command: '/registro-au',
+			description: 'Abre o modal de cadastro de personagem do Universo Alternativo (só nome e link da ficha).'
+		},
+		{
 			value: 'plaquinha',
 			label: 'Plaquinha',
 			command: '/plaquinha',
@@ -110,7 +116,7 @@
 		</div>
 	{/if}
 
-	<form method="POST" action="?/save" use:enhance class="space-y-4">
+	<form method="POST" action="?/save" use:enhance={() => async ({ update }) => update({ reset: false })} class="space-y-4">
 		<input type="hidden" name="entries" value={entriesJson} />
 
 		<div class="rounded-xl border border-gray-800 bg-gray-900/40">

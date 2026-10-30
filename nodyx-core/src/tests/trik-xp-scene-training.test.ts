@@ -31,6 +31,14 @@ vi.mock('../models/trikEffects', () => ({
   findPartnerCharacters:  vi.fn().mockResolvedValue([]),
 }))
 
+vi.mock('../models/trikAu', () => ({
+  isAuThread:                   vi.fn().mockResolvedValue(false),
+  getAuCharactersWithTemplate:  vi.fn().mockResolvedValue([]),
+  applyAuSceneAward:            vi.fn(),
+  revertAuSceneAward:           vi.fn().mockResolvedValue(undefined),
+  listAuAwardedPostIdsByThread: vi.fn().mockResolvedValue([]),
+}))
+
 vi.mock('../models/trikNarrador', () => ({
   getNarratorUserId:                  vi.fn().mockResolvedValue(null),
   applyNarratorAward:                 vi.fn(),

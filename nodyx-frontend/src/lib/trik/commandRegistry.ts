@@ -11,6 +11,8 @@ export const TRIK_COMMANDS = {
 	'/interesse': 'interesse',
 	// Universo Alternativo (trik_013) — aliases livres, que só valem no AU.
 	'/alias-au': 'alias-au',
+	// Personagens do AU (trik_014): só nome + ficha; xp acumula, sem nível.
+	'/registro-au': 'registro-au',
 	// /teste: comando de teste — marca (@menciona) quem mandou, sem modal,
 	// só pra validar a notificação/link de @menção do bot Trik.
 	'/teste': 'teste'

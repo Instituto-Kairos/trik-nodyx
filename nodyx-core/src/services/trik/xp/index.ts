@@ -12,7 +12,7 @@
 import { parseScenePost, parseFooterTags, parseFooterMeta, stripTags, hasLoreTag } from './sceneParser'
 import { computeTraining, periodOf, type AlertOutcome } from './bonusEngine'
 import { dayAlerts, addDays, type Climate } from '../weather'
-import { matchCharacterByHeader } from './matcher'
+import { matchCharacterByHeader, matchByHeader } from './matcher'
 import {
   calculateSceneXp, calculateTrainingSceneXp, calculateNarratorXp,
 } from './calc'
@@ -30,6 +30,9 @@ import {
 import {
   getNarratorUserId, applyNarratorAward, revertNarratorAward, listNarratorAwardedPostIdsByThread,
 } from '../../../models/trikNarrador'
+import {
+  isAuThread, getAuCharactersWithTemplate, applyAuSceneAward, revertAuSceneAward, listAuAwardedPostIdsByThread,
+} from '../../../models/trikAu'
 import { postTrikMessage, reactSceneCounted, reactSceneRejected, clearSceneMarks } from '../bot'
 import { botSafe, mentionUser } from '../text'
 
@@ -51,6 +54,8 @@ export type SceneXpResult =
   | { awarded: true; characterId: string; xp: number; leveledUp: boolean; mastery?: SceneMasteryResult }
   // Cena de narrador (#lore): o xp foi pro pool do narrador, não pra um personagem.
   | { awarded: true; narrator: true; xp: number }
+  // Cena no AU (trik_014): xp só acumula no personagem AU — sem nível nem maestria.
+  | { awarded: true; au: true; characterId: string; xp: number }
 
 async function getAnnounceChannel(): Promise<string | null> {
   const purposes = await getChannelPurposes()
@@ -248,6 +253,10 @@ export async function processScenePost(params: {
       return { awarded: false, reason: 'no_structure' }
     }
 
+    if (await isAuThread(params.threadId)) {
+      return await processAuScenePost(params.authorUserId, params.postId, parsed.header, parsed.cena.length)
+    }
+
     const player = await getPlayer(params.authorUserId)
     if (!player) {
       await notifySceneRejected(params.postId, 'no_player')
@@ -319,6 +328,24 @@ export async function processScenePost(params: {
   }
 }
 
+/** Cena no AU: mesmo match de plaquinha e mesma conta de xp de cena, mas sem
+ *  #treino/#aula, efeitos nem level up — o xp só acumula. Não exige /registro. */
+async function processAuScenePost(userId: string, postId: string, header: string, cenaLength: number): Promise<SceneXpResult> {
+  const character = matchByHeader(await getAuCharactersWithTemplate(userId), header, userId)
+  if (!character) {
+    await notifySceneRejected(postId, 'no_match')
+    return { awarded: false, reason: 'no_match' }
+  }
+  const xp = calculateSceneXp(cenaLength)
+  if (xp <= 0) {
+    await notifySceneRejected(postId, 'below_minimum')
+    return { awarded: false, reason: 'below_minimum' }
+  }
+  if (!await applyAuSceneAward(character.id, postId, xp)) return { awarded: false, reason: 'already_awarded' }
+  await reactSceneCounted(postId)
+  return { awarded: true, au: true, characterId: character.id, xp }
+}
+
 async function processNarratorPost(narratorId: string, postId: string, text: string): Promise<SceneXpResult> {
   const xp = calculateNarratorXp(text.length)
   if (xp <= 0) {
@@ -342,6 +369,7 @@ export async function revertScenePost(postId: string): Promise<void> {
   try {
     await revertSceneAward(postId)
     await revertNarratorAward(postId)
+    await revertAuSceneAward(postId)
     await clearSceneRejection(postId)
     await clearSceneMarks(postId)
   } catch (err) {
@@ -356,6 +384,7 @@ export async function revertThreadScenes(threadId: string): Promise<void> {
     const postIds = new Set([
       ...await listAwardedPostIdsByThread(threadId),
       ...await listNarratorAwardedPostIdsByThread(threadId),
+      ...await listAuAwardedPostIdsByThread(threadId),
     ])
     for (const postId of postIds) {
       await revertScenePost(postId)

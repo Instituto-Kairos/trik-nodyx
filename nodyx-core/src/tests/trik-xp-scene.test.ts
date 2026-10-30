@@ -17,6 +17,14 @@ vi.mock('../models/trik', () => ({
   clearSceneRejection:    vi.fn().mockResolvedValue(undefined),
 }))
 
+vi.mock('../models/trikAu', () => ({
+  isAuThread:                   vi.fn().mockResolvedValue(false),
+  getAuCharactersWithTemplate:  vi.fn().mockResolvedValue([]),
+  applyAuSceneAward:            vi.fn(),
+  revertAuSceneAward:           vi.fn().mockResolvedValue(undefined),
+  listAuAwardedPostIdsByThread: vi.fn().mockResolvedValue([]),
+}))
+
 vi.mock('../models/trikNarrador', () => ({
   getNarratorUserId:                  vi.fn().mockResolvedValue(null),
   applyNarratorAward:                 vi.fn(),
@@ -35,6 +43,7 @@ import {
   isXpThread, getPlayer, getCharactersWithTemplate, applySceneAward,
   revertSceneAward, listAwardedPostIdsByThread, setSceneRejection, clearSceneRejection,
 } from '../models/trik'
+import { isAuThread, getAuCharactersWithTemplate, applyAuSceneAward } from '../models/trikAu'
 import { reactSceneRejected, reactSceneCounted, clearSceneMarks } from '../services/trik/bot'
 import { processScenePost, revertScenePost, revertThreadScenes } from '../services/trik/xp'
 
@@ -161,6 +170,46 @@ describe('processScenePost — post que já tem prêmio (edições concorrentes)
     expect(result).toEqual({ awarded: false, reason: 'already_awarded' })
     expect(reactSceneCounted).not.toHaveBeenCalled()
     expect(reactSceneRejected).not.toHaveBeenCalled()
+  })
+})
+
+describe('processScenePost — tópico do AU (trik_014)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(isXpThread).mockResolvedValue(true)
+    vi.mocked(isAuThread).mockResolvedValueOnce(true)
+  })
+
+  it('credita o personagem AU pela plaquinha, sem /registro nem level up', async () => {
+    vi.mocked(getAuCharactersWithTemplate).mockResolvedValueOnce([
+      { id: 'au-1', name: 'Fulano AU', template_name: 'Fulano', template_signature: 'sig' } as any,
+    ])
+    vi.mocked(applyAuSceneAward).mockResolvedValueOnce(true)
+
+    const result = await processScenePost({
+      threadId: THREAD_ID, postId: POST_ID, authorUserId: USER_ID,
+      content: scene('Fulano - "sig"', 'x'.repeat(600)),
+    })
+
+    expect(result).toEqual({ awarded: true, au: true, characterId: 'au-1', xp: 12 })
+    expect(getAuCharactersWithTemplate).toHaveBeenCalledWith(USER_ID)
+    expect(applyAuSceneAward).toHaveBeenCalledWith('au-1', POST_ID, 12)
+    expect(getPlayer).not.toHaveBeenCalled()
+    expect(applySceneAward).not.toHaveBeenCalled()
+    expect(reactSceneCounted).toHaveBeenCalledWith(POST_ID)
+  })
+
+  it('no_match: personagem principal não conta dentro do AU', async () => {
+    vi.mocked(getCharactersWithTemplate).mockResolvedValue([
+      { id: 'char-1', name: 'Fulano', template_name: 'Fulano', template_signature: 'sig' } as any,
+    ])
+    const result = await processScenePost({
+      threadId: THREAD_ID, postId: POST_ID, authorUserId: USER_ID,
+      content: scene('Fulano - "sig"', 'x'.repeat(600)),
+    })
+    expect(result).toEqual({ awarded: false, reason: 'no_match' })
+    expect(applyAuSceneAward).not.toHaveBeenCalled()
+    expect(reactSceneRejected).toHaveBeenCalledWith(POST_ID)
   })
 })
 

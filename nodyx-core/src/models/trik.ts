@@ -46,7 +46,7 @@ export interface TrikCharacter {
 // 'cena' saiu na Fase 2 — o jogo ativo roda em trik_threads (tópicos do
 // fórum), não em canais de chat. 'anuncio' entrou (canal de aviso de
 // level up) — ver trik_002_xp.sql.
-export type TrikChannelPurpose = 'registro' | 'plaquinha' | 'levelup' | 'anuncio' | 'clima' | 'alertas'
+export type TrikChannelPurpose = 'registro' | 'plaquinha' | 'levelup' | 'anuncio' | 'clima' | 'alertas' | 'registro-au'
 
 export interface TrikChannelEntry {
   channel_id: string

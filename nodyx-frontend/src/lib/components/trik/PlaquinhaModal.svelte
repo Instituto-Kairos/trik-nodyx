@@ -15,6 +15,8 @@
 		name: string;
 		template_name: string | null;
 		template_signature: string | null;
+		/** trik_014: personagem do /registro-au. */
+		universe: 'main' | 'au';
 	}
 
 	let loading = $state(true);
@@ -42,12 +44,18 @@
 	async function load() {
 		loading = true;
 		try {
-			const res = await apiFetch(fetch, '/trik/characters/mine', {
-				headers: { Authorization: `Bearer ${token}` }
-			});
-			if (res.ok) {
-				const data = await res.json();
-				characters = data.characters ?? [];
+			// Um comando só pros dois universos: lista os personagens principais e os do AU.
+			const headers = { Authorization: `Bearer ${token}` };
+			const [main, au] = await Promise.all([
+				apiFetch(fetch, '/trik/characters/mine', { headers }),
+				apiFetch(fetch, '/trik/au-characters', { headers })
+			]);
+			if (main.ok || au.ok) {
+				const tag = (u: Character['universe']) => (c: Omit<Character, 'universe'>) => ({ ...c, universe: u });
+				characters = [
+					...(main.ok ? ((await main.json()).characters ?? []).map(tag('main')) : []),
+					...(au.ok ? ((await au.json()).characters ?? []).map(tag('au')) : [])
+				];
 				selectedCharacterId = characters[0]?.id ?? '';
 				fillFromSelected();
 			}
@@ -76,6 +84,7 @@
 				body: JSON.stringify({
 					channelId,
 					characterId: selectedCharacterId,
+					universe: selectedCharacter?.universe ?? 'main',
 					templateName: templateName.trim(),
 					templateSignature: templateSignature.trim()
 				})
@@ -137,7 +146,7 @@
 				</p>
 			{:else if characters.length === 0}
 				<p class="text-sm text-gray-500">
-					Você ainda não tem nenhum personagem. Use /registro primeiro.
+					Você ainda não tem nenhum personagem. Use /registro (ou /registro-au) primeiro.
 				</p>
 			{:else}
 				{#if error}
@@ -159,7 +168,7 @@
 						class="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-white"
 					>
 						{#each characters as c (c.id)}
-							<option value={c.id}>{c.name}</option>
+							<option value={c.id}>{c.name}{c.universe === 'au' ? ' (AU)' : ''}</option>
 						{/each}
 					</select>
 				</div>

@@ -4,11 +4,14 @@ import { fail } from '@sveltejs/kit';
 
 export const load: PageServerLoad = async ({ fetch, cookies }) => {
 	const token = cookies.get('token');
-	const res = await apiFetch(fetch, '/admin/trik/au-categories', {
-		headers: { Authorization: `Bearer ${token}` }
-	});
+	const headers = { Authorization: `Bearer ${token}` };
+	const [res, charRes] = await Promise.all([
+		apiFetch(fetch, '/admin/trik/au-categories', { headers }),
+		apiFetch(fetch, '/admin/trik/au-characters', { headers })
+	]);
 	const categories = res.ok ? ((await res.json()).categories ?? []) : [];
-	return { categories };
+	const characters = charRes.ok ? ((await charRes.json()).characters ?? []) : [];
+	return { categories, characters };
 };
 
 export const actions: Actions = {

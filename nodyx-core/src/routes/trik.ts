@@ -145,6 +145,9 @@ const PlaquinhaBody = z.object({
   characterId:       z.string().uuid(),
   templateName:      z.string().min(1).max(200),
   templateSignature: z.string().min(1),
+  // trik_014: 'au' grava num personagem do /registro-au. Mesmo comando e mesmo
+  // canal — o modal lista os dois universos.
+  universe:          z.enum(['main', 'au']).default('main'),
 })
 
 const BotProfileBody = z.object({
@@ -155,7 +158,7 @@ const BotProfileBody = z.object({
 const ChannelPurposesBody = z.object({
   entries: z.array(z.object({
     channelId: z.string().uuid(),
-    purpose:   z.enum(['registro', 'plaquinha', 'levelup', 'anuncio', 'clima', 'alertas']),
+    purpose:   z.enum(['registro', 'plaquinha', 'levelup', 'anuncio', 'clima', 'alertas', 'registro-au']),
   })),
 })
 
@@ -345,6 +348,13 @@ const AuAliasBody = z.object({
   name: z.string().trim().min(1).max(100).refine(n => !/[\]\n]/.test(n), 'O alias não pode ter "]" nem quebra de linha'),
 })
 
+// /registro-au (trik_014): mesma restrição de nome do alias AU (vira menção).
+const RegistroAuBody = z.object({
+  channelId: z.string().uuid(),
+  name:      AuAliasBody.shape.name,
+  fichaLink: z.string().url().max(500),
+})
+
 /** `?category=` das buscas de menção: id inválido/ausente = universo principal. */
 async function auContext(category: string | undefined): Promise<boolean> {
   if (!category || !/^[0-9a-f-]{36}$/i.test(category)) return false
@@ -471,6 +481,28 @@ export async function trikPlayerPlugin(app: FastifyInstance) {
     return ok ? reply.code(204).send() : reply.code(404).send({ error: 'Alias não encontrado', code: 'NOT_FOUND' })
   })
 
+  // ── /registro-au (trik_014): personagens AU — nome + ficha, xp sem nível ──
+
+  app.get('/au-characters', async (request, reply) => {
+    return reply.send({ characters: await TrikAu.listMyAuCharacters(request.user!.userId) })
+  })
+
+  app.post('/registro-au', {
+    preHandler: validate({ body: RegistroAuBody }),
+  }, async (request, reply) => {
+    const body = request.body as z.infer<typeof RegistroAuBody>
+    if (!await TrikModel.isChannelPurpose(body.channelId, 'registro-au')) {
+      return reply.code(403).send({ error: 'Este canal não está configurado para /registro-au', code: 'FORBIDDEN_CHANNEL' })
+    }
+    const character = await TrikAu.createAuCharacter(request.user!.userId, body.name, body.fichaLink)
+    if (!character) return reply.code(409).send({ error: 'Você já tem um personagem AU com esse nome', code: 'DUPLICATE_NAME' })
+    await postTrikMessage(
+      body.channelId,
+      `✅ <strong>${botSafe(character.name)}</strong> foi registrado(a) no AU por @${request.user!.username}.`
+    )
+    return reply.code(201).send({ character })
+  })
+
   // Opções dos dropdowns de panteão/vínculo divino do modal de /registro.
   app.get('/pantheons', async (_request, reply) => {
     return reply.send({ pantheons: await TrikModel.listPantheons() })
@@ -505,6 +537,20 @@ export async function trikPlayerPlugin(app: FastifyInstance) {
     const body = request.body as z.infer<typeof PlaquinhaBody>
     if (!await TrikModel.isChannelPurpose(body.channelId, 'plaquinha')) {
       return reply.code(403).send({ error: 'Este canal não está configurado para /plaquinha', code: 'FORBIDDEN_CHANNEL' })
+    }
+    if (body.universe === 'au') {
+      if (!body.templateName.trim() || !body.templateSignature.trim()) {
+        return reply.code(400).send({ error: 'Nome e assinatura da plaquinha não podem ficar vazios', code: 'VALIDATION' })
+      }
+      const character = await TrikAu.updateAuCharacterTemplate(
+        request.user!.userId, body.characterId, body.templateName.trim(), body.templateSignature.trim()
+      )
+      if (!character) return reply.code(404).send({ error: 'Personagem AU não encontrado', code: 'NOT_FOUND' })
+      await postTrikMessage(
+        body.channelId,
+        `🏷️ Plaquinha de <strong>${botSafe(character.name)}</strong> (AU) atualizada: “${botSafe(character.template_name ?? '')}”.`
+      )
+      return reply.send({ character })
     }
     const result = await submitPlaquinha(request.user!.userId, body.characterId, body.templateName, body.templateSignature)
     if (!result.ok) {
@@ -1053,6 +1099,10 @@ export async function trikAdminPlugin(app: FastifyInstance) {
     const communityId = await getCommunityId()
     if (!communityId) return reply.code(503).send({ error: 'Community not configured' })
     return reply.send({ categories: await TrikAu.listAuCategories(communityId) })
+  })
+
+  app.get('/au-characters', async (_request, reply) => {
+    return reply.send({ characters: await TrikAu.listAllAuCharacters() })
   })
 
   app.put('/au-categories', {
