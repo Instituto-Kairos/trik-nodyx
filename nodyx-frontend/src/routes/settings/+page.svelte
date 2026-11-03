@@ -52,6 +52,43 @@
     // Abre em Notificações (o mais procurado); `?tab=<seção>` abre outra direto.
     let activeSection = $state(page.url.searchParams.get('tab') ?? 'notifications')
 
+    // ── Mobile (< lg) : la sidebar devient un drawer, comme le chat ─────────
+    // Avant, sous 1024px la sidebar restait à 240px à côté du contenu (puis se
+    // dépliait en bloc au-dessus sous 768px) : elle chevauchait la nav du layout
+    // et on ne voyait pas les sections. Maintenant : barre « section courante »
+    // en haut du contenu → ouvre la liste des sections.
+    let navOpen = $state(false)
+
+    const sectionLabels = $derived<Record<string, string>>({
+        'network':            tFn('settings.network.label'),
+        'notifications':      tFn('settings.notifications.label'),
+        'instances':          tFn('settings.instances.label'),
+        'account':            'Conta',
+        'security':           tFn('settings.security.label'),
+        'encryption':         tFn('settings.encryption.label'),
+        'signet':             tFn('settings.signet.label'),
+        'connected-accounts': tFn('settings.connected.label'),
+        'sounds':             tFn('settings.sounds.nav'),
+    })
+
+    function selectSection(s: string) {
+        activeSection = s
+        navOpen = false
+        // Sur mobile on arrive en bas de la liste : remonte au début de la section.
+        document.querySelector('main.app-shell-main')?.scrollTo({ top: 0 })
+    }
+
+    $effect(() => {
+        if (!navOpen) return
+        document.body.classList.add('no-scroll')
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') navOpen = false }
+        window.addEventListener('keydown', onKey)
+        return () => {
+            document.body.classList.remove('no-scroll')
+            window.removeEventListener('keydown', onKey)
+        }
+    })
+
     // ── Twitch link (viewer flow) ─────────────────────────────────────────────
     type TwitchLink = { twitchId: string; twitchLogin: string } | null
 
@@ -474,8 +511,16 @@
      ══════════════════════════════════════════════════════════════════════════ -->
 <div class="settings-root">
 
+    <!-- ── Backdrop du drawer mobile ───────────────────────────────────────── -->
+    {#if navOpen}
+        <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+        <div class="sb-backdrop" onclick={() => navOpen = false}></div>
+    {/if}
+
     <!-- ── Sidebar navigation ──────────────────────────────────────────────── -->
-    <aside class="settings-sidebar">
+    <aside class="settings-sidebar" class:open={navOpen} id="settings-drawer"
+           role={navOpen ? 'dialog' : undefined} aria-modal={navOpen ? 'true' : undefined}
+           aria-label={tFn('settings.title')}>
 
         <!-- Header -->
         <div class="sb-header">
@@ -496,7 +541,7 @@
             <div class="sb-section-label">{tFn('settings.nav.general')}</div>
 
             <button class="sb-item {activeSection === 'network' ? 'active' : ''}"
-                    onclick={() => activeSection = 'network'}>
+                    onclick={() => selectSection('network')}>
                 <span class="sb-icon" style="background: rgb(var(--nx-accent-rgb) / 0.15); color: var(--nx-accent-soft)">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
@@ -506,7 +551,7 @@
             </button>
 
             <button class="sb-item {activeSection === 'notifications' ? 'active' : ''}"
-                    onclick={() => activeSection = 'notifications'}>
+                    onclick={() => selectSection('notifications')}>
                 <span class="sb-icon" style="background: rgba(139,92,246,0.15); color: var(--nx-accent-2-soft)">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>
@@ -519,7 +564,7 @@
             </button>
 
             <button class="sb-item {activeSection === 'instances' ? 'active' : ''}"
-                    onclick={() => activeSection = 'instances'}>
+                    onclick={() => selectSection('instances')}>
                 <span class="sb-icon" style="background: rgb(var(--nx-cyan-rgb) / 0.12); color: var(--nx-cyan-soft)">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
@@ -533,7 +578,7 @@
 
             {#if page.data.user}
             <button class="sb-item {activeSection === 'account' ? 'active' : ''}"
-                    onclick={() => activeSection = 'account'}>
+                    onclick={() => selectSection('account')}>
                 <span class="sb-icon" style="background: rgba(168,85,247,0.12); color: #c084fc">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/>
@@ -546,7 +591,7 @@
             <div class="sb-section-label" style="margin-top: 16px">{tFn('settings.nav.security')}</div>
 
             <button class="sb-item {activeSection === 'security' ? 'active' : ''}"
-                    onclick={() => activeSection = 'security'}>
+                    onclick={() => selectSection('security')}>
                 <span class="sb-icon" style="background: rgba(239,68,68,0.1); color: #f87171">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
@@ -561,7 +606,7 @@
             </button>
 
             <button class="sb-item {activeSection === 'encryption' ? 'active' : ''}"
-                    onclick={() => activeSection = 'encryption'}>
+                    onclick={() => selectSection('encryption')}>
                 <span class="sb-icon" style="background: rgb(var(--nx-accent-rgb) / 0.12); color: var(--nx-accent-soft)">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
@@ -571,7 +616,7 @@
             </button>
 
             <button class="sb-item {activeSection === 'signet' ? 'active' : ''}"
-                    onclick={() => activeSection = 'signet'}>
+                    onclick={() => selectSection('signet')}>
                 <span class="sb-icon" style="background: rgba(251,191,36,0.1); color: #fbbf24">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/>
@@ -584,7 +629,7 @@
             </button>
 
             <button class="sb-item {activeSection === 'connected-accounts' ? 'active' : ''}"
-                    onclick={() => activeSection = 'connected-accounts'}>
+                    onclick={() => selectSection('connected-accounts')}>
                 <span class="sb-icon" style="background: rgb(var(--nx-accent-2-rgb) / 0.12); color: var(--nx-accent-2-soft)">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
@@ -599,7 +644,7 @@
             <div class="sb-section-label" style="margin-top: 16px">{tFn('settings.nav.preferences')}</div>
 
             <button class="sb-item {activeSection === 'sounds' ? 'active' : ''}"
-                    onclick={() => activeSection = 'sounds'}>
+                    onclick={() => selectSection('sounds')}>
                 <span class="sb-icon" style="background: rgba(251,146,60,0.12); color: #fb923c">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14"/>
@@ -623,6 +668,21 @@
 
     <!-- ── Contenu principal ──────────────────────────────────────────────── -->
     <main class="settings-main">
+
+        <!-- Barre mobile : section courante + accès à toutes les sections -->
+        <button type="button" class="s-mobile-bar" onclick={() => navOpen = true}
+                aria-expanded={navOpen} aria-controls="settings-drawer">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/>
+            </svg>
+            <span class="s-mobile-bar-text">
+                <span class="s-mobile-bar-eyebrow">{tFn('settings.title')}</span>
+                <span class="s-mobile-bar-title">{sectionLabels[activeSection] ?? tFn('settings.title')}</span>
+            </span>
+            <svg class="s-mobile-bar-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 6l6 6-6 6"/>
+            </svg>
+        </button>
 
         <!-- ═══ RÉSEAU ══════════════════════════════════════════════════════ -->
         {#if activeSection === 'network'}
@@ -2067,22 +2127,86 @@
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ── Responsive ──────────────────────────────────────────────────────────── */
-@media (max-width: 768px) {
-    .settings-root { flex-direction: column; }
+/* Barre « section courante » : mobile uniquement */
+.s-mobile-bar { display: none; }
+.sb-backdrop { display: none; }
+
+/* Même breakpoint que le layout (lg = 1024px, bottom nav / drawer du chat).
+   Sous ce seuil la sidebar sort du flux et devient un drawer à gauche. */
+@media (max-width: 1023.98px) {
+    .settings-root { display: block; min-height: 0; }
+
     .settings-sidebar {
-        width: 100%;
-        min-width: unset;
+        position: fixed;
+        top: 48px;
+        bottom: 0;
+        left: 0;
+        z-index: 60;
+        width: min(300px, 85vw);
+        min-width: 0;
         height: auto;
-        position: static;
-        border-right: none;
-        border-bottom: 1px solid rgba(255,255,255,0.05);
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+        transform: translateX(-100%);
+        visibility: hidden;
+        transition: transform 250ms ease, visibility 0s linear 250ms;
+        box-shadow: 8px 0 32px rgba(0,0,0,0.5);
     }
-    .sb-nav { flex-direction: row; flex-wrap: wrap; padding: 8px; gap: 4px; }
-    .sb-section-label { display: none; }
-    .sb-item { flex: 0 0 auto; padding: 8px 10px; gap: 6px; }
-    /* Mostra o nome no celular: só ícone ninguém achava as notificações. */
-    .sb-label { font-size: 12px; }
-    .sb-footer { display: none; }
-    .settings-main { padding: 20px 16px 40px; }
+    .settings-sidebar.open {
+        transform: translateX(0);
+        visibility: visible;
+        transition: transform 250ms ease, visibility 0s;
+    }
+    .sb-backdrop {
+        display: block;
+        position: fixed;
+        inset: 0;
+        z-index: 55;
+        background: rgba(0,0,0,0.6);
+        backdrop-filter: blur(2px);
+    }
+    /* Cibles tactiles confortables */
+    .sb-item { padding: 11px 10px; }
+    .sb-label { font-size: 14px; }
+
+    .s-mobile-bar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        width: 100%;
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        margin: 0 0 16px;
+        padding: 10px 16px;
+        background: #0a0a10;
+        border: none;
+        border-bottom: 1px solid rgba(255,255,255,0.06);
+        color: #9ca3af;
+        text-align: left;
+        cursor: pointer;
+    }
+    .s-mobile-bar:active { background: #101018; }
+    .s-mobile-bar-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+    .s-mobile-bar-eyebrow {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: #4b5563;
+        font-weight: 600;
+    }
+    .s-mobile-bar-title {
+        font-size: 15px;
+        font-weight: 700;
+        color: #f1f5f9;
+        font-family: 'Space Grotesk', sans-serif;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .s-mobile-bar-chev { color: #4b5563; flex-shrink: 0; }
+
+    /* La barre est collée bord à bord : le padding horizontal passe aux panes */
+    .settings-main { padding: 0 0 40px; }
+    .settings-main > :not(.s-mobile-bar) { margin-left: 16px; margin-right: 16px; }
 }
 </style>
