@@ -5,15 +5,36 @@
 // Um único timer global serve todos os spans da página. Em
 // prefers-reduced-motion, embaralha uma vez e não anima.
 
-const CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%&*?<>/\\'
-const TICK_MS = 70
+// Só caracteres que NÃO criam ponto de quebra de linha (nada de / \ ? ! - etc.):
+// assim as quebras continuam só nos espaços originais e o parágrafo não "pula".
+const CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789#@&*'
+const TICK_MS = 120
 
 const originals = new Map<Text, string>()
 let timer: ReturnType<typeof setInterval> | null = null
 
+// Separa por grafema (emoji compostos, acentos combinados contam como 1).
+const segmenter = typeof Intl !== 'undefined' && 'Segmenter' in Intl
+	? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+	: null
+
+function graphemes(s: string): string[] {
+	return segmenter ? Array.from(segmenter.segment(s), (g) => g.segment) : Array.from(s)
+}
+
+// Grafemas que ocupam ~2 colunas numa fonte monoespaçada (CJK, fullwidth, emoji).
+const WIDE = /[ᄀ-ᅟ⺀-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦]|\p{Extended_Pictographic}/u
+
+function rand(): string {
+	return CHARS[(Math.random() * CHARS.length) | 0]
+}
+
 function randomize(orig: string): string {
 	let out = ''
-	for (const ch of orig) out += /\s/.test(ch) ? ch : CHARS[(Math.random() * CHARS.length) | 0]
+	for (const g of graphemes(orig)) {
+		if (/^\s+$/.test(g)) out += g
+		else out += WIDE.test(g) ? rand() + rand() : rand()
+	}
 	return out
 }
 

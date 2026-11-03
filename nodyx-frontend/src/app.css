@@ -1220,6 +1220,15 @@ select option {
 .nodyx-prose .scramble,
 .nodyx-content .tiptap .scramble {
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    /* Largura fixa por caractere: sem ligaduras/kerning e números tabulares,
+       pra troca de caracteres não alterar o tamanho do parágrafo. */
+    font-variant-ligatures: none;
+    font-feature-settings: "liga" 0, "calt" 0;
+    font-kerning: none;
+    font-variant-numeric: tabular-nums;
+    /* Mantém a altura da linha do parágrafo (a fonte mono não empurra a linha). */
+    line-height: 1;
+    vertical-align: baseline;
     cursor: pointer;
 }
 /* No editor o texto real fica visível, só marcado. */
