@@ -1,4 +1,8 @@
 {
+  "galeria.tab_main": "图库",
+  "galeria.tab_au": "AU",
+  "library.type.staff": "员工（仅管理员）",
+  "library.type.staff_tip": "不在公共资源库显示：仅在管理面板可见。PNG、JPG、WebP 或 GIF。",
   "library.choose_file": "选择文件",
   "library.no_file": "未选择文件",
   "library.emoji_help": "PNG、GIF 或 WebP · 建议透明背景 · 正方形，约 128 px 就够了（超过 1024 px 会自动缩小）。支持动态 GIF 和 WebP。自动优化为 WebP，最大 12 MB。",
@@ -422,6 +426,8 @@
   "editor.delete_col": "- 删除列",
   "editor.delete_table": "🗑 删除表格",
   "editor.strikethrough": "删除线",
+  "editor.scramble": "乱码",
+  "editor.spoiler": "剧透",
   "editor.heading_1": "一级标题 H1",
   "editor.heading_2": "二级标题 H2",
   "editor.heading_3": "三级标题 H3",

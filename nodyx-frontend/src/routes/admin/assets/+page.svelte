@@ -13,7 +13,7 @@
 
 	const TYPE_ICONS: Record<string, string> = {
 		frame: '🖼️', banner: '🎨', badge: '🏅', sticker: '⭐',
-		font: '🔤', theme: '🎭', emoji: '😀', sound: '🔊',
+		font: '🔤', theme: '🎭', emoji: '😀', sound: '🔊', staff: '🛡️',
 	}
 
 	function thumbUrl(asset: { thumbnail_path?: string; file_path: string }) {

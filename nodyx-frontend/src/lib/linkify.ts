@@ -104,6 +104,9 @@ function mapTextNodes(
 export function mentionHref(target: string): string {
   if (target.startsWith('npcc:')) return `/forum/npccs/${encodeURIComponent(target.slice(5))}`
   if (target.startsWith('npc:'))  return `/galeria/${encodeURIComponent(target.slice(4))}`
+  // `pc:<image id>`: post do personagem no álbum Personagens da galeria. O
+  // jogador é notificado pelo servidor (utils/mentions.ts), o link vai pro post.
+  if (target.startsWith('pc:'))   return `/galeria/${encodeURIComponent(target.slice(3))}`
   return `/users/${encodeURIComponent(target)}`
 }
 

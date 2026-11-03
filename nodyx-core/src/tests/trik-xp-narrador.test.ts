@@ -27,6 +27,9 @@ vi.mock('../models/trikAu', () => ({
 
 vi.mock('../models/trikNarrador', () => ({
   getNarratorUserId:                  vi.fn(),
+  // trik_018: tag por narrador. Mesma regra de models/trikNarrador.ts.
+  getNarratorTagFor:                  vi.fn(),
+  hasNarratorTag: (text: string, tag: string) => new RegExp(`#${tag}(?![\\wÀ-ÿ])`, 'i').test(text),
   applyNarratorAward:                 vi.fn(),
   revertNarratorAward:                vi.fn().mockResolvedValue(undefined),
   listNarratorAwardedPostIdsByThread: vi.fn().mockResolvedValue([]),
@@ -41,7 +44,7 @@ vi.mock('../services/trik/bot', () => ({
 
 import { isXpThread, getPlayer, applySceneAward, listAwardedPostIdsByThread, revertSceneAward } from '../models/trik'
 import {
-  getNarratorUserId, applyNarratorAward, revertNarratorAward, listNarratorAwardedPostIdsByThread,
+  getNarratorUserId, getNarratorTagFor, applyNarratorAward, revertNarratorAward, listNarratorAwardedPostIdsByThread,
 } from '../models/trikNarrador'
 import { reactSceneCounted, reactSceneRejected } from '../services/trik/bot'
 import { processScenePost, revertScenePost, revertThreadScenes } from '../services/trik/xp'
@@ -52,6 +55,7 @@ const THREAD_ID   = 'thread-1'
 const POST_ID     = 'post-1'
 const NARRATOR_ID = 'user-narrador'
 const OTHER_ID    = 'user-outro'
+const AU_NARRATOR = 'user-narrador-au'   // trik_018: narrador do AU, tag #au
 
 function post(authorUserId: string, content: string) {
   return processScenePost({ threadId: THREAD_ID, postId: POST_ID, authorUserId, content })
@@ -87,6 +91,8 @@ describe('processScenePost — #lore do narrador', () => {
     vi.clearAllMocks()
     vi.mocked(isXpThread).mockResolvedValue(true)
     vi.mocked(getNarratorUserId).mockResolvedValue(NARRATOR_ID)
+    vi.mocked(getNarratorTagFor).mockImplementation(async (uid: string) =>
+      uid === NARRATOR_ID ? 'lore' : uid === AU_NARRATOR ? 'au' : null)
     vi.mocked(applyNarratorAward).mockResolvedValue(true)
   })
 
@@ -132,11 +138,33 @@ describe('processScenePost — #lore do narrador', () => {
     expect(applyNarratorAward).not.toHaveBeenCalled()
   })
 
-  it('post do narrador sem #lore: nem procura o narrador, segue o fluxo normal', async () => {
+  it('post do narrador sem #lore: segue o fluxo normal', async () => {
     const result = await post(NARRATOR_ID, `<p>${'x'.repeat(600)}</p>`)
 
     expect(result).toEqual({ awarded: false, reason: 'no_structure' })
-    expect(getNarratorUserId).not.toHaveBeenCalled()
+    expect(applyNarratorAward).not.toHaveBeenCalled()
+  })
+
+  // ── trik_018: cada narrador com a sua tag ──────────────────────────────────
+
+  it('narrador do AU com #au: vai pro pool DELE', async () => {
+    const result = await post(AU_NARRATOR, `<p>${'x'.repeat(600)} #au</p>`)
+
+    expect(result).toEqual({ awarded: true, narrator: true, xp: 18 })
+    expect(applyNarratorAward).toHaveBeenCalledWith(AU_NARRATOR, POST_ID, 18)
+  })
+
+  it('tag de outro narrador não vale: #lore do narrador do AU segue o fluxo normal', async () => {
+    const result = await post(AU_NARRATOR, `<p>${'x'.repeat(600)} #lore</p>`)
+
+    expect(result).toEqual({ awarded: false, reason: 'no_structure' })
+    expect(applyNarratorAward).not.toHaveBeenCalled()
+  })
+
+  it('#aurora não é #au', async () => {
+    const result = await post(AU_NARRATOR, `<p>${'x'.repeat(600)} #aurora</p>`)
+
+    expect(result).toEqual({ awarded: false, reason: 'no_structure' })
   })
 
   it('tópico que não vale xp: ignora mesmo com #lore', async () => {

@@ -4,6 +4,8 @@
 	import { apiFetch } from '$lib/api'
 	import { anchoredPopover } from '$lib/actions/anchoredPopover'
 	import { t } from '$lib/i18n'
+	import { customEmojisStore, loadCustomEmojis, wrapEmojiShortcodes } from '$lib/customEmojis'
+	import { get } from 'svelte/store'
 	import { TextSelection } from '@tiptap/pm/state'
 	import { searchMentionTargets, searchNpccTargets, searchNpcTargets, mentionInsertText, type MentionTarget } from '$lib/mentionTargets'
 
@@ -14,6 +16,8 @@
 		compact    = false,
 		mentions   = false,
 		mentionCategory = undefined,
+		scramble   = false,
+		customEmojis = false,
 		onchange   = (_html: string) => {},
 	}: {
 		name?:           string
@@ -31,6 +35,12 @@
 		mentions?:       boolean
 		/** Categoria do fórum: dentro do AU (trik_013) as menções são só do AU. */
 		mentionCategory?: string
+		/** Mostra o botão de texto ofuscado (só o Narrador; o core também valida).
+		 *  A extensão fica sempre ligada: quem edita um post do Narrador não apaga o efeito. */
+		scramble?:       boolean
+		/** Aba de emojis da instância no seletor: insere `:atalho:`, que só vira
+		 *  imagem onde o render passa por renderCustomEmojis() (hoje: fórum, chat, DM). */
+		customEmojis?:   boolean
 		onchange?:       (html: string) => void
 	} = $props()
 
@@ -112,8 +122,16 @@
 		if (mediaImages.length > 0) return
 		mediaLoading = true
 		try {
-			const res = await fetch('/api/v1/assets?type=image&limit=100')
-			if (res.ok) { const j = await res.json(); mediaImages = j.assets ?? [] }
+			// Staff da instância também vê os assets 'staff' (trik_016), marcados com 🛡️.
+			const role  = (page.data as any).user?.role ?? ''
+			const staff = token && ['owner', 'admin', 'moderator'].includes(role)
+			const [res, staffRes] = await Promise.all([
+				fetch('/api/v1/assets?type=image&limit=100'),
+				staff ? apiFetch(fetch, '/assets/staff', { headers: { Authorization: `Bearer ${token}` } }).catch(() => null) : null,
+			])
+			const staffAssets = staffRes?.ok ? ((await staffRes.json()).assets ?? []) : []
+			const publicAssets = res.ok ? ((await res.json()).assets ?? []) : []
+			mediaImages = [...staffAssets, ...publicAssets]
 		} finally { mediaLoading = false }
 	}
 
@@ -125,7 +143,7 @@
 
 	// ── Active state (updated on every editor transaction) ────────────────────
 	let a = $state({
-		bold: false, italic: false, underline: false, strike: false, code: false,
+		bold: false, italic: false, underline: false, strike: false, scramble: false, spoiler: false, code: false,
 		h1: false, h2: false, h3: false,
 		bullet: false, ordered: false,
 		quote: false, codeBlock: false, link: false,
@@ -140,6 +158,8 @@
 			italic:   editor.isActive('italic'),
 			underline:editor.isActive('underline'),
 			strike:   editor.isActive('strike'),
+			scramble: editor.isActive('scramble'),
+			spoiler:  editor.isActive('spoiler'),
 			code:     editor.isActive('code'),
 			h1:       editor.isActive('heading', { level: 1 }),
 			h2:       editor.isActive('heading', { level: 2 }),
@@ -159,7 +179,9 @@
 
 	// ── Initialise Tiptap (browser-only) ──────────────────────────────────────
 	onMount(async () => {
-		const { Editor, Node, Extension, mergeAttributes } = await import('@tiptap/core')
+		const { Editor, Node, Mark, Extension, InputRule, mergeAttributes, markInputRule } = await import('@tiptap/core')
+		// Emojis da instância: a lista precisa existir antes do conteúdo inicial ser lido.
+		if (customEmojis) await loadCustomEmojis()
 		const { default: StarterKit }            = await import('@tiptap/starter-kit')
 		const { default: Underline }             = await import('@tiptap/extension-underline')
 		const { default: TextAlign }             = await import('@tiptap/extension-text-align')
@@ -681,6 +703,72 @@
 			},
 		})
 
+		// Texto ofuscado: <span class="scramble">. O texto real fica no HTML (visível
+		// no DevTools, decisão consciente); a animação roda só na leitura (scramble.ts).
+		const Scramble = Mark.create({
+			name: 'scramble',
+			parseHTML() { return [{ tag: 'span.scramble' }] },
+			renderHTML({ HTMLAttributes }) { return ['span', mergeAttributes(HTMLAttributes, { class: 'scramble' }), 0] },
+			addCommands() {
+				return { toggleScramble: () => ({ commands }: any) => commands.toggleMark(this.name) } as any
+			},
+		})
+
+		// Emoji da instância como nó inline: no editor mostra a imagem; no HTML sai
+		// <span class="nx-emoji-code">:atalho:</span> (o texto continua salvo).
+		const emojiUrl = (sc: string) => get(customEmojisStore).find(e => e.shortcode === sc)?.url ?? null
+		const CustomEmoji = Node.create({
+			name: 'customEmoji',
+			group: 'inline', inline: true, atom: true, selectable: true,
+			addAttributes() { return { shortcode: { default: '' } } },
+			parseHTML() {
+				return [{ tag: 'span.nx-emoji-code', getAttrs: (el: HTMLElement) => ({ shortcode: (el.textContent ?? '').replace(/:/g, '').trim().toLowerCase() }) }]
+			},
+			renderHTML({ node }) { return ['span', { class: 'nx-emoji-code' }, `:${node.attrs.shortcode}:`] },
+			renderText({ node }) { return `:${node.attrs.shortcode}:` },
+			addNodeView() {
+				return ({ node }: any) => {
+					const sc = node.attrs.shortcode as string
+					const url = emojiUrl(sc)
+					let dom: HTMLElement
+					if (url) {
+						const img = document.createElement('img')
+						img.src = url; img.alt = `:${sc}:`; img.title = `:${sc}:`
+						img.className = 'nx-emoji'; img.draggable = false
+						dom = img
+					} else {
+						dom = document.createElement('span'); dom.textContent = `:${sc}:`
+					}
+					return { dom }
+				}
+			},
+			addInputRules() {
+				const type = this.type
+				return [new InputRule({
+					find: /:([a-z0-9_]{1,50}):$/i,
+					handler: ({ state, range, match }: any) => {
+						const sc = String(match[1]).toLowerCase()
+						if (!emojiUrl(sc)) return null
+						state.tr.replaceWith(range.from, range.to, type.create({ shortcode: sc }))
+					},
+				})]
+			},
+		})
+
+		// Spoiler (estilo Discord): <span class="spoiler">. Botão ou `||texto||`.
+		// Na leitura, um clique revela (lib/spoiler.ts); no editor fica visível.
+		const Spoiler = Mark.create({
+			name: 'spoiler',
+			parseHTML() { return [{ tag: 'span.spoiler' }] },
+			renderHTML({ HTMLAttributes }) { return ['span', mergeAttributes(HTMLAttributes, { class: 'spoiler' }), 0] },
+			addCommands() {
+				return { toggleSpoiler: () => ({ commands }: any) => commands.toggleMark(this.name) } as any
+			},
+			addInputRules() {
+				return [markInputRule({ find: /(?:^|\s)(\|\|(?=[^\s|])([^|]+?)\|\|)$/, type: this.type })]
+			},
+		})
+
 		editor = new Editor({
 			element: editorEl!,
 			extensions: [
@@ -700,8 +788,9 @@
 				NodyxTwoCols, NodyxColumn,
 				NodyxAudio, NodyxTrack,
 				NodyxTerm, TwitchLive,
+				Scramble, Spoiler, CustomEmoji,
 			],
-			content: initialContent,
+			content: customEmojis ? wrapEmojiShortcodes(initialContent) : initialContent,
 			// handleKeyDown roda ANTES do TipTap: é o único lugar de onde se pode
 			// tomar as setas e o Enter do editor enquanto o dropdown está aberto.
 			editorProps: {
@@ -1085,6 +1174,11 @@
 		resetAudioForm()
 	}
 
+	function insertCustomEmoji(shortcode: string) {
+		editor?.chain().focus().insertContent({ type: 'customEmoji', attrs: { shortcode } }).run()
+		showEmoji = false
+	}
+
 	function insertEmoji(e: string) {
 		editor?.chain().focus().insertContent(e).run()
 		showEmoji = false
@@ -1103,6 +1197,8 @@
 			italic:    () => chain.toggleItalic().run(),
 			underline: () => chain.toggleUnderline().run(),
 			strike:    () => chain.toggleStrike().run(),
+			scramble:  () => (chain as any).toggleScramble().run(),
+			spoiler:   () => (chain as any).toggleSpoiler().run(),
 			code:      () => chain.toggleCode().run(),
 			h1:        () => chain.toggleHeading({ level: 1 }).run(),
 			h2:        () => chain.toggleHeading({ level: 2 }).run(),
@@ -1331,6 +1427,10 @@
 			<button type="button" onclick={() => toggleAny('italic')}    class="tb-btn {a.italic    ? 'active' : ''}" title={tFn('editor.italic')}>  <i>I</i></button>
 			<button type="button" onclick={() => toggleAny('underline')} class="tb-btn {a.underline ? 'active' : ''}" title={tFn('editor.underline')}>  <u>U</u></button>
 			<button type="button" onclick={() => toggleAny('strike')}    class="tb-btn tb-more {a.strike    ? 'active' : ''}" title={tFn('editor.strikethrough')}>               <s>S</s></button>
+			<button type="button" onclick={() => toggleAny('spoiler')}   class="tb-btn tb-more {a.spoiler   ? 'active' : ''}" title={tFn('editor.spoiler')}>               <span class="font-mono">||</span></button>
+			{#if scramble}
+			<button type="button" onclick={() => toggleAny('scramble')}  class="tb-btn tb-more {a.scramble  ? 'active' : ''}" title={tFn('editor.scramble')}>              <span class="font-mono">#?</span></button>
+			{/if}
 			<button type="button" onclick={() => toggleAny('code')}      class="tb-btn tb-more {a.code      ? 'active' : ''}" title={tFn('editor.code_inline')}>
 				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
 			</button>
@@ -1577,9 +1677,17 @@
 
 		<!-- Emoji -->
 		<div class="relative">
-			<button type="button" onclick={() => { showEmoji = !showEmoji; showColor = showLink = showImage = showVideo = showAudio = showTable = false }} class="tb-btn text-base" title={tFn('editor.insert_emoji')}>😊</button>
+			<button type="button" onclick={() => { showEmoji = !showEmoji; if (customEmojis) loadCustomEmojis(); showColor = showLink = showImage = showVideo = showAudio = showTable = false }} class="tb-btn text-base" title={tFn('editor.insert_emoji')}>😊</button>
 			{#if showEmoji}
 			<div class="popup w-72 p-2 grid grid-cols-10 gap-0.5 max-h-48 overflow-y-auto" use:anchoredPopover>
+				{#if customEmojis && $customEmojisStore.length > 0}
+					{#each $customEmojisStore as ce (ce.shortcode)}
+						<button type="button" onclick={() => insertCustomEmoji(ce.shortcode)} title={`:${ce.shortcode}:`} class="p-1 rounded hover:bg-gray-700 themed:hover:bg-[var(--nx-border)] transition-colors leading-none">
+							<img src={ce.url} alt={`:${ce.shortcode}:`} class="w-5 h-5 object-contain" draggable="false" />
+						</button>
+					{/each}
+					<div class="col-span-10 my-1 border-t border-gray-700/60"></div>
+				{/if}
 				{#each EMOJIS as e}
 					<button type="button" onclick={() => insertEmoji(e)} class="text-base p-1 rounded hover:bg-gray-700 themed:hover:bg-[var(--nx-border)] transition-colors leading-none">{e}</button>
 				{/each}
@@ -1672,6 +1780,9 @@
 							class="group relative aspect-square rounded-xl overflow-hidden border-2 border-transparent hover:border-indigo-500 bg-gray-800 themed:bg-[var(--nx-surface-raised)] transition-all focus:outline-none focus:border-indigo-400">
 							<img src="/uploads/{asset.file_path}" alt={asset.name}
 							     class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"/>
+							{#if asset.asset_type === 'staff'}
+								<span class="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-violet-900/80 text-violet-200 text-[10px] font-medium" title={tFn('library.type.staff_tip')}>🛡️ Staff</span>
+							{/if}
 							<div class="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-end">
 								<p class="w-full px-2 py-1.5 text-[10px] text-white themed:text-[var(--nx-text)] font-medium truncate opacity-0 group-hover:opacity-100 transition-opacity"
 								   style="background: linear-gradient(transparent, rgba(0,0,0,0.7))">{asset.name}</p>

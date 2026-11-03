@@ -691,6 +691,53 @@ export async function searchNpccThreads(communityId: string, q: string, limit = 
   return rows
 }
 
+/**
+ * Álbum de personagens da galeria (`$1` = universo AU?). Achado pelo slug ou
+ * nome `personagens`/`personagem`; no AU, um álbum `is_au` cujo nome começa
+ * com "personage" ("Personagens AU"), como o álbum NPC do AU.
+ */
+export const CHARACTER_ALBUM_SQL = (au: string) =>
+  `((a.slug IN ('personagens', 'personagem') OR LOWER(a.name) IN ('personagens', 'personagem')
+     OR (${au} AND LOWER(a.name) LIKE 'personage%'))
+    AND a.is_au = ${au})`
+
+/**
+ * Personagens marcáveis pela galeria: as imagens do álbum Personagens. O alvo
+ * é `pc:<image id>`: o render linka /galeria/<id> e o servidor notifica o
+ * jogador dono do personagem registrado com o MESMO nome do título da imagem
+ * (resolveMentions). Imagem sem personagem correspondente linka, mas não notifica.
+ */
+export async function searchCharacterImages(communityId: string, q: string, limit = 8, au = false): Promise<TrikAlias[]> {
+  const termo = q.trim()
+  const { rows } = await db.query<{ id: string; title: string; username: string | null; player_name: string | null; avatar: string | null }>(
+    `SELECT i.id, i.title, dono.username, dono.player_name, dono.avatar
+       FROM galeria_images i
+       JOIN galeria_albums a ON a.id = i.album_id
+       LEFT JOIN LATERAL (
+         SELECT u.username, COALESCE(p.name, u.username) AS player_name, u.avatar
+           FROM (SELECT c.player_id AS user_id, c.name FROM trik_characters c WHERE NOT $5
+                 UNION ALL
+                 SELECT ac.user_id, ac.name FROM trik_au_characters ac WHERE $5) ch
+           JOIN users u ON u.id = ch.user_id
+           LEFT JOIN trik_players p ON p.id = u.id
+          WHERE LOWER(ch.name) = LOWER(i.title) AND u.is_system = false
+          LIMIT 1
+       ) dono ON true
+      WHERE i.community_id = $1
+        AND ${CHARACTER_ALBUM_SQL('$5')}
+        AND ($2 = '' OR i.title ILIKE $3)
+      ORDER BY i.title ASC
+      LIMIT $4`,
+    [communityId, termo, `%${termo}%`, limit, au],
+  )
+  return rows.map(r => ({
+    alias:       r.title.replace(/[\]\n]/g, ' ').slice(0, 100),
+    username:    `pc:${r.id}`,
+    player_name: r.player_name ?? 'Personagem',
+    avatar:      r.avatar,
+  }))
+}
+
 /** Um NPC mencionável = uma imagem do álbum NPC da galeria. */
 export interface TrikNpcImage {
   id:    string   // UUID da imagem — vai no alvo `npc:<id>`

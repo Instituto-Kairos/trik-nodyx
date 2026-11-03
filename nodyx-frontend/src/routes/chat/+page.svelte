@@ -7,6 +7,7 @@
 	import type { PageData } from './$types';
 	import { socket, getSocket } from '$lib/socket';
 	import { linkifyHtml } from '$lib/linkify';
+	import { renderSpoilers } from '$lib/spoiler';
 	import { searchMentionTargets, mentionInsertText, type MentionTarget } from '$lib/mentionTargets';
 	import { apiFetch } from '$lib/api';
 	import NodyxEditor from '$lib/components/editor/NodyxEditor.svelte';
@@ -1332,7 +1333,7 @@
 							<PollCard pollId={msg.poll_id} inline={true} {token} socket={s} />
 						{:else}
 								<div class="nodyx-prose text-sm leading-relaxed break-words" style="color: var(--nx-text)">
-									{@html renderCustomEmojis(linkifyHtml(msg.content ?? ''), customEmojis)}
+									{@html renderCustomEmojis(linkifyHtml(renderSpoilers(msg.content ?? '')), customEmojis)}
 									{#if shouldGroup && msg.edited_at}
 										<span class="text-[9px] italic ml-2" style="color: var(--nx-text-muted)">{tFn('chat.edited')}</span>
 									{/if}

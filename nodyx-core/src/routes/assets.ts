@@ -15,7 +15,7 @@ import {
 import { scanBuffer } from '../services/fileScanner'
 import { db, redis } from '../config/database'
 
-const VALID_TYPES = ['frame', 'banner', 'font', 'badge', 'sticker', 'theme', 'emoji', 'sound', 'image', 'video'] as const
+const VALID_TYPES = ['frame', 'banner', 'font', 'badge', 'sticker', 'theme', 'emoji', 'sound', 'image', 'video', 'staff'] as const
 
 // Per-user upload quota: 200 MB per 24h rolling window.
 // Cible : empêcher les regular users de flood l'instance (avatars, stickers,
@@ -55,6 +55,18 @@ async function isInstanceAdmin(userId: string): Promise<boolean> {
   return !!r.rows[0] && (r.rows[0].role === 'owner' || r.rows[0].role === 'admin')
 }
 
+// Staff da instância (owner/admin/moderator): quem VÊ os assets 'staff' no
+// seletor do editor. Enviar continua restrito a owner/admin (isInstanceAdmin).
+async function isInstanceStaff(userId: string): Promise<boolean> {
+  if (!_bypassCommunityId) await isInstanceAdmin(userId)   // resolve o communityId
+  if (!_bypassCommunityId) return false
+  const r = await db.query<{ role: string }>(
+    `SELECT role FROM community_members WHERE community_id = $1 AND user_id = $2 LIMIT 1`,
+    [_bypassCommunityId, userId],
+  )
+  return ['owner', 'admin', 'moderator'].includes(r.rows[0]?.role ?? '')
+}
+
 const ALLOWED_MIME_BY_TYPE: Record<string, readonly string[]> = {
   frame:   ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
   banner:  ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
@@ -69,6 +81,7 @@ const ALLOWED_MIME_BY_TYPE: Record<string, readonly string[]> = {
   sound:   ['audio/mpeg', 'audio/ogg', 'audio/wav', 'audio/webm', 'audio/mp4', 'audio/flac'],
   theme:   ['application/json', 'text/plain'],
   image:   ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+  staff:   ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
   video:   ['video/mp4', 'video/webm', 'video/ogg', 'video/quicktime', 'video/x-matroska'],
 }
 
@@ -105,6 +118,11 @@ export default async function assetRoutes(app: FastifyInstance) {
     if (!name)      return reply.code(400).send({ error: 'Le champ "name" est requis.' })
     if (!assetType || !VALID_TYPES.includes(assetType)) {
       return reply.code(400).send({ error: `Type invalide. Valeurs possibles : ${VALID_TYPES.join(', ')}` })
+    }
+
+    // 'staff' (trik_016): só owner/admin envia; some dos assets públicos.
+    if (assetType === 'staff' && !(await isInstanceAdmin(userId))) {
+      return reply.code(403).send({ error: 'Seuls les admins peuvent envoyer des assets staff.' })
     }
 
     const allowedMimes = ALLOWED_MIME_BY_TYPE[assetType]
@@ -170,6 +188,22 @@ export default async function assetRoutes(app: FastifyInstance) {
       offset:    q.offset,
     })
     return reply.send({ assets })
+  })
+
+  // ── GET /api/v1/assets/staff — Assets 'staff' (trik_016) pro seletor ──────
+  // Declarada ANTES de /:id. Só owner/admin/moderator; os demais recebem 403.
+  app.get('/staff', {
+    preHandler: [rateLimit, requireAuth],
+  }, async (req, reply) => {
+    if (!(await isInstanceStaff(req.user!.userId))) {
+      return reply.code(403).send({ error: 'Forbidden', code: 'FORBIDDEN' })
+    }
+    const { rows } = await db.query(
+      `SELECT * FROM community_assets
+       WHERE asset_type = 'staff' AND is_banned = false
+       ORDER BY created_at DESC LIMIT 200`
+    )
+    return reply.send({ assets: rows })
   })
 
   // ── GET /api/v1/assets/:id — Get asset metadata ────────────────────────────

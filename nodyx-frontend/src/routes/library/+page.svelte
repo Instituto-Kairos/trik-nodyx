@@ -25,7 +25,8 @@
 		{ value: 'sound',   labelKey: 'library.type.sound',   tipKey: 'library.type.sound_tip' },
 	]
 
-	const currentTypeTip = $derived(ASSET_TYPES.find(t => t.value === uploadType)?.tipKey ?? null)
+	const isAdmin = $derived(['owner', 'admin'].includes((page.data as any).user?.role ?? ''))
+	const currentTypeTip = $derived([...ASSET_TYPES, { value: 'staff', tipKey: 'library.type.staff_tip' }].find(t => t.value === uploadType)?.tipKey ?? null)
 
 	const TYPE_ICONS: Record<string, string> = {
 		image: '🏞️', frame: '🖼️', banner: '🎨', badge: '🏅', sticker: '⭐',
@@ -221,6 +222,10 @@
 						{#each ASSET_TYPES.slice(1) as t}
 							<option value={t.value}>{tFn(t.labelKey)}</option>
 						{/each}
+						<!-- 'staff' (trik_016): só no upload, nunca nos filtros; o core recusa não-admin. -->
+						{#if isAdmin}
+							<option value="staff">{tFn('library.type.staff')}</option>
+						{/if}
 					</select>
 				</div>
 			</div>

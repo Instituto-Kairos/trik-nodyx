@@ -136,3 +136,13 @@ export function sanitize(raw: string): string {
     },
   })
 }
+
+// Texto ofuscado (<span class="scramble">) é exclusivo do Narrador (trik). Para
+// qualquer outro autor, tira só a classe: o texto continua, sem o efeito.
+// Roda DEPOIS de sanitize(), que sempre emite atributos com aspas duplas.
+export function stripScramble(html: string): string {
+  return html.replace(/\sclass="([^"]*)"/g, (_full, cls: string) => {
+    const kept = cls.split(/\s+/).filter(c => c && c !== 'scramble')
+    return kept.length ? ` class="${kept.join(' ')}"` : ''
+  })
+}

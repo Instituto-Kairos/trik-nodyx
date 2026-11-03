@@ -1,4 +1,6 @@
 {
+  "library.type.staff": "Staff (nur Admin)",
+  "library.type.staff_tip": "In der öffentlichen Bibliothek ausgeblendet: nur im Admin-Panel sichtbar. PNG, JPG, WebP oder GIF.",
   "library.choose_file": "Datei wählen",
   "library.no_file": "Keine Datei",
   "library.emoji_help": "PNG, GIF oder WebP · transparenter Hintergrund empfohlen · quadratisch, ~128 px genügt (über 1024 px verkleinert). Animierte GIF und WebP möglich. Auto-optimiert zu WebP, max 12 MB.",
@@ -433,6 +435,8 @@
   "editor.delete_col": "- Spalte löschen",
   "editor.delete_table": "🗑 Tabelle löschen",
   "editor.strikethrough": "Durchgestrichen",
+  "editor.scramble": "Verschleiert",
+  "editor.spoiler": "Spoiler",
   "editor.heading_1": "Überschrift H1",
   "editor.heading_2": "Überschrift H2",
   "editor.heading_3": "Überschrift H3",
@@ -1109,6 +1113,8 @@
   "translate.contributors.close": "Schließen",
   "translate.newlang.horizon": "Nodyx hat diesen Horizont noch nicht erreicht.",
   "galeria.au_view": "AU ansehen",
+  "galeria.tab_main": "Galerie",
+  "galeria.tab_au": "AU",
   "galeria.au_exit": "AU verlassen",
   "galeria.album_delete": "Album löschen",
   "galeria.album_delete_confirm": "Album „{album}“ löschen? Die Bilder bleiben unter „Ohne Album“ erhalten."

@@ -10,7 +10,7 @@
 
 	let { data } = $props()
 
-	interface Album { id: string; name: string }
+	interface Album { id: string; name: string; is_au?: boolean }
 
 	interface Imagem {
 		id: string
@@ -39,7 +39,10 @@
 	const img    = $derived(data.image as Imagem)
 	const notas  = $derived(data.notes as Nota[])
 	const albums = $derived(data.albums as Album[])
-	const catalogoTags = $derived((data.tags as { name: string }[]).map((c) => c.name))
+	// trik_017: só as tags do universo do álbum escolhido no formulário.
+	const edAu = $derived(!!albums.find((a) => a.id === edAlbum)?.is_au)
+	const catalogoTags = $derived((data.tags as { name: string; is_au: boolean }[])
+		.filter((c) => !!c.is_au === edAu).map((c) => c.name))
 	const auth   = $derived({ Authorization: `Bearer ${data.token}` })
 
 	// Espelha a autorização do backend só para decidir o que aparece; quem

@@ -371,28 +371,50 @@ export async function deleteNote(communityId: string, id: string): Promise<boole
 export interface GaleriaTag {
   id: string
   name: string
+  is_au: boolean   // trik_017: tag de AU só existe na aba AU, e vice-versa
   image_count: number
 }
 
-export async function listTags(communityId: string): Promise<GaleriaTag[]> {
+/** Universo de um álbum: true = AU. Sem álbum (ou álbum inexistente) = normal. */
+export async function albumIsAu(communityId: string, albumId: string | null | undefined): Promise<boolean> {
+  if (!albumId) return false
+  const { rows } = await db.query<{ is_au: boolean }>(
+    `SELECT is_au FROM galeria_albums WHERE id = $1 AND community_id = $2`,
+    [albumId, communityId],
+  )
+  return rows[0]?.is_au ?? false
+}
+
+/** Filtro SQL "imagem `i` pertence ao universo": mesma regra de listImages. */
+function imgNoUniverso(au: boolean): string {
+  return `${au ? '' : 'NOT '}EXISTS (SELECT 1 FROM galeria_albums ax WHERE ax.id = i.album_id AND ax.is_au)`
+}
+
+/**
+ * Catálogo de tags (trik_017). Com `au`, só as tags daquele universo; sem `au`,
+ * todas (a página da imagem filtra pelo álbum escolhido). A contagem de cada
+ * tag considera só as imagens do universo DELA.
+ */
+export async function listTags(communityId: string, au?: boolean): Promise<GaleriaTag[]> {
   const { rows } = await db.query<GaleriaTag>(
-    `SELECT t.id, t.name,
+    `SELECT t.id, t.name, t.is_au,
             (SELECT COUNT(*) FROM galeria_images i
-              WHERE i.community_id = t.community_id AND t.name = ANY(i.tags))::int AS image_count
+              WHERE i.community_id = t.community_id AND t.name = ANY(i.tags)
+                AND (CASE WHEN t.is_au THEN ${imgNoUniverso(true)} ELSE ${imgNoUniverso(false)} END))::int AS image_count
        FROM galeria_tags t
-      WHERE t.community_id = $1
+      WHERE t.community_id = $1 ${au === undefined ? '' : 'AND t.is_au = $2'}
       ORDER BY lower(t.name) ASC`,
-    [communityId],
+    au === undefined ? [communityId] : [communityId, au],
   )
   return rows
 }
 
 /**
- * Garante que as tags existem no catálogo e devolve-as na grafia CADASTRADA:
- * quem digita "Kaelen" quando já existe "kaelen" fica com "kaelen", senão o
- * filtro (que compara exato) se partiria em dois. Sem repetidas, na ordem dada.
+ * Garante que as tags existem no catálogo DO UNIVERSO `au` e devolve-as na
+ * grafia cadastrada: quem digita "Kaelen" quando já existe "kaelen" fica com
+ * "kaelen", senão o filtro (que compara exato) se partiria em dois.
  */
-export async function registerTags(communityId: string, nomes: string[], userId: string | null): Promise<string[]> {
+export async function registerTags(communityId: string, nomes: string[], userId: string | null, au = false): Promise<string[]> {
   const limpos: string[] = []
   const vistos = new Set<string>()
   for (const n of nomes) {
@@ -404,35 +426,36 @@ export async function registerTags(communityId: string, nomes: string[], userId:
   if (limpos.length === 0) return []
 
   await db.query(
-    `INSERT INTO galeria_tags (community_id, name, created_by)
-     SELECT $1, n, $3 FROM unnest($2::text[]) AS n
+    `INSERT INTO galeria_tags (community_id, name, created_by, is_au)
+     SELECT $1, n, $3, $4 FROM unnest($2::text[]) AS n
      ON CONFLICT DO NOTHING`,
-    [communityId, limpos, userId],
+    [communityId, limpos, userId, au],
   )
   const { rows } = await db.query<{ name: string }>(
-    `SELECT name FROM galeria_tags WHERE community_id = $1 AND lower(name) = ANY($2::text[])`,
-    [communityId, limpos.map(t => t.toLowerCase())],
+    `SELECT name FROM galeria_tags WHERE community_id = $1 AND is_au = $3 AND lower(name) = ANY($2::text[])`,
+    [communityId, limpos.map(t => t.toLowerCase()), au],
   )
   const canon = new Map(rows.map(r => [r.name.toLowerCase(), r.name]))
   return limpos.map(t => canon.get(t.toLowerCase()) ?? t)
 }
 
-export async function createTag(communityId: string, nome: string, userId: string): Promise<GaleriaTag | null> {
-  const [name] = await registerTags(communityId, [nome], userId)
+export async function createTag(communityId: string, nome: string, userId: string, au = false): Promise<GaleriaTag | null> {
+  const [name] = await registerTags(communityId, [nome], userId, au)
   if (!name) return null
-  return (await listTags(communityId)).find(t => t.name === name) ?? null
+  return (await listTags(communityId, au)).find(t => t.name === name) ?? null
 }
 
 /** Tira a tag do catálogo E das imagens: uma tag apagada não pode sobrar órfã nos cartões. */
 export async function deleteTag(communityId: string, id: string): Promise<boolean> {
-  const { rows } = await db.query<{ name: string }>(
-    `DELETE FROM galeria_tags WHERE id = $1 AND community_id = $2 RETURNING name`,
+  const { rows } = await db.query<{ name: string; is_au: boolean }>(
+    `DELETE FROM galeria_tags WHERE id = $1 AND community_id = $2 RETURNING name, is_au`,
     [id, communityId],
   )
   if (!rows[0]) return false
+  // Só das imagens do MESMO universo: a homônima do outro lado é outra tag.
   await db.query(
-    `UPDATE galeria_images SET tags = array_remove(tags, $1)
-      WHERE community_id = $2 AND $1 = ANY(tags)`,
+    `UPDATE galeria_images i SET tags = array_remove(tags, $1)
+      WHERE community_id = $2 AND $1 = ANY(tags) AND ${imgNoUniverso(rows[0].is_au)}`,
     [rows[0].name, communityId],
   )
   return true

@@ -151,7 +151,7 @@
 
 		<div>
 			<span class="block text-sm text-[var(--nx-text-muted)] mb-2">{tFn('forum.message_label')}</span>
-			<NodyxEditor mentions mentionCategory={finalCategoryId}
+			<NodyxEditor mentions customEmojis scramble={!!(data.user as { is_narrator?: boolean } | null)?.is_narrator} mentionCategory={finalCategoryId}
 				name="content"
 				placeholder={tFn('forum.message_placeholder')}
 			/>

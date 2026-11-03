@@ -1215,3 +1215,58 @@ select option {
 }
 :lang(zh) .titre-heros-sep, :lang(ja) .titre-heros-sep,
 :lang(zh) .titre-heros-point, :lang(ja) .titre-heros-point { display: none; }
+
+/* ── Texto ofuscado (<span class="scramble">, animado por actions/scramble.ts) ── */
+.nodyx-prose .scramble,
+.nodyx-content .tiptap .scramble {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    cursor: pointer;
+}
+/* No editor o texto real fica visível, só marcado. */
+.nodyx-content .tiptap .scramble {
+    background: rgb(139 92 246 / 0.18);
+    border-bottom: 1px dashed rgb(139 92 246 / 0.7);
+    cursor: text;
+}
+.nodyx-prose .scramble.revealed { background: rgb(139 92 246 / 0.12); }
+
+/* ── Spoiler (<span class="spoiler">, revelado no clique por lib/spoiler.ts) ── */
+.nodyx-prose .spoiler:not(.revealed),
+.stage-msg .spoiler:not(.revealed) {
+    background: #202225;
+    color: transparent;
+    border-radius: 3px;
+    cursor: pointer;
+    user-select: none;
+    transition: background .1s;
+}
+.nodyx-prose .spoiler:not(.revealed) *,
+.stage-msg .spoiler:not(.revealed) * { visibility: hidden; }
+.nodyx-prose .spoiler:not(.revealed):hover,
+.stage-msg .spoiler:not(.revealed):hover { background: #2b2d31; }
+.nodyx-prose .spoiler.revealed,
+.stage-msg .spoiler.revealed { background: rgb(255 255 255 / 0.08); border-radius: 3px; }
+/* No editor o texto fica visível, só marcado. */
+.nodyx-content .tiptap .spoiler {
+    background: rgb(255 255 255 / 0.10);
+    border-bottom: 1px dashed rgb(255 255 255 / 0.45);
+    border-radius: 3px;
+}
+
+/* Emojis da instância nos posts: anula o estilo de imagem de bloco da prose. */
+.nodyx-prose img.nx-emoji {
+    height: 1.4em;
+    width: auto;
+    margin: 0;
+    border-radius: 0;
+    vertical-align: -0.28em;
+    display: inline-block;
+}
+.nodyx-content .tiptap img.nx-emoji {
+    height: 1.4em;
+    width: auto;
+    margin: 0;
+    border-radius: 0;
+    vertical-align: -0.28em;
+    display: inline-block;
+}

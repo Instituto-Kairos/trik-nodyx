@@ -60,6 +60,12 @@ async function getCommunityId(): Promise<string | null> {
 const NarradorDistribuirBody = z.object({
   characterId: z.string().uuid(),
   xp:          z.number().int().positive().max(1_000_000),
+  au:          z.boolean().optional(),   // trik_018: personagem do /registro-au
+})
+
+const NarradorAddBody = z.object({
+  username: z.string().trim().min(1).max(50),
+  tag:      z.string().trim().min(2).max(31),
 })
 
 const TesteBody = z.object({
@@ -430,11 +436,18 @@ export async function trikPlayerPlugin(app: FastifyInstance) {
     // Dentro do AU (trik_013) o personagem não existe: entram os aliases AU.
     const au = await auContext(category)
 
-    const [narrador, aliases] = await Promise.all([
+    const [narrador, imagens, aliases] = await Promise.all([
       TrikModel.narradorAlias(communityId, termo),
+      // Personagem com post no álbum Personagens da galeria: marca apontando pro
+      // post (`pc:<image id>`), como o @npc, mas notificando o jogador.
+      TrikModel.searchCharacterImages(communityId, termo, 8, au),
       au ? TrikAu.searchAuAliases(communityId, termo) : TrikModel.searchMentionableAliases(communityId, termo),
     ])
-    return reply.send({ aliases: narrador ? [narrador, ...aliases] : aliases })
+    // Personagem SEM imagem no álbum continua marcável do jeito antigo (perfil).
+    const comImagem = new Set(imagens.map(i => i.alias.toLowerCase()))
+    const semImagem = aliases.filter(a => !comImagem.has(a.alias.toLowerCase()))
+    const lista = [...imagens, ...semImagem]
+    return reply.send({ aliases: narrador ? [narrador, ...lista] : lista })
   })
 
   // GET /api/v1/trik/npcc?q= — tópicos da categoria NPCC para `@npcc:`.
@@ -1159,34 +1172,68 @@ export async function trikAdminPlugin(app: FastifyInstance) {
     return ok ? reply.code(204).send() : reply.code(404).send({ error: 'Narrador não encontrado', code: 'NOT_FOUND' })
   })
 
-  // ── Xp de narrador (#lore) — ver models/trikNarrador.ts ───────────────────
+  // ── Xp de narrador — ver models/trikNarrador.ts (trik_009, trik_018) ──────
+  // Vários narradores, cada um com a sua tag (#lore, #au...) e o seu pool.
 
-  app.get('/narrador', async (_request, reply) => {
-    const userId = await TrikNarrador.getNarratorUserId()
-    if (!userId) {
-      return reply.send({ narrator: null, username: TrikModel.NARRADOR.username })
-    }
-    const [balance, characters, awards, distributions] = await Promise.all([
-      TrikNarrador.getNarratorBalance(userId),
-      TrikNarrador.listNarratorCharacters(userId),
-      TrikNarrador.listNarratorAwards(userId),
-      TrikNarrador.listNarratorDistributions(userId),
-    ])
+  app.get('/narradores', async (_request, reply) => {
+    const narrators = await TrikNarrador.listNarrators()
+    const balances  = await Promise.all(narrators.map(n => TrikNarrador.getNarratorBalance(n.user_id)))
     return reply.send({
-      narrator: { userId, username: TrikModel.NARRADOR.username },
-      balance, characters, awards, distributions,
+      narrators: narrators.map((n, i) => ({ ...n, available: balances[i].available })),
     })
   })
 
-  app.post('/narrador/distribuir', {
+  app.post('/narradores', {
+    preHandler: validate({ body: NarradorAddBody }),
+  }, async (request, reply) => {
+    const { username, tag } = request.body as z.infer<typeof NarradorAddBody>
+    try {
+      return reply.code(201).send({ narrator: await TrikNarrador.addNarrator(username, tag, request.user!.userId) })
+    } catch (err) {
+      if (err instanceof TrikNarrador.NarratorAdminError) {
+        return reply.code(err.code === 'USER_NOT_FOUND' ? 404 : 400).send({ error: err.message, code: err.code })
+      }
+      throw err
+    }
+  })
+
+  app.delete('/narradores/:userId', async (request, reply) => {
+    const { userId } = request.params as { userId: string }
+    if (!/^[0-9a-f-]{36}$/i.test(userId)) return reply.code(404).send({ error: 'Narrador não encontrado', code: 'NOT_FOUND' })
+    try {
+      const ok = await TrikNarrador.removeNarrator(userId)
+      return ok ? reply.code(204).send() : reply.code(404).send({ error: 'Narrador não encontrado', code: 'NOT_FOUND' })
+    } catch (err) {
+      if (err instanceof TrikNarrador.NarratorAdminError) return reply.code(400).send({ error: err.message, code: err.code })
+      throw err
+    }
+  })
+
+  app.get('/narradores/:userId', async (request, reply) => {
+    const { userId } = request.params as { userId: string }
+    const narrator = (await TrikNarrador.listNarrators()).find(n => n.user_id === userId)
+    if (!narrator) return reply.code(404).send({ error: 'Narrador não encontrado', code: 'NOT_FOUND' })
+    const [balance, characters, auCharacters, awards, distributions] = await Promise.all([
+      TrikNarrador.getNarratorBalance(userId),
+      TrikNarrador.listNarratorCharacters(userId),
+      TrikNarrador.listNarratorAuCharacters(userId),
+      TrikNarrador.listNarratorAwards(userId),
+      TrikNarrador.listNarratorDistributions(userId),
+    ])
+    return reply.send({ narrator, balance, characters, auCharacters, awards, distributions })
+  })
+
+  app.post('/narradores/:userId/distribuir', {
     preHandler: validate({ body: NarradorDistribuirBody }),
   }, async (request, reply) => {
-    const { characterId, xp } = request.body as z.infer<typeof NarradorDistribuirBody>
-    const userId = await TrikNarrador.getNarratorUserId()
-    if (!userId) return reply.code(404).send({ error: 'Conta do narrador não encontrada', code: 'NOT_FOUND' })
+    const { characterId, xp, au } = request.body as z.infer<typeof NarradorDistribuirBody>
+    const { userId } = request.params as { userId: string }
+    if (!(await TrikNarrador.listNarrators()).some(n => n.user_id === userId)) {
+      return reply.code(404).send({ error: 'Narrador não encontrado', code: 'NOT_FOUND' })
+    }
 
     try {
-      const result = await TrikNarrador.distributeNarratorXp(userId, characterId, xp, request.user!.userId)
+      const result = await TrikNarrador.distributeNarratorXp(userId, characterId, xp, request.user!.userId, !!au)
       if (result.leveledUp) {
         notifyLevelUp(characterId, result.characterName)
           .catch(err => request.log.warn({ err }, '[trik:narrador] notifyLevelUp failed'))

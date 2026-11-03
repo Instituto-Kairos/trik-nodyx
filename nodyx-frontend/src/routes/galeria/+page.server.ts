@@ -29,7 +29,7 @@ export const load: PageServerLoad = async ({ fetch, cookies, url }) => {
 	const [resAlbums, resImages, resTags] = await Promise.all([
 		apiFetch(fetch, '/galeria/albums', { headers }),
 		apiFetch(fetch, `/galeria/images?${params}`, { headers }),
-		apiFetch(fetch, '/galeria/tags', { headers }),
+		apiFetch(fetch, `/galeria/tags?au=${au ? '1' : '0'}`, { headers }),
 	])
 
 	// 503 = módulo desligado nesta instância. A página diz isso em vez de

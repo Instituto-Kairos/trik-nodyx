@@ -27,6 +27,94 @@ export async function getNarratorUserId(): Promise<string | null> {
   return rows[0]?.id ?? null
 }
 
+// ── Narradores (trik_018): cada um com a sua tag ────────────────────────────
+
+/** Tags que já significam outra coisa na plaquinha e não podem virar tag de narrador. */
+const RESERVED_NARRATOR_TAGS = new Set(['treino', 'aula', 'tarefa', 'trabalho', 'com'])
+
+export interface NarratorRow {
+  user_id:  string
+  username: string
+  tag:      string
+  /** O narrador fixo do #lore (NARRADOR): não pode ser removido pela aba. */
+  is_main:  boolean
+}
+
+/** Todos os narradores. O fixo do #lore entra mesmo sem linha na tabela. */
+export async function listNarrators(): Promise<NarratorRow[]> {
+  const [{ rows }, mainId] = await Promise.all([
+    db.query<{ user_id: string; username: string; tag: string }>(
+      `SELECT n.user_id, u.username, n.tag
+         FROM trik_narrators n JOIN users u ON u.id = n.user_id
+        ORDER BY n.created_at`,
+    ),
+    getNarratorUserId(),
+  ])
+  const list: NarratorRow[] = rows.map(r => ({ ...r, is_main: r.user_id === mainId }))
+  if (mainId && !list.some(n => n.user_id === mainId)) {
+    const { rows: u } = await db.query<{ username: string }>(`SELECT username FROM users WHERE id = $1`, [mainId])
+    list.unshift({ user_id: mainId, username: u[0]?.username ?? NARRADOR.username, tag: 'lore', is_main: true })
+  }
+  return list
+}
+
+/** Tag de narrador do usuário (sem '#'), ou null se ele não é narrador. */
+export async function getNarratorTagFor(userId: string): Promise<string | null> {
+  const { rows } = await db.query<{ tag: string }>(`SELECT tag FROM trik_narrators WHERE user_id = $1`, [userId])
+  if (rows[0]) return rows[0].tag
+  return (await getNarratorUserId()) === userId ? 'lore' : null
+}
+
+/** `#tag` em qualquer parte do texto puro, em qualquer caixa. `#au` não casa `#aurora`. */
+export function hasNarratorTag(text: string, tag: string): boolean {
+  const esc = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`#${esc}(?![\\wÀ-ÿ])`, 'i').test(text)
+}
+
+export class NarratorAdminError extends Error {
+  constructor(public code: 'USER_NOT_FOUND' | 'INVALID_TAG' | 'TAG_TAKEN' | 'ALREADY_NARRATOR' | 'MAIN_NARRATOR', message: string) {
+    super(message)
+  }
+}
+
+export async function addNarrator(username: string, rawTag: string, adminId: string): Promise<NarratorRow> {
+  const tag = rawTag.trim().replace(/^#/, '')
+  if (!/^[\wÀ-ÿ]{2,30}$/.test(tag) || RESERVED_NARRATOR_TAGS.has(tag.toLowerCase())) {
+    throw new NarratorAdminError('INVALID_TAG', 'Tag inválida (2 a 30 letras/números, sem espaço; treino, aula, tarefa, trabalho e com são reservadas)')
+  }
+  const { rows: users } = await db.query<{ id: string; username: string }>(
+    `SELECT id, username FROM users WHERE LOWER(username) = LOWER($1) AND is_system = false LIMIT 1`,
+    [username.trim().replace(/^@/, '')],
+  )
+  const user = users[0]
+  if (!user) throw new NarratorAdminError('USER_NOT_FOUND', 'Usuário não encontrado')
+
+  const atuais = await listNarrators()
+  if (atuais.some(n => n.user_id === user.id)) throw new NarratorAdminError('ALREADY_NARRATOR', 'Esse usuário já é narrador')
+  if (atuais.some(n => n.tag.toLowerCase() === tag.toLowerCase())) throw new NarratorAdminError('TAG_TAKEN', `#${tag} já é de outro narrador`)
+
+  try {
+    await db.query(
+      `INSERT INTO trik_narrators (user_id, tag, added_by) VALUES ($1, $2, $3)`,
+      [user.id, tag, adminId],
+    )
+  } catch (err: any) {
+    if (err?.code === '23505') throw new NarratorAdminError('TAG_TAKEN', `#${tag} já é de outro narrador`)
+    throw err
+  }
+  return { user_id: user.id, username: user.username, tag, is_main: false }
+}
+
+/** Tira o usuário da lista. O pool (prêmios e distribuições) fica guardado:
+ *  se ele voltar a ser narrador, o saldo antigo reaparece. */
+export async function removeNarrator(userId: string): Promise<boolean> {
+  if ((await getNarratorUserId()) === userId) {
+    throw new NarratorAdminError('MAIN_NARRATOR', 'O narrador do #lore não pode ser removido')
+  }
+  const { rowCount } = await db.query(`DELETE FROM trik_narrators WHERE user_id = $1`, [userId])
+  return (rowCount ?? 0) > 0
+}
+
 /** Grava o prêmio do post. false = o post já tinha prêmio (edições
  *  concorrentes) — nada foi creditado de novo. */
 export async function applyNarratorAward(userId: string, postId: string, xp: number): Promise<boolean> {
@@ -120,13 +208,18 @@ export interface NarratorDistributionRow {
   created_at:     string
   character_id:   string | null
   character_name: string | null
+  /** Distribuição pra personagem do /registro-au (trik_018). */
+  is_au:          boolean
 }
 
 export async function listNarratorDistributions(userId: string, limit = 50): Promise<NarratorDistributionRow[]> {
   const { rows } = await db.query<NarratorDistributionRow>(
-    `SELECT d.id, d.xp, d.created_at, d.character_id, ch.name AS character_name
+    `SELECT d.id, d.xp, d.created_at, d.character_id,
+            COALESCE(ch.name, au.name) AS character_name,
+            (d.au_character_id IS NOT NULL OR au.id IS NOT NULL) AS is_au
        FROM trik_narrator_distributions d
-       LEFT JOIN trik_characters ch ON ch.id = d.character_id
+       LEFT JOIN trik_characters ch    ON ch.id = d.character_id
+       LEFT JOIN trik_au_characters au ON au.id = d.au_character_id
       WHERE d.user_id = $1
       ORDER BY d.created_at DESC
       LIMIT $2`,
@@ -166,6 +259,21 @@ export async function listNarratorCharacters(userId: string): Promise<NarratorCh
   }))
 }
 
+export interface NarratorAuCharacterRow {
+  id:   string
+  name: string
+  xp:   number
+}
+
+/** Personagens do /registro-au do narrador: o xp só acumula (sem nível). */
+export async function listNarratorAuCharacters(userId: string): Promise<NarratorAuCharacterRow[]> {
+  const { rows } = await db.query(
+    `SELECT id, name, xp FROM trik_au_characters WHERE user_id = $1 ORDER BY created_at`,
+    [userId],
+  )
+  return rows.map(r => ({ ...r, xp: Number(r.xp) }))
+}
+
 export class NarratorDistributionError extends Error {
   constructor(public code: 'NOT_NARRATOR_CHARACTER' | 'INSUFFICIENT_XP', message: string) {
     super(message)
@@ -179,6 +287,8 @@ export class NarratorDistributionError extends Error {
  */
 export async function distributeNarratorXp(
   userId: string, characterId: string, xp: number, adminId: string,
+  /** true = personagem do /registro-au: só soma xp, sem level up (trik_018). */
+  au = false,
 ): Promise<{ characterName: string; leveledUp: boolean; balance: NarratorBalance }> {
   const client = await (db as any).connect()
   try {
@@ -186,7 +296,9 @@ export async function distributeNarratorXp(
     await client.query(`SELECT 1 FROM users WHERE id = $1 FOR UPDATE`, [userId])
 
     const { rows: chars } = await client.query(
-      `SELECT name FROM trik_characters WHERE id = $1 AND player_id = $2`,
+      au
+        ? `SELECT name FROM trik_au_characters WHERE id = $1 AND user_id = $2`
+        : `SELECT name FROM trik_characters WHERE id = $1 AND player_id = $2`,
       [characterId, userId],
     )
     if (!chars[0]) {
@@ -198,12 +310,22 @@ export async function distributeNarratorXp(
       throw new NarratorDistributionError('INSUFFICIENT_XP', `Saldo insuficiente (disponível: ${before.available} xp)`)
     }
 
-    await client.query(
-      `INSERT INTO trik_narrator_distributions (user_id, character_id, xp, created_by)
-       VALUES ($1, $2, $3, $4)`,
-      [userId, characterId, xp, adminId],
-    )
-    const { leveledUp } = await applyXpInTx(client, characterId, xp)
+    let leveledUp = false
+    if (au) {
+      await client.query(
+        `INSERT INTO trik_narrator_distributions (user_id, au_character_id, xp, created_by)
+         VALUES ($1, $2, $3, $4)`,
+        [userId, characterId, xp, adminId],
+      )
+      await client.query(`UPDATE trik_au_characters SET xp = xp + $2 WHERE id = $1`, [characterId, xp])
+    } else {
+      await client.query(
+        `INSERT INTO trik_narrator_distributions (user_id, character_id, xp, created_by)
+         VALUES ($1, $2, $3, $4)`,
+        [userId, characterId, xp, adminId],
+      )
+      ;({ leveledUp } = await applyXpInTx(client, characterId, xp))
+    }
 
     await client.query('COMMIT')
     return {

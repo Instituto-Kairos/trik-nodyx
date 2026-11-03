@@ -34,6 +34,7 @@ const MENTION_RE       = /@([\w\-]{2,30})/g
 // utilisateur exclu/banni ne doit pas pouvoir être notifié via une mention.
 export async function resolveMentions(html: string, communityId: string): Promise<string[]> {
   const usernames = new Set<string>()
+  const characterImages = new Set<string>()
   let match: RegExpExecArray | null
 
   // Aliases primeiro: numa cena de RPG é a forma dominante, e o plafond deve
@@ -44,13 +45,39 @@ export async function resolveMentions(html: string, communityId: string): Promis
     // `@[Nome](npc:<image id>)` uma imagem do álbum NPC da galeria, não um
     // jogador : ninguém a notificar (cf GET /trik/npcc e /trik/npc).
     if (match[1].startsWith('npcc:') || match[1].startsWith('npc:')) continue
+    // `@[Nome](pc:<image id>)`: post do personagem no álbum Personagens da
+    // galeria. Notifica o jogador dono, resolvido abaixo pela imagem.
+    if (match[1].startsWith('pc:')) {
+      const id = match[1].slice(3)
+      if (/^[0-9a-f-]{36}$/i.test(id)) characterImages.add(id)
+      if (usernames.size + characterImages.size >= MAX_MENTIONS_PER_MESSAGE) break
+      continue
+    }
     usernames.add(match[1].toLowerCase())
     if (usernames.size >= MAX_MENTIONS_PER_MESSAGE) break
   }
 
   MENTION_RE.lastIndex = 0
-  while (usernames.size < MAX_MENTIONS_PER_MESSAGE && (match = MENTION_RE.exec(html)) !== null) {
+  while (usernames.size + characterImages.size < MAX_MENTIONS_PER_MESSAGE && (match = MENTION_RE.exec(html)) !== null) {
     usernames.add(match[1].toLowerCase())
+  }
+
+  // pc:<image id> → jogador do personagem com o mesmo nome do título da imagem,
+  // no universo do álbum (personagem do /registro ou do /registro-au).
+  if (characterImages.size > 0) {
+    const { rows } = await db.query<{ username: string }>(
+      `SELECT DISTINCT u.username
+         FROM galeria_images i
+         JOIN galeria_albums a ON a.id = i.album_id
+         JOIN (SELECT c.player_id AS user_id, c.name, false AS au FROM trik_characters c
+               UNION ALL
+               SELECT ac.user_id, ac.name, true AS au FROM trik_au_characters ac) ch
+           ON LOWER(ch.name) = LOWER(i.title) AND ch.au = a.is_au
+         JOIN users u ON u.id = ch.user_id
+        WHERE i.id = ANY($1::uuid[])`,
+      [Array.from(characterImages)],
+    )
+    for (const r of rows) usernames.add(r.username.toLowerCase())
   }
 
   if (usernames.size === 0) return []

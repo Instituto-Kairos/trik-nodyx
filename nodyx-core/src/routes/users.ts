@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify'
+import { getNarratorUserId } from '../models/trikNarrador'
 import { z } from 'zod'
 import { randomUUID } from 'crypto'
 import { mkdirSync } from 'fs'
@@ -187,7 +188,10 @@ export default async function userRoutes(app: FastifyInstance) {
       is_banned = banRows.rows.length > 0
     }
     // Whitelist before sending: email, email_verified and any PII stay backend-only.
-    return reply.send({ user: { ...toSelfUser(user), role, grade, is_banned } })
+    // Narrador do trik: libera o botão de texto ofuscado no editor (o core
+    // valida de novo ao salvar, ver scrambleGate em routes/forums.ts).
+    const is_narrator = (await getNarratorUserId()) === user.id
+    return reply.send({ user: { ...toSelfUser(user), role, grade, is_banned, is_narrator } })
   })
 
   // PATCH /api/v1/users/me/linked-instances — ajouter ou retirer une instance liée

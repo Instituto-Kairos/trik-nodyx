@@ -19,6 +19,7 @@
     import { socket } from '$lib/socket'
     import { page } from '$app/state'
     import { linkifyHtml } from '$lib/linkify'
+    import { renderSpoilers } from '$lib/spoiler'
     import { renderCustomEmojis, customEmojisStore } from '$lib/customEmojis'
     import NodyxEditor from '$lib/components/editor/NodyxEditor.svelte'
     import { t } from '$lib/i18n'
@@ -269,7 +270,7 @@
                             {/if}
                         </div>
                         <div class="stage-msg break-words text-[13px]" style="color: rgb(209,213,219)">
-                            {@html renderCustomEmojis(linkifyHtml(msg.content ?? ''), emojis)}
+                            {@html renderCustomEmojis(linkifyHtml(renderSpoilers(msg.content ?? '')), emojis)}
                         </div>
                     </div>
                 </div>

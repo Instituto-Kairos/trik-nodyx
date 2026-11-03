@@ -172,7 +172,7 @@
 			const res = await apiFetch(fetch, '/galeria/tags', {
 				method: 'POST',
 				headers: { Authorization: `Bearer ${data.token}` },
-				body: JSON.stringify({ name: nome }),
+				body: JSON.stringify({ name: nome, is_au: !!data.au }),
 			})
 			if (res.ok) { novaTag = ''; await invalidateAll() }
 		} finally {
@@ -308,6 +308,21 @@
 			</div>
 		{/if}
 
+		<!-- ── Abas de universo (trik_013) ───────────────────────────────── -->
+		<!-- Trocar de aba limpa álbum e tag: álbuns e tags de um lado não valem no outro. -->
+		<div class="gal-tabs" role="tablist">
+			<button type="button" role="tab" aria-selected={!data.au}
+			        class="gal-tab {!data.au ? 'gal-tab--active' : ''}"
+			        onclick={() => !data.au || aplicarFiltro({ au: '', album: '', tag: '' })}>
+				{tFn('galeria.tab_main')}
+			</button>
+			<button type="button" role="tab" aria-selected={!!data.au}
+			        class="gal-tab {data.au ? 'gal-tab--active' : ''}"
+			        onclick={() => data.au || aplicarFiltro({ au: '1', album: '', tag: '' })}>
+				{tFn('galeria.tab_au')}
+			</button>
+		</div>
+
 		<!-- ── Álbuns + busca ─────────────────────────────────────────────── -->
 		<div class="gal-filters">
 			<div class="gal-albums">
@@ -333,11 +348,6 @@
 						{tFn('galeria.no_album')}
 					</button>
 				{/if}
-				<!-- Trocar de universo limpa o álbum: um álbum de um lado não existe no outro. -->
-				<button type="button" class="gal-chip gal-chip--au {data.au ? 'is-active' : ''}"
-				        onclick={() => aplicarFiltro({ au: data.au ? '' : '1', album: '' })}>
-					{data.au ? tFn('galeria.au_exit') : tFn('galeria.au_view')}
-				</button>
 			</div>
 
 			<div class="gal-row">
@@ -482,6 +492,15 @@
 .gal-error { font-size: 0.75rem; color: rgb(248 113 113); }
 
 /* ── Filtros ───────────────────────────────────────────────────────────────── */
+.gal-tabs { display: flex; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.08); margin-bottom: 1rem; overflow-x: auto; scrollbar-width: none; }
+.gal-tab {
+	padding: 9px 18px; font-size: 0.8125rem; font-weight: 500; white-space: nowrap;
+	color: rgba(255,255,255,0.4); background: none; border: none;
+	border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer;
+	transition: color 0.15s, border-color 0.15s;
+}
+.gal-tab:hover { color: rgba(255,255,255,0.75); }
+.gal-tab--active { color: #fff; border-bottom-color: rgb(var(--nx-accent-rgb)); }
 .gal-filters { display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: space-between; margin-bottom: 1rem; }
 .gal-albums { display: flex; flex-wrap: wrap; gap: 0.375rem; }
 .gal-chip {
@@ -494,7 +513,6 @@
 /* Álbum + "×" de apagar (admin), lado a lado. */
 .gal-albumchip { display: inline-flex; align-items: center; }
 /* Troca de universo (trik_013): fica no fim da linha, separada dos álbuns. */
-.gal-chip--au { margin-left: auto; }
 .gal-tagbar { display: flex; flex-wrap: wrap; gap: 0.375rem; align-items: center; margin-bottom: 1rem; }
 .gal-tagchip {
 	display: inline-flex; align-items: center;

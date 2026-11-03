@@ -1,4 +1,6 @@
 {
+  "library.type.staff": "Staff (solo admin)",
+  "library.type.staff_tip": "Oculto de la biblioteca pública: solo aparece en el panel de admin. PNG, JPG, WebP o GIF.",
   "library.choose_file": "Elegir archivo",
   "library.no_file": "Ningún archivo",
   "library.emoji_help": "PNG, GIF o WebP · fondo transparente recomendado · cuadrado, ~128 px basta (se reduce por encima de 1024 px). GIF y WebP animados aceptados. Optimizado a WebP, máx 12 MB.",
@@ -433,6 +435,8 @@
   "editor.delete_col": "- Eliminar columna",
   "editor.delete_table": "🗑 Eliminar tabla",
   "editor.strikethrough": "Tachado",
+  "editor.scramble": "Ofuscado",
+  "editor.spoiler": "Spoiler",
   "editor.heading_1": "Encabezado H1",
   "editor.heading_2": "Encabezado H2",
   "editor.heading_3": "Encabezado H3",
@@ -1109,6 +1113,8 @@
   "translate.contributors.close": "Cerrar",
   "translate.newlang.horizon": "Nodyx aún no ha cruzado este horizonte.",
   "galeria.au_view": "Ver UA",
+  "galeria.tab_main": "Galería",
+  "galeria.tab_au": "AU",
   "galeria.au_exit": "Salir del UA",
   "galeria.album_delete": "Eliminar álbum",
   "galeria.album_delete_confirm": "¿Eliminar el álbum \"{album}\"? Las imágenes se conservan en \"Sin álbum\"."

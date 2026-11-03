@@ -1,4 +1,7 @@
 <script lang="ts">
+	import { scramble } from '$lib/actions/scramble'
+	import { renderSpoilers } from '$lib/spoiler'
+	import { loadCustomEmojis, renderCustomEmojis, customEmojisStore } from '$lib/customEmojis'
 	// Les scrapers OG (Discord, Twitter, Facebook) exigent des URLs absolues
 	// et lisent le HTML SSR : l'origin vient de page.url, jamais de window.
 	// Les bannières/logos sont stockés en chemins relatifs (/uploads/...).
@@ -224,6 +227,9 @@
 		if (type === 'enter' || type === 'popstate' || to?.url.hash) return;
 		document.getElementById('thread-top')?.scrollIntoView();
 	});
+
+	// Emojis da instância (:atalho:) nos posts; carrega uma vez, com cache.
+	$effect(() => { loadCustomEmojis() })
 </script>
 
 <svelte:head>
@@ -783,7 +789,7 @@
 						class="space-y-2"
 					>
 						<input type="hidden" name="post_id" value={post.id} />
-						<NodyxEditor mentions mentionCategory={thread.category_id}
+						<NodyxEditor mentions customEmojis scramble={!!(data.user as { is_narrator?: boolean } | null)?.is_narrator} mentionCategory={thread.category_id}
 							name="content"
 							initialContent={post.content}
 							compact={true}
@@ -803,8 +809,8 @@
 				{:else}
 					<!-- Contenu HTML rendu -->
 					<CollapsiblePost>
-						<div class="nodyx-prose">
-							{@html renderAliasMentions(post.content)}
+						<div class="nodyx-prose" use:scramble={{ content: post.content, canReveal: user?.role === 'owner' }}>
+							{@html renderCustomEmojis(renderAliasMentions(renderSpoilers(post.content)), $customEmojisStore)}
 						</div>
 					</CollapsiblePost>
 					<!-- Réactions + Merci -->
@@ -885,7 +891,7 @@
 					<p role="alert" class="text-xs text-amber-400">{form.replyError}</p>
 				{/if}
 				{#key replyKey}
-					<NodyxEditor mentions mentionCategory={thread.category_id}
+					<NodyxEditor mentions customEmojis scramble={!!(data.user as { is_narrator?: boolean } | null)?.is_narrator} mentionCategory={thread.category_id}
 						name="content"
 						placeholder={tFn('forum.reply_placeholder')}
 						compact={true}

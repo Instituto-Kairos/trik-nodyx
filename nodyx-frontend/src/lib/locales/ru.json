@@ -1,4 +1,6 @@
 {
+  "library.type.staff": "Staff (только админ)",
+  "library.type.staff_tip": "Скрыто из публичной библиотеки: видно только в админ-панели. PNG, JPG, WebP или GIF.",
   "library.choose_file": "Выбрать файл",
   "library.no_file": "Файл не выбран",
   "library.emoji_help": "PNG, GIF или WebP · прозрачный фон · квадрат, ~128 px достаточно (уменьшается свыше 1024 px). Анимированные GIF и WebP поддерживаются. Оптимизируется в WebP, макс 12 МБ.",
@@ -434,6 +436,8 @@
   "editor.delete_col": "- Удалить столбец",
   "editor.delete_table": " Удалить таблицу",
   "editor.strikethrough": "Зачёркнутый",
+  "editor.scramble": "Зашифрованный",
+  "editor.spoiler": "Спойлер",
   "editor.heading_1": "Заголовок H1",
   "editor.heading_2": "Заголовок H2",
   "editor.heading_3": "Заголовок H3",
@@ -1097,6 +1101,8 @@
   "translate.contributors.close": "Закрыть",
   "translate.newlang.horizon": "Nodyx ещё не пересёк этот горизонт.",
   "galeria.au_view": "Показать АВ",
+  "galeria.tab_main": "Галерея",
+  "galeria.tab_au": "AU",
   "galeria.au_exit": "Выйти из АВ",
   "galeria.album_delete": "Удалить альбом",
   "galeria.album_delete_confirm": "Удалить альбом «{album}»? Изображения сохранятся в разделе «Без альбома»."

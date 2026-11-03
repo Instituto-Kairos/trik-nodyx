@@ -10,12 +10,26 @@
 		available: number;
 	}
 
+	interface Narrator {
+		user_id: string;
+		username: string;
+		tag: string;
+		is_main: boolean;
+		available?: number;
+	}
+
 	interface Character {
 		id: string;
 		name: string;
 		level: number;
 		progress_xp: number;
 		goal_xp: number | null;
+	}
+
+	interface AuCharacter {
+		id: string;
+		name: string;
+		xp: number;
 	}
 
 	interface Award {
@@ -35,27 +49,38 @@
 		created_at: string;
 		character_id: string | null;
 		character_name: string | null;
+		is_au: boolean;
 	}
 
-	interface Narrador {
-		narrator: { userId: string; username: string } | null;
-		username?: string;
-		balance?: Balance;
-		characters?: Character[];
-		awards?: Award[];
-		distributions?: Distribution[];
+	interface Detail {
+		narrator: Narrator;
+		balance: Balance;
+		characters: Character[];
+		auCharacters: AuCharacter[];
+		awards: Award[];
+		distributions: Distribution[];
 	}
 
-	const narrador = $derived(data.narrador as Narrador | null);
-	const balance = $derived(narrador?.balance ?? { earned: 0, distributed: 0, available: 0 });
-	const characters = $derived(narrador?.characters ?? []);
-	const awards = $derived(narrador?.awards ?? []);
-	const distributions = $derived(narrador?.distributions ?? []);
+	const narrators = $derived((data.narrators ?? []) as Narrator[]);
+	const detail = $derived(data.detail as Detail | null);
+	const narrator = $derived(detail?.narrator ?? null);
+	const balance = $derived(detail?.balance ?? { earned: 0, distributed: 0, available: 0 });
+	const characters = $derived(detail?.characters ?? []);
+	const auCharacters = $derived(detail?.auCharacters ?? []);
+	const awards = $derived(detail?.awards ?? []);
+	const distributions = $derived(detail?.distributions ?? []);
 
-	let characterId = $state('');
+	let showAdd = $state(false);
+	let character = $state('');
 	let xp = $state<number | null>(null);
+	// Trocar de narrador zera a escolha: o personagem de um não vale no outro.
+	$effect(() => {
+		data.selected;
+		character = '';
+		xp = null;
+	});
 	const canSubmit = $derived(
-		!!characterId && !!xp && Number.isInteger(xp) && xp > 0 && xp <= balance.available
+		!!character && !!xp && Number.isInteger(xp) && xp > 0 && xp <= balance.available
 	);
 
 	const threadHref = (a: Award) =>
@@ -64,33 +89,99 @@
 		new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
 </script>
 
-<svelte:head><title>RPG — Narrador</title></svelte:head>
+<svelte:head><title>RPG — Narradores</title></svelte:head>
 
 <div class="space-y-6">
 	<div>
-		<h1 class="text-2xl font-bold text-white mb-1">Módulo RPG — Narrador</h1>
+		<h1 class="text-2xl font-bold text-white mb-1">Módulo RPG — Narradores</h1>
 		<p class="text-sm text-gray-500">
-			Post do narrador com <code class="text-gray-300">#lore</code> num tópico que vale XP rende 15 XP a
+			Cada narrador tem a sua tag. Post do narrador com a tag dele num tópico que vale XP rende 15 XP a
 			cada 500 caracteres (proporcional, mínimo de 500). Esse XP não vai pra personagem nenhum: fica
-			acumulado aqui e pode ser distribuído entre os personagens do narrador. Editar ou apagar o post
-			desfaz o prêmio.
+			acumulado no pool do narrador e pode ser distribuído entre os personagens dele, do /registro ou do
+			/registro-au. Editar ou apagar o post desfaz o prêmio.
 		</p>
 	</div>
+
+	{#if form?.error}
+		<div class="rounded-lg border border-red-800 bg-red-900/30 px-4 py-3 text-sm text-red-300">
+			{form.error}
+		</div>
+	{/if}
+
+	<!-- ── Sub-abas: uma por narrador + adicionar ──────────────────────────── -->
+	<div class="flex items-end gap-1 border-b border-gray-800 overflow-x-auto">
+		{#each narrators as n (n.user_id)}
+			<a
+				href="?u={n.user_id}"
+				class="px-4 py-2 text-sm whitespace-nowrap border-b-2 -mb-px transition-colors
+				       {data.selected === n.user_id
+					? 'border-indigo-400 text-white'
+					: 'border-transparent text-gray-500 hover:text-gray-300'}"
+			>
+				@{n.username} <span class="text-gray-500">#{n.tag}</span>
+				{#if (n.available ?? 0) !== 0}
+					<span class="ml-1 text-xs {(n.available ?? 0) < 0 ? 'text-red-400' : 'text-emerald-400'}">{n.available}</span>
+				{/if}
+			</a>
+		{/each}
+		<button
+			type="button"
+			onclick={() => (showAdd = !showAdd)}
+			class="px-4 py-2 text-sm whitespace-nowrap border-b-2 -mb-px border-transparent text-indigo-400 hover:text-indigo-300"
+		>
+			+ Adicionar narrador
+		</button>
+	</div>
+
+	{#if showAdd || form?.addError}
+		<form method="POST" action="?/adicionar" use:enhance class="rounded-xl border border-gray-800 bg-gray-900/40 p-4 flex flex-wrap items-end gap-3">
+			<div class="space-y-1">
+				<label for="nar-user" class="block text-xs text-gray-500">Usuário</label>
+				<input id="nar-user" name="username" required placeholder="ex.: fulano"
+					class="w-56 rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-white placeholder-gray-600" />
+			</div>
+			<div class="space-y-1">
+				<label for="nar-tag" class="block text-xs text-gray-500">Tag</label>
+				<input id="nar-tag" name="tag" required placeholder="ex.: au" maxlength="31"
+					class="w-40 rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-white placeholder-gray-600" />
+			</div>
+			<button type="submit" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-sm font-medium text-white">
+				Adicionar
+			</button>
+			{#if form?.addError}<p class="w-full text-sm text-red-400">{form.addError}</p>{/if}
+			<p class="w-full text-xs text-gray-500">
+				A tag vai sem o <code>#</code>. Cada tag pertence a um narrador só; treino, aula, tarefa, trabalho e
+				com são reservadas.
+			</p>
+		</form>
+	{/if}
 
 	{#if data.loadError}
 		<div class="rounded-lg border border-red-800 bg-red-900/30 px-4 py-3 text-sm text-red-300">
 			Não foi possível carregar os dados do narrador.
 		</div>
-	{:else if !narrador?.narrator}
+	{:else if !narrator}
 		<div class="rounded-lg border border-amber-800 bg-amber-900/30 px-4 py-3 text-sm text-amber-300">
-			A conta do narrador (@{narrador?.username ?? 'oorpheas'}) não existe nesta instância.
+			Nenhum narrador cadastrado. Use "+ Adicionar narrador".
 		</div>
 	{:else}
-		{#if form?.error}
-			<div class="rounded-lg border border-red-800 bg-red-900/30 px-4 py-3 text-sm text-red-300">
-				{form.error}
-			</div>
-		{/if}
+		<div class="flex flex-wrap items-center justify-between gap-3">
+			<p class="text-sm text-gray-400">
+				Posts de <strong class="text-white">@{narrator.username}</strong> com
+				<code class="text-gray-300">#{narrator.tag}</code> rendem XP pra este pool.
+			</p>
+			{#if !narrator.is_main}
+				<form method="POST" action="?/remover" use:enhance={({ cancel }) => {
+					if (!confirm(`Remover @${narrator.username} dos narradores? O saldo fica guardado caso ele volte.`)) cancel();
+				}}>
+					<input type="hidden" name="userId" value={narrator.user_id} />
+					<button type="submit" class="px-3 py-1.5 rounded-lg bg-red-900/40 text-red-400 hover:bg-red-800/60 text-xs font-medium">
+						Remover narrador
+					</button>
+				</form>
+			{/if}
+		</div>
+
 		{#if form?.distributed}
 			<div class="rounded-lg border border-emerald-800 bg-emerald-900/30 px-4 py-3 text-sm text-emerald-300">
 				{form.distributed.xp} XP distribuídos pra {form.distributed.characterName}{form.distributed
@@ -108,7 +199,7 @@
 				</div>
 			</div>
 			<div class="rounded-xl border border-gray-800 bg-gray-900/40 px-4 py-3">
-				<div class="text-[10px] font-bold uppercase tracking-widest text-gray-500">Ganho com #lore</div>
+				<div class="text-[10px] font-bold uppercase tracking-widest text-gray-500">Ganho com #{narrator.tag}</div>
 				<div class="text-2xl font-bold text-gray-300">{balance.earned} XP</div>
 			</div>
 			<div class="rounded-xl border border-gray-800 bg-gray-900/40 px-4 py-3">
@@ -119,15 +210,15 @@
 		{#if balance.available < 0}
 			<p class="text-xs text-red-400">
 				Saldo negativo: um post premiado foi editado ou apagado depois de o XP já ter sido
-				distribuído. Os próximos posts com #lore pagam essa diferença primeiro.
+				distribuído. Os próximos posts com #{narrator.tag} pagam essa diferença primeiro.
 			</p>
 		{/if}
 
 		<section class="space-y-3">
 			<h2 class="text-sm font-semibold text-white">Distribuir XP</h2>
-			{#if characters.length === 0}
+			{#if characters.length === 0 && auCharacters.length === 0}
 				<p class="text-sm text-gray-500">
-					@{narrador.narrator.username} ainda não tem personagens registrados.
+					@{narrator.username} ainda não tem personagens registrados (nem no /registro, nem no /registro-au).
 				</p>
 			{:else}
 				<form
@@ -141,18 +232,30 @@
 					}}
 					class="flex flex-wrap items-end gap-3"
 				>
+					<input type="hidden" name="userId" value={narrator.user_id} />
 					<div class="space-y-1">
-						<label for="characterId" class="block text-xs text-gray-500">Personagem</label>
+						<label for="character" class="block text-xs text-gray-500">Personagem</label>
 						<select
-							id="characterId"
-							name="characterId"
-							bind:value={characterId}
+							id="character"
+							name="character"
+							bind:value={character}
 							class="w-64 rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-white"
 						>
 							<option value="" disabled>Escolha…</option>
-							{#each characters as c (c.id)}
-								<option value={c.id}>{c.name} (nível {c.level})</option>
-							{/each}
+							{#if characters.length}
+								<optgroup label="Universo principal">
+									{#each characters as c (c.id)}
+										<option value="main:{c.id}">{c.name} (nível {c.level})</option>
+									{/each}
+								</optgroup>
+							{/if}
+							{#if auCharacters.length}
+								<optgroup label="AU">
+									{#each auCharacters as c (c.id)}
+										<option value="au:{c.id}">{c.name} ({c.xp} XP)</option>
+									{/each}
+								</optgroup>
+							{/if}
 						</select>
 					</div>
 					<div class="space-y-1">
@@ -178,35 +281,61 @@
 					</button>
 				</form>
 
-				<div class="rounded-xl border border-gray-800 bg-gray-900/40 overflow-x-auto">
-					<table class="w-full text-sm">
-						<thead>
-							<tr class="text-left text-[10px] font-bold uppercase tracking-widest text-gray-500 border-b border-gray-800">
-								<th class="px-4 py-3">Personagem</th>
-								<th class="px-4 py-3">Nível</th>
-								<th class="px-4 py-3">XP</th>
-							</tr>
-						</thead>
-						<tbody class="divide-y divide-gray-800">
-							{#each characters as c (c.id)}
-								<tr>
-									<td class="px-4 py-2 text-white">{c.name}</td>
-									<td class="px-4 py-2 text-gray-300">{c.level}</td>
-									<td class="px-4 py-2 text-gray-300">
-										{c.progress_xp}{c.goal_xp !== null ? ` / ${c.goal_xp}` : ''}
-										{#if c.goal_xp === null}<span class="text-gray-500">(nível máx.)</span>{/if}
-									</td>
+				<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+					<div class="rounded-xl border border-gray-800 bg-gray-900/40 overflow-x-auto">
+						<table class="w-full text-sm">
+							<thead>
+								<tr class="text-left text-[10px] font-bold uppercase tracking-widest text-gray-500 border-b border-gray-800">
+									<th class="px-4 py-3">Universo principal</th>
+									<th class="px-4 py-3">Nível</th>
+									<th class="px-4 py-3">XP</th>
 								</tr>
-							{/each}
-						</tbody>
-					</table>
+							</thead>
+							<tbody class="divide-y divide-gray-800">
+								{#each characters as c (c.id)}
+									<tr>
+										<td class="px-4 py-2 text-white">{c.name}</td>
+										<td class="px-4 py-2 text-gray-300">{c.level}</td>
+										<td class="px-4 py-2 text-gray-300">
+											{c.progress_xp}{c.goal_xp !== null ? ` / ${c.goal_xp}` : ''}
+											{#if c.goal_xp === null}<span class="text-gray-500">(nível máx.)</span>{/if}
+										</td>
+									</tr>
+								{/each}
+								{#if characters.length === 0}
+									<tr><td colspan="3" class="px-4 py-6 text-center text-gray-500">Nenhum personagem no /registro.</td></tr>
+								{/if}
+							</tbody>
+						</table>
+					</div>
+					<div class="rounded-xl border border-gray-800 bg-gray-900/40 overflow-x-auto">
+						<table class="w-full text-sm">
+							<thead>
+								<tr class="text-left text-[10px] font-bold uppercase tracking-widest text-gray-500 border-b border-gray-800">
+									<th class="px-4 py-3">AU</th>
+									<th class="px-4 py-3">XP acumulado</th>
+								</tr>
+							</thead>
+							<tbody class="divide-y divide-gray-800">
+								{#each auCharacters as c (c.id)}
+									<tr>
+										<td class="px-4 py-2 text-white">{c.name}</td>
+										<td class="px-4 py-2 text-gray-300">{c.xp}</td>
+									</tr>
+								{/each}
+								{#if auCharacters.length === 0}
+									<tr><td colspan="2" class="px-4 py-6 text-center text-gray-500">Nenhum personagem no /registro-au.</td></tr>
+								{/if}
+							</tbody>
+						</table>
+					</div>
 				</div>
 			{/if}
 		</section>
 
 		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
 			<section class="space-y-3">
-				<h2 class="text-sm font-semibold text-white">Posts com #lore</h2>
+				<h2 class="text-sm font-semibold text-white">Posts com #{narrator.tag}</h2>
 				<div class="rounded-xl border border-gray-800 bg-gray-900/40 overflow-x-auto">
 					<table class="w-full text-sm">
 						<thead>
@@ -228,7 +357,7 @@
 							{/each}
 							{#if awards.length === 0}
 								<tr>
-									<td colspan="3" class="px-4 py-6 text-center text-gray-500">Nenhum post com #lore ainda.</td>
+									<td colspan="3" class="px-4 py-6 text-center text-gray-500">Nenhum post com #{narrator.tag} ainda.</td>
 								</tr>
 							{/if}
 						</tbody>
@@ -252,6 +381,7 @@
 								<tr>
 									<td class="px-4 py-2 text-white">
 										{d.character_name ?? 'personagem removido'}
+										{#if d.is_au}<span class="ml-1 text-[10px] text-violet-300">AU</span>{/if}
 									</td>
 									<td class="px-4 py-2 text-gray-300">−{d.xp}</td>
 									<td class="px-4 py-2 text-gray-500">{fmtDate(d.created_at)}</td>

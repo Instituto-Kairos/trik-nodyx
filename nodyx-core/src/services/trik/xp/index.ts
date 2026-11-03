@@ -9,7 +9,7 @@
  * RPG. Qualquer falha interna vira log + resultado "not awarded".
  */
 
-import { parseScenePost, parseFooterTags, parseFooterMeta, stripTags, hasLoreTag } from './sceneParser'
+import { parseScenePost, parseFooterTags, parseFooterMeta, stripTags } from './sceneParser'
 import { computeTraining, periodOf, type AlertOutcome } from './bonusEngine'
 import { dayAlerts, addDays, type Climate } from '../weather'
 import { matchCharacterByHeader, matchByHeader } from './matcher'
@@ -28,7 +28,7 @@ import {
   findCatalogByName, getMasteryUsedToday, type CatalogEntry, type MasteryKind,
 } from '../../../models/trikMastery'
 import {
-  getNarratorUserId, applyNarratorAward, revertNarratorAward, listNarratorAwardedPostIdsByThread,
+  getNarratorTagFor, hasNarratorTag, applyNarratorAward, revertNarratorAward, listNarratorAwardedPostIdsByThread,
 } from '../../../models/trikNarrador'
 import {
   isAuThread, getAuCharactersWithTemplate, applyAuSceneAward, revertAuSceneAward, listAuAwardedPostIdsByThread,
@@ -237,15 +237,14 @@ export async function processScenePost(params: {
 
     const parsed = parseScenePost(params.content)
 
-    // Cena de narrador: post do narrador com #lore. Testa a tag antes (sem
-    // custo) pra só ir ao banco atrás do narrador quando ela existe. Não exige
-    // estrutura de plaquinha: com estrutura conta só a cena, sem ela o post todo.
+    // Cena de narrador: post de um narrador com a tag DELE (trik_018: #lore,
+    // #au...). Não exige estrutura de plaquinha: com estrutura conta só a cena,
+    // sem ela o post todo. Autor que não é narrador, ou post sem a tag dele,
+    // segue o fluxo normal de cena.
     const plain = stripTags(params.content)
-    if (hasLoreTag(plain)) {
-      const narratorId = await getNarratorUserId()
-      if (narratorId && narratorId === params.authorUserId) {
-        return await processNarratorPost(narratorId, params.postId, parsed?.cena ?? plain)
-      }
+    const narratorTag = await getNarratorTagFor(params.authorUserId)
+    if (narratorTag && hasNarratorTag(plain, narratorTag)) {
+      return await processNarratorPost(params.authorUserId, params.postId, parsed?.cena ?? plain)
     }
 
     if (!parsed) {

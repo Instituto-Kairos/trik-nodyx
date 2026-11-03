@@ -8,7 +8,7 @@ const UPLOADS_DIR = path.join(process.cwd(), 'uploads', 'assets')
 const MAX_DIMENSION = 1024  // max width or height in px
 const THUMB_SIZE    = 256   // thumbnail square size
 
-export type AssetType = 'frame' | 'banner' | 'font' | 'badge' | 'sticker' | 'theme' | 'emoji' | 'sound' | 'image' | 'video'
+export type AssetType = 'frame' | 'banner' | 'font' | 'badge' | 'sticker' | 'theme' | 'emoji' | 'sound' | 'image' | 'video' | 'staff'
 
 export interface AssetRow {
   id: string
@@ -119,7 +119,7 @@ export async function getAsset(id: string): Promise<AssetRow | null> {
 
 export async function getAssetMeta(id: string): Promise<AssetRow | null> {
   const { rows } = await db.query<AssetRow>(
-    `SELECT * FROM community_assets WHERE id = $1 AND is_banned = false`,
+    `SELECT * FROM community_assets WHERE id = $1 AND is_banned = false AND asset_type <> 'staff'`,
     [id]
   )
   return rows[0] ?? null
@@ -130,7 +130,7 @@ export async function getAssetMeta(id: string): Promise<AssetRow | null> {
 export async function listUserAssets(userId: string): Promise<AssetRow[]> {
   const { rows } = await db.query<AssetRow>(
     `SELECT * FROM community_assets
-     WHERE creator_id = $1 AND is_banned = false
+     WHERE creator_id = $1 AND is_banned = false AND asset_type <> 'staff'
      ORDER BY created_at DESC`,
     [userId]
   )
@@ -147,7 +147,8 @@ export async function searchAssets(opts: {
 }): Promise<AssetRow[]> {
   const { q, assetType, limit = 20, offset = 0 } = opts
   const params: unknown[] = []
-  const conditions: string[] = ['is_public = true', 'is_banned = false']
+  // 'staff' (trik_016) nunca sai na busca pública: só em /assets/admin/all.
+  const conditions: string[] = ['is_public = true', 'is_banned = false', "asset_type <> 'staff'"]
 
   if (assetType) {
     params.push(assetType)

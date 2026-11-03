@@ -55,6 +55,7 @@ const PatchImageBody = z.object({
 
 const TagBody = z.object({
   name: z.string().trim().min(1).max(30),
+  is_au: z.boolean().optional(),   // trik_017: tag criada na aba AU é tag de AU
 })
 
 const ReactionBody = z.object({
@@ -128,10 +129,12 @@ export default async function galeriaRoutes(app: FastifyInstance) {
   // Catálogo: qualquer membro cadastra (é o que evita redigitar), só admin/owner
   // apaga, porque apagar tira a tag de todas as imagens.
 
-  app.get('/tags', { preHandler: [rateLimit, requireAuth] }, async (_request, reply) => {
+  app.get('/tags', { preHandler: [rateLimit, requireAuth] }, async (request, reply) => {
     const communityId = await getCommunityId()
     if (!communityId) return reply.code(503).send({ error: 'Community not configured' })
-    return reply.send({ tags: await Galeria.listTags(communityId) })
+    // ?au=1 / ?au=0: contagem (e, no AU, a lista) restrita àquele universo.
+    const au = (request.query as { au?: string }).au
+    return reply.send({ tags: await Galeria.listTags(communityId, au === '1' ? true : au === '0' ? false : undefined) })
   })
 
   app.post('/tags', {
@@ -139,12 +142,12 @@ export default async function galeriaRoutes(app: FastifyInstance) {
   }, async (request, reply) => {
     const communityId = await getCommunityId()
     if (!communityId) return reply.code(503).send({ error: 'Community not configured' })
-    const { name } = request.body as z.infer<typeof TagBody>
+    const { name, is_au } = request.body as z.infer<typeof TagBody>
 
     const c = checkHtmlContent(name)
     if (!c.ok) return reply.code(422).send({ error: c.reason, code: 'CONTENT_BLOCKED' })
 
-    const tag = await Galeria.createTag(communityId, name.replace(/,/g, ' '), request.user!.userId)
+    const tag = await Galeria.createTag(communityId, name.replace(/,/g, ' '), request.user!.userId, !!is_au)
     return tag ? reply.code(201).send({ tag }) : reply.code(400).send({ error: 'Tag inválida.' })
   })
 
@@ -229,6 +232,8 @@ export default async function galeriaRoutes(app: FastifyInstance) {
       communityId,
       (campo('tags') ?? '').split(',').slice(0, 12),
       request.user!.userId,
+      // trik_017: a tag nasce no universo do álbum da imagem.
+      await Galeria.albumIsAu(communityId, albumId),
     )
 
     try {
@@ -275,12 +280,19 @@ export default async function galeriaRoutes(app: FastifyInstance) {
       descricao = d.html
     }
 
+    // trik_017: tags vivem no universo do álbum. Se o álbum troca de universo
+    // sem tags novas no corpo, as atuais são recadastradas do lado novo.
+    const albumFinal = body.album_id !== undefined ? body.album_id : atual.album_id
+    const auFinal    = await Galeria.albumIsAu(communityId, albumFinal)
+    const trocouLado = auFinal !== await Galeria.albumIsAu(communityId, atual.album_id)
+    const tagsFinal  = body.tags ?? (trocouLado ? atual.tags : undefined)
+
     const image = await Galeria.updateImage({
       communityId, id,
       title:       body.title,
       description: descricao,
       albumId:     body.album_id,
-      tags:        body.tags && await Galeria.registerTags(communityId, body.tags, request.user!.userId),
+      tags:        tagsFinal && await Galeria.registerTags(communityId, tagsFinal, request.user!.userId, auFinal),
     })
     return reply.send({ image })
   })

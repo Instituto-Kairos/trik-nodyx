@@ -13,7 +13,8 @@ import * as ThanksModel from '../models/thanks'
 import * as TagModel from '../models/tag'
 import * as NotificationModel from '../models/notification'
 import { awardPoints, REPUTATION } from '../models/reputation'
-import { sanitize } from '../utils/sanitize'
+import { sanitize, stripScramble } from '../utils/sanitize'
+import { getNarratorUserId } from '../models/trikNarrador'
 import { resolveMentions } from '../utils/mentions'
 import { db, redis } from '../config/database'
 import { checkHtmlContent } from '../services/contentFilter'
@@ -123,6 +124,12 @@ async function notificarCategoria(opts: {
 }
 
 // Check if userId is owner/admin/moderator in the community that owns a thread
+// Texto ofuscado só sobrevive em post cujo AUTOR é o Narrador.
+async function scrambleGate(html: string, authorId: string): Promise<string> {
+  if (!html.includes('scramble')) return html
+  return (await getNarratorUserId()) === authorId ? html : stripScramble(html)
+}
+
 async function isMod(userId: string, threadId: string): Promise<boolean> {
   const { rows } = await db.query<{ role: string }>(
     `SELECT cm.role
@@ -382,7 +389,7 @@ app.get('/threads', {
     const rehost = await rehostExternalImages(content)
 
     // Create the opening post (sanitize HTML from WYSIWYG editor)
-    const sanitizedContent = sanitize(rehost.html)
+    const sanitizedContent = await scrambleGate(sanitize(rehost.html), request.user!.userId)
     const threadContentCheck = checkHtmlContent(sanitizedContent)
     if (!threadContentCheck.ok) {
       return reply.code(422).send({ error: threadContentCheck.reason, code: 'CONTENT_BLOCKED' })
@@ -515,7 +522,7 @@ app.get('/threads', {
 
     // Rehost les <img> externes avant sanitize (cf POST /threads).
     const rehostReply = await rehostExternalImages(content)
-    const sanitized = sanitize(rehostReply.html)
+    const sanitized = await scrambleGate(sanitize(rehostReply.html), userId)
     const replyContentCheck = checkHtmlContent(sanitized)
     if (!replyContentCheck.ok) {
       return reply.code(422).send({ error: replyContentCheck.reason, code: 'CONTENT_BLOCKED' })
@@ -621,7 +628,8 @@ app.get('/threads', {
 
     // Rehost les <img> externes avant sanitize (cf POST /threads).
     const rehostEdit = await rehostExternalImages(content)
-    const editSanitized = sanitize(rehostEdit.html)
+    // Autor do POST, não quem edita: moderador editando cena do Narrador mantém o efeito.
+    const editSanitized = await scrambleGate(sanitize(rehostEdit.html), existing.author_id)
     const editCheck = checkHtmlContent(editSanitized)
     if (!editCheck.ok) {
       return reply.code(422).send({ error: editCheck.reason, code: 'CONTENT_BLOCKED' })

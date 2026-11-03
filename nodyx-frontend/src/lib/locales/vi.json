@@ -1,4 +1,6 @@
 {
+  "library.type.staff": "Staff (chỉ admin)",
+  "library.type.staff_tip": "Ẩn khỏi thư viện công khai: chỉ hiện trong bảng quản trị. PNG, JPG, WebP hoặc GIF.",
   "library.choose_file": "Chọn tệp",
   "library.no_file": "Không có tệp",
   "library.emoji_help": "PNG, GIF hoặc WebP · Nền trong suốt · Vuông ~128px (tự co lại trên 1024px). Hỗ trợ GIF/WebP động. Tối ưu WebP, tối đa 12MB.",
@@ -434,6 +436,8 @@
   "editor.delete_col": "Xóa cột",
   "editor.delete_table": "Xóa bảng",
   "editor.strikethrough": "Gạch ngang",
+  "editor.scramble": "Xáo trộn",
+  "editor.spoiler": "Tiết lộ nội dung",
   "editor.heading_1": "Tiêu đề 1",
   "editor.heading_2": "Tiêu đề 2",
   "editor.heading_3": "Tiêu đề 3",
@@ -1097,6 +1101,8 @@
   "translate.contributors.close": "Đóng",
   "translate.newlang.horizon": "Nodyx vẫn chưa vượt qua đường chân trời này.",
   "galeria.au_view": "Xem AU",
+  "galeria.tab_main": "Thư viện ảnh",
+  "galeria.tab_au": "AU",
   "galeria.au_exit": "Thoát AU",
   "galeria.album_delete": "Xóa album",
   "galeria.album_delete_confirm": "Xóa album \"{album}\"? Ảnh vẫn được giữ trong \"Không có album\"."
