@@ -49,7 +49,8 @@
     const tFn          = $derived($t)
 
     // ── Navigation ────────────────────────────────────────────────────────────
-    let activeSection = $state('network')
+    // Abre em Notificações (o mais procurado); `?tab=<seção>` abre outra direto.
+    let activeSection = $state(page.url.searchParams.get('tab') ?? 'notifications')
 
     // ── Twitch link (viewer flow) ─────────────────────────────────────────────
     type TwitchLink = { twitchId: string; twitchLogin: string } | null
@@ -2078,8 +2079,9 @@
     }
     .sb-nav { flex-direction: row; flex-wrap: wrap; padding: 8px; gap: 4px; }
     .sb-section-label { display: none; }
-    .sb-item { flex: 0 0 auto; padding: 8px 12px; }
-    .sb-label { display: none; }
+    .sb-item { flex: 0 0 auto; padding: 8px 10px; gap: 6px; }
+    /* Mostra o nome no celular: só ícone ninguém achava as notificações. */
+    .sb-label { font-size: 12px; }
     .sb-footer { display: none; }
     .settings-main { padding: 20px 16px 40px; }
 }
