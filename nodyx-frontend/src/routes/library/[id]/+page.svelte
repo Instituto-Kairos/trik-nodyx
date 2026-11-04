@@ -14,8 +14,8 @@
 	const me    = $derived((page.data as any).user)
 
 	const TYPE_ICONS: Record<string, string> = {
-		frame: '🖼️', banner: '🎨', badge: '🏅', sticker: '⭐',
-		font: '🔤', theme: '🎭', emoji: '😀', sound: '🔊',
+		ik: '🏞️', au: '🌀', badge: '🏅', emoji: '😀', bulk: '📦', staff: '🛡️',
+		font: '🔤', theme: '🎭', sound: '🔊', video: '🎬',
 	}
 
 	// Emoji : raccourci texte (:shortcode:) — perso (metadata) sinon dérivé du nom
@@ -134,7 +134,7 @@
 				<div>
 					<h1 class="text-xl font-bold text-white">{asset.name}</h1>
 					<p class="text-sm text-gray-500 mt-0.5">
-						{TYPE_ICONS[asset.asset_type]} {asset.asset_type}
+						{TYPE_ICONS[asset.asset_type] ?? ''} {tFn(`library.type.${asset.asset_type}`)}
 						&nbsp;·&nbsp; {(asset.file_size / 1024).toFixed(1)} Ko
 						&nbsp;·&nbsp; {asset.downloads !== 1 ? tFn('library.downloads_many', { count: asset.downloads }) : tFn('library.downloads_one', { count: asset.downloads })}
 					</p>

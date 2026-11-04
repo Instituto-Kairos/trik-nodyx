@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { PageData } from './$types'
 	import { enhance } from '$app/forms'
-	import { invalidateAll } from '$app/navigation'
+	import { invalidateAll, goto } from '$app/navigation'
 	import { apiFetch } from '$lib/api'
 	import { PUBLIC_API_URL } from '$env/static/public'
 
@@ -12,8 +12,26 @@
 	let { data }: { data: PageData } = $props()
 
 	const TYPE_ICONS: Record<string, string> = {
-		frame: '🖼️', banner: '🎨', badge: '🏅', sticker: '⭐',
-		font: '🔤', theme: '🎭', emoji: '😀', sound: '🔊', staff: '🛡️',
+		ik: '🏞️', au: '🌀', badge: '🏅', emoji: '😀', bulk: '📦', staff: '🛡️',
+		font: '🔤', theme: '🎭', sound: '🔊', video: '🎬',
+	}
+	// Categorias de imagem (trik_019): o admin troca entre elas.
+	const IMAGE_TYPES = ['ik', 'au', 'emoji', 'badge', 'bulk', 'staff']
+	const FILTERS = ['', ...IMAGE_TYPES, 'sound', 'video']
+
+	function setFilter(type: string) {
+		goto(type ? `?type=${type}` : '?', { noScroll: true })
+	}
+
+	async function changeType(asset: { id: string; asset_type: string }, next: string) {
+		if (next === asset.asset_type) return
+		const res = await apiFetch(fetch, `/assets/${asset.id}/type`, {
+			method: 'PATCH',
+			headers: { Authorization: `Bearer ${data.token}` },
+			body: JSON.stringify({ asset_type: next }),
+		})
+		if (res.ok) await invalidateAll()
+		else alert((await res.json().catch(() => ({}))).error ?? tFn('library.err.change_type'))
 	}
 
 	function thumbUrl(asset: { thumbnail_path?: string; file_path: string }) {
@@ -44,6 +62,16 @@
 	<div>
 		<h1 class="text-xl font-bold text-white">{tFn('aast.title')}</h1>
 		<p class="text-sm text-gray-400 mt-0.5">{data.assets.length > 1 ? tFn('aast.total_many', { n: data.assets.length }) : tFn('aast.total_one', { n: data.assets.length })}</p>
+	</div>
+
+	<div class="flex flex-wrap gap-2">
+		{#each FILTERS as f}
+			<button type="button" onclick={() => setFilter(f)}
+				class="px-3 py-1 rounded-full text-xs font-medium transition-colors
+				       {data.type === f ? 'bg-indigo-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}">
+				{f ? `${TYPE_ICONS[f]} ` : ''}{tFn(f ? `library.type.${f}` : 'library.type.all')}
+			</button>
+		{/each}
 	</div>
 
 	{#if data.assets.length === 0}
@@ -81,7 +109,19 @@
 									{asset.name}
 								</a>
 							</td>
-							<td class="px-4 py-3 text-gray-400" data-label={tFn('aast.col_type')}>{TYPE_ICONS[asset.asset_type] ?? ''} {asset.asset_type}</td>
+							<td class="px-4 py-3 text-gray-400" data-label={tFn('aast.col_type')}>
+								{#if IMAGE_TYPES.includes(asset.asset_type) && asset.mime_type?.startsWith('image/')}
+									<select value={asset.asset_type} aria-label={tFn('library.type_label')}
+										onchange={(e) => changeType(asset, (e.currentTarget as HTMLSelectElement).value)}
+										class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200">
+										{#each IMAGE_TYPES as t}
+											<option value={t}>{TYPE_ICONS[t]} {tFn(`library.type.${t}`)}</option>
+										{/each}
+									</select>
+								{:else}
+									{TYPE_ICONS[asset.asset_type] ?? ''} {tFn(`library.type.${asset.asset_type}`)}
+								{/if}
+							</td>
 							<td class="px-4 py-3 text-gray-400" data-label={tFn('aast.col_creator')}>{asset.creator_username ?? '·'}</td>
 							<td class="px-4 py-3 text-gray-500 text-xs" data-label={tFn('aast.col_size')}>{tFn('aast.kb', { n: Math.round(asset.file_size / 1024) })}</td>
 							<td class="px-4 py-3" data-label={tFn('aast.col_status')}>

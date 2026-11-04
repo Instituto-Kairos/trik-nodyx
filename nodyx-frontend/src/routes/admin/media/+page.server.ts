@@ -9,13 +9,19 @@ export const load: PageServerLoad = async ({ fetch, parent }) => {
 	const { token } = await parent()
 	const auth = { headers: { Authorization: `Bearer ${token}` } }
 
-	const [imgRes, vidRes, audRes] = await Promise.all([
-		apiFetch(fetch, '/assets?type=image&limit=100', auth),
+	// Imagens (trik_019): o tipo genérico 'image' acabou. O admin envia como
+	// 'staff' e vê também o próprio Bulk (onde as imagens antigas caíram).
+	const [staffRes, bulkRes, vidRes, audRes] = await Promise.all([
+		apiFetch(fetch, '/assets/staff', auth),
+		apiFetch(fetch, '/assets/mine/bulk', auth),
 		apiFetch(fetch, '/assets?type=video&limit=100', auth),
 		apiFetch(fetch, '/assets?type=sound&limit=100', auth),
 	])
 
-	const images = imgRes.ok ? (await imgRes.json()).assets ?? [] : []
+	const images = [
+		...(staffRes.ok ? (await staffRes.json()).assets ?? [] : []),
+		...(bulkRes.ok ? (await bulkRes.json()).assets ?? [] : []),
+	]
 	const videos = vidRes.ok ? (await vidRes.json()).assets ?? [] : []
 	const audios = audRes.ok ? (await audRes.json()).assets ?? [] : []
 

@@ -1612,7 +1612,7 @@
 			const token = page.data?.token ?? null
 			const form  = new FormData()
 			form.append('name', file.name.replace(/\.[^.]+$/, '') || 'canvas-image')
-			form.append('asset_type', 'image')
+			form.append('asset_type', 'bulk')   // trik_019: imagem solta → Bulk de quem colou
 			form.append('file', file)
 			const res  = await fetch(`${PUBLIC_API_URL}/api/v1/assets`, { method: 'POST', body: form, headers: token ? { Authorization: `Bearer ${token}` } : {} })
 			if (!res.ok) { console.error('Canvas upload error', res.status, await res.text()); return }

@@ -13,24 +13,49 @@
 
 	const MAX_FILE_SIZE = 12 * 1024 * 1024 // 12 MB
 
-	// label/tip résolus via tFn dans le template (clés i18n, réactif à la locale).
-	const ASSET_TYPES = [
-		{ value: '',        labelKey: 'library.type.all',     tipKey: null },
-		{ value: 'image',   labelKey: 'library.type.image',   tipKey: 'library.type.image_tip' },
-		{ value: 'badge',   labelKey: 'library.type.badge',   tipKey: 'library.type.badge_tip' },
-		{ value: 'sticker', labelKey: 'library.type.sticker', tipKey: 'library.type.sticker_tip' },
-		{ value: 'font',    labelKey: 'library.type.font',    tipKey: 'library.type.font_tip' },
-		{ value: 'theme',   labelKey: 'library.type.theme',   tipKey: 'library.type.theme_tip' },
-		{ value: 'emoji',   labelKey: 'library.type.emoji',   tipKey: 'library.type.emoji_tip' },
-		{ value: 'sound',   labelKey: 'library.type.sound',   tipKey: 'library.type.sound_tip' },
-	]
+	// Categorias (trik_019): IK, AU, Emotes, Emblemas são públicas; Bulk é
+	// privado de quem enviou; Staff só a staff vê. label/tip via tFn no template.
+	const PUBLIC_TYPES = ['ik', 'au', 'emoji', 'badge'] as const
+	const TYPE_LABEL = (t: string) => `library.type.${t}`
+	const TYPE_TIP   = (t: string) => `library.type.${t}_tip`
 
-	const isAdmin = $derived(['owner', 'admin'].includes((page.data as any).user?.role ?? ''))
-	const currentTypeTip = $derived([...ASSET_TYPES, { value: 'staff', tipKey: 'library.type.staff_tip' }].find(t => t.value === uploadType)?.tipKey ?? null)
+	const role     = $derived((page.data as any).user?.role ?? '')
+	const meId     = $derived((page.data as any).user?.id as string | undefined)
+	const isAdmin  = $derived(['owner', 'admin'].includes(role))
+	const isStaff  = $derived(['owner', 'admin', 'moderator'].includes(role))
+
+	// Filtros: Todos + públicas, e Bulk/Staff só para quem pode ver.
+	const filterTypes = $derived(['', ...PUBLIC_TYPES, ...(token ? ['bulk'] : []), ...(isStaff ? ['staff'] : [])])
+	// Categorias que dá para escolher no upload e na troca de tipo.
+	const editableTypes = $derived([...PUBLIC_TYPES, 'bulk', ...(isAdmin ? ['staff'] : [])])
 
 	const TYPE_ICONS: Record<string, string> = {
-		image: '🏞️', frame: '🖼️', banner: '🎨', badge: '🏅', sticker: '⭐',
-		font: '🔤', theme: '🎭', emoji: '😀', sound: '🔊',
+		ik: '🏞️', au: '🌀', badge: '🏅', emoji: '😀', bulk: '📦', staff: '🛡️',
+		font: '🔤', theme: '🎭', sound: '🔊', video: '🎬',
+	}
+
+	// Dono do asset ou owner/admin troca a categoria; staff segue só admin.
+	function canChangeType(asset: { creator_id?: string | null; asset_type: string; mime_type?: string }) {
+		if (!token || !asset.mime_type?.startsWith('image/')) return false
+		if (asset.asset_type === 'staff') return isAdmin
+		if (!['ik', 'au', 'emoji', 'badge', 'bulk'].includes(asset.asset_type)) return false
+		return isAdmin || (!!meId && asset.creator_id === meId)
+	}
+
+	let typeError = $state('')
+	async function changeType(asset: { id: string; asset_type: string }, next: string) {
+		if (next === asset.asset_type) return
+		typeError = ''
+		const res = await fetch(`${PUBLIC_API_URL}/api/v1/assets/${asset.id}/type`, {
+			method:  'PATCH',
+			headers: { Authorization: `Bearer ${token ?? ''}`, 'Content-Type': 'application/json' },
+			body:    JSON.stringify({ asset_type: next }),
+		})
+		if (!res.ok) {
+			typeError = (await res.json().catch(() => ({}))).error ?? tFn('library.err.change_type')
+			return
+		}
+		goto(page.url.toString(), { invalidateAll: true, noScroll: true })
 	}
 
 	let searchInput = $state('')
@@ -41,7 +66,7 @@
 
 	let uploadName        = $state('')
 	let uploadDescription = $state('')
-	let uploadType        = $state('image')
+	let uploadType        = $state('ik')
 	let uploadTags        = $state('')
 	let uploadShortcode   = $state('')   // emoji : raccourci texte perso (:code:)
 	let uploadFile        = $state<File | null>(null)
@@ -201,7 +226,7 @@
 				<div class="lib-field lib-field--grow">
 					<span class="lib-label">{tFn('library.upload.file_label')}</span>
 					<label class="lib-file-btn">
-						<input type="file" onchange={onFileChange} accept="image/*,audio/*" class="lib-file-native" />
+						<input type="file" onchange={onFileChange} accept="image/*" class="lib-file-native" />
 						<span class="lib-file-cta">📁 {tFn('library.choose_file')}</span>
 						<span class="lib-file-name" class:lib-file-name--empty={!uploadFile}>{uploadFile ? uploadFile.name : tFn('library.no_file')}</span>
 					</label>
@@ -219,13 +244,9 @@
 				<div class="lib-field">
 					<label for="lib-type" class="lib-label">Type *</label>
 					<select id="lib-type" bind:value={uploadType} class="lib-select">
-						{#each ASSET_TYPES.slice(1) as t}
-							<option value={t.value}>{tFn(t.labelKey)}</option>
+						{#each editableTypes as t}
+							<option value={t}>{tFn(TYPE_LABEL(t))}</option>
 						{/each}
-						<!-- 'staff' (trik_016): só no upload, nunca nos filtros; o core recusa não-admin. -->
-						{#if isAdmin}
-							<option value="staff">{tFn('library.type.staff')}</option>
-						{/if}
 					</select>
 				</div>
 			</div>
@@ -252,11 +273,11 @@
 						<div class="lib-tip-body">{tFn('library.emoji_help')}</div>
 					</div>
 				{/if}
-				{#if currentTypeTip && uploadType !== 'emoji'}
+				{#if uploadType !== 'emoji'}
 				<div class="lib-tip lib-field--full">
 					<span class="lib-tip-icon">💡</span>
 					<div class="lib-tip-body">
-						<span class="lib-tip-title">{tFn('library.tips_prefix')}</span>{tFn(currentTypeTip)}
+						<span class="lib-tip-title">{tFn('library.tips_prefix')}</span>{tFn(TYPE_TIP(uploadType))}
 						<span class="lib-tip-size">Taille max : <strong>12 Mo</strong></span>
 					</div>
 				</div>
@@ -275,15 +296,24 @@
 
 <!-- ── Type filter strip ─────────────────────────────────────────────────────── -->
 <div class="lib-filters">
-	{#each ASSET_TYPES as t}
+	{#each filterTypes as t}
 		<button
-			onclick={() => applyFilter(t.value)}
-			class="lib-filter-btn {data.type === t.value ? 'lib-filter-btn--active' : ''}"
+			onclick={() => applyFilter(t)}
+			class="lib-filter-btn {data.type === t ? 'lib-filter-btn--active' : ''}"
 		>
-			{t.value ? TYPE_ICONS[t.value] + ' ' : ''}{tFn(t.labelKey)}
+			{t ? TYPE_ICONS[t] + ' ' : ''}{tFn(t ? TYPE_LABEL(t) : 'library.type.all')}
 		</button>
 	{/each}
 </div>
+{#if data.type === 'bulk' && !isCommunityTab}
+	<div class="lib-tip lib-bulk-tip">
+		<span class="lib-tip-icon">📦</span>
+		<div class="lib-tip-body">{tFn('library.type.bulk_tip')}</div>
+	</div>
+{/if}
+{#if typeError}
+	<p class="lib-upload-error lib-type-error">{typeError}</p>
+{/if}
 
 <!-- ── Assets grid ───────────────────────────────────────────────────────────── -->
 <div class="lib-body">
@@ -328,21 +358,35 @@
 		{:else}
 			<div class="lib-grid">
 				{#each data.assets as asset}
-					<a href="/library/{asset.id}" class="lib-card">
-						{#if asset.thumbnail_path || asset.mime_type?.startsWith('image/')}
-							<div class="lib-card-thumb">
-								<img src={localAssetUrl(asset)} alt={asset.name} class="lib-card-img" />
+					<div class="lib-card">
+						<a href="/library/{asset.id}" class="lib-card-link">
+							{#if asset.thumbnail_path || asset.mime_type?.startsWith('image/')}
+								<div class="lib-card-thumb">
+									<img src={localAssetUrl(asset)} alt={asset.name} class="lib-card-img" />
+								</div>
+							{:else}
+								<div class="lib-card-thumb lib-card-thumb--icon">
+									{TYPE_ICONS[asset.asset_type] ?? '📦'}
+								</div>
+							{/if}
+							<div class="lib-card-info">
+								<p class="lib-card-name">{asset.name}</p>
+								<p class="lib-card-meta">{TYPE_ICONS[asset.asset_type] ?? ''} {tFn(TYPE_LABEL(asset.asset_type))} · {asset.downloads} dl</p>
 							</div>
-						{:else}
-							<div class="lib-card-thumb lib-card-thumb--icon">
-								{TYPE_ICONS[asset.asset_type] ?? '📦'}
-							</div>
+						</a>
+						{#if canChangeType(asset)}
+							<select
+								class="lib-card-type"
+								aria-label={tFn('library.type_label')}
+								value={asset.asset_type}
+								onchange={(e) => changeType(asset, (e.currentTarget as HTMLSelectElement).value)}
+							>
+								{#each editableTypes as t}
+									<option value={t}>{TYPE_ICONS[t]} {tFn(TYPE_LABEL(t))}</option>
+								{/each}
+							</select>
 						{/if}
-						<div class="lib-card-info">
-							<p class="lib-card-name">{asset.name}</p>
-							<p class="lib-card-meta">{TYPE_ICONS[asset.asset_type] ?? ''} {asset.asset_type} · {asset.downloads} dl</p>
-						</div>
-					</a>
+					</div>
 				{/each}
 			</div>
 		{/if}
@@ -777,6 +821,31 @@
 
 .lib-card:hover {
 	background: rgba(255, 255, 255, 0.03);
+}
+
+.lib-card-link {
+	display: block;
+	text-decoration: none;
+}
+
+.lib-card-type {
+	display: block;
+	width: calc(100% - 20px);
+	margin: 0 10px 10px;
+	padding: 4px 6px;
+	font-size: 0.6875rem;
+	color: rgba(255, 255, 255, 0.75);
+	background: rgba(255, 255, 255, 0.04);
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	border-radius: 6px;
+}
+
+.lib-bulk-tip {
+	margin: 12px 28px 0;
+}
+
+.lib-type-error {
+	margin: 12px 28px 0;
 }
 
 .lib-card:hover .lib-card-img {

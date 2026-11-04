@@ -150,6 +150,25 @@ server.register(fastifyStatic, {
   decorateReply: false,
 })
 
+// ── URLs antigas de uploads/posts (trik_019) ─────────────────
+// As imagens soltas foram migradas para assets Bulk (scripts/
+// migrate_loose_uploads.ts), que guardam o caminho antigo em
+// metadata.legacy_path. Link copiado/cache que ainda aponte para
+// /uploads/posts/<x> recebe 301 para o arquivo novo. Áudio continua
+// em uploads/posts e é servido normalmente pelo static acima.
+const LEGACY_POST_RE = /^\/uploads\/posts\/([\w-]+\.(?:webp|gif|png|jpe?g))$/i
+server.setNotFoundHandler(async (req, reply) => {
+  const m = (req.method === 'GET' || req.method === 'HEAD') ? LEGACY_POST_RE.exec(req.url.split('?')[0]) : null
+  if (m) {
+    const { rows } = await db.query<{ file_path: string }>(
+      `SELECT file_path FROM community_assets WHERE metadata->>'legacy_path' = $1 LIMIT 1`,
+      [`posts/${m[1]}`]
+    ).catch(() => ({ rows: [] as { file_path: string }[] }))
+    if (rows[0]) return reply.code(301).redirect(`/uploads/${rows[0].file_path}`)
+  }
+  return reply.code(404).send({ message: `Route ${req.method}:${req.url} not found`, error: 'Not Found', statusCode: 404 })
+})
+
 // ── Multipart (file uploads) ─────────────────────────────────
 server.register(fastifyMultipart, {
   limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB max (WAV courts OK, conseiller mp3/ogg pour les longs)

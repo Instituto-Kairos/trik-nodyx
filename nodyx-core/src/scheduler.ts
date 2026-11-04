@@ -89,6 +89,7 @@ export async function pushAssetsToDirectory() {
               file_path, thumbnail_path, file_size, mime_type, downloads
        FROM community_assets
        WHERE is_public = true AND is_banned = false
+         AND asset_type NOT IN ('staff', 'bulk')
        ORDER BY created_at DESC
        LIMIT 500`
     )

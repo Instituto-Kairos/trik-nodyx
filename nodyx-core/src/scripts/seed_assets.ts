@@ -29,7 +29,7 @@ const ASSETS: AssetDef[] = [
   {
     name: 'Cadre Doré',
     description: 'Un cadre de profil élégant aux tons dorés, parfait pour mettre en valeur ton avatar.',
-    asset_type: 'frame',
+    asset_type: 'ik',
     tags: ['doré', 'élégant', 'classique'],
     image: () => svgToBuffer(`
       <svg width="512" height="512" xmlns="http://www.w3.org/2000/svg">
@@ -52,7 +52,7 @@ const ASSETS: AssetDef[] = [
   {
     name: 'Bannière Coucher de Soleil',
     description: 'Une bannière de profil avec un dégradé chaud rappelant le coucher de soleil.',
-    asset_type: 'banner',
+    asset_type: 'ik',
     tags: ['sunset', 'chaud', 'orange', 'dégradé'],
     image: () => svgToBuffer(`
       <svg width="1200" height="400" xmlns="http://www.w3.org/2000/svg">
@@ -99,7 +99,7 @@ const ASSETS: AssetDef[] = [
   {
     name: 'Sticker Flamme Nodyx',
     description: 'Un sticker flamme animée pour exprimer ton énergie dans les discussions.',
-    asset_type: 'sticker',
+    asset_type: 'emoji',
     tags: ['flamme', 'feu', 'energie', 'sticker'],
     image: () => svgToBuffer(`
       <svg width="256" height="256" xmlns="http://www.w3.org/2000/svg">
@@ -130,7 +130,7 @@ const ASSETS: AssetDef[] = [
   {
     name: 'Bannière Galaxie',
     description: 'Une bannière spatiale avec des étoiles scintillantes pour les explorateurs du cosmos.',
-    asset_type: 'banner',
+    asset_type: 'ik',
     tags: ['espace', 'galaxie', 'étoiles', 'sombre', 'cosmos'],
     image: () => svgToBuffer(`
       <svg width="1200" height="400" xmlns="http://www.w3.org/2000/svg">
@@ -160,7 +160,7 @@ const ASSETS: AssetDef[] = [
   {
     name: 'Cadre Néon Cyberpunk',
     description: 'Un cadre de profil aux lignes néon inspirées de l\'esthétique cyberpunk.',
-    asset_type: 'frame',
+    asset_type: 'ik',
     tags: ['néon', 'cyberpunk', 'violet', 'futuriste'],
     image: () => svgToBuffer(`
       <svg width="512" height="512" xmlns="http://www.w3.org/2000/svg">

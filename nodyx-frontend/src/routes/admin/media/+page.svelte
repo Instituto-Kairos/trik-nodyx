@@ -30,7 +30,7 @@
 	type TabId = 'images' | 'videos' | 'audios'
 	type TabMeta = {
 		labelKey:     string
-		assetType:    'image' | 'video' | 'sound'
+		assetType:    'staff' | 'video' | 'sound'
 		accept:       string
 		descKey:      string
 		mimePrefixes: string[]
@@ -38,7 +38,7 @@
 	const TABS: Record<TabId, TabMeta> = {
 		images: {
 			labelKey:     'amedia.tab_images',
-			assetType:    'image',
+			assetType:    'staff',
 			accept:       'image/jpeg,image/png,image/webp,image/gif',
 			descKey:      'amedia.desc_images',
 			mimePrefixes: ['image/'],

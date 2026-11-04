@@ -4,7 +4,6 @@ import { randomUUID } from 'crypto'
 import { mkdirSync } from 'fs'
 import { writeFile } from 'fs/promises'
 import path from 'path'
-import sharp from 'sharp'
 import { rateLimit } from '../middleware/rateLimit'
 import { requireAuth, optionalAuth } from '../middleware/auth'
 import { validate } from '../middleware/validate'
@@ -34,13 +33,13 @@ async function avisarAutor(type: 'status_reply' | 'status_reaction' | 'status_re
 }
 
 const UPLOADS_DIR  = path.join(process.cwd(), 'uploads')
+// Só áudio (trik_019): imagens vão para os assets como Bulk (POST /assets),
+// para não ficarem soltas no disco sem dono nem registro.
 const ALLOWED_MIME = [
-  'image/jpeg', 'image/png', 'image/webp', 'image/gif',
   // Audio mémo (DM, social posts) : on accepte les formats que MediaRecorder
   // produit par défaut + ce que les browsers savent jouer en <audio>.
   'audio/webm', 'audio/ogg', 'audio/mpeg', 'audio/mp4', 'audio/wav',
 ]
-const AUDIO_MIME_PREFIX = 'audio/'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -565,7 +564,7 @@ export default async function socialRoutes(app: FastifyInstance) {
     const data = await request.file()
     if (!data) return reply.code(400).send({ error: 'Aucun fichier reçu' })
     if (!ALLOWED_MIME.includes(data.mimetype)) {
-      return reply.code(400).send({ error: 'Format non supporté (jpeg, png, webp, gif)' })
+      return reply.code(400).send({ error: 'Format non supporté (audio uniquement ; les images passent par /assets)' })
     }
 
     const buf = await data.toBuffer()
@@ -578,31 +577,18 @@ export default async function socialRoutes(app: FastifyInstance) {
     const scan = scanBuffer(buf, data.mimetype)
     if (!scan.ok) return reply.code(400).send({ error: `Fichier rejeté : ${scan.reason}` })
 
-    const isAudio = data.mimetype.startsWith(AUDIO_MIME_PREFIX)
-    const isGif   = data.mimetype === 'image/gif'
-
-    let ext: string
-    if (isAudio) {
-      ext = data.mimetype === 'audio/mpeg' ? 'mp3'
-          : data.mimetype === 'audio/mp4'  ? 'm4a'
-          : data.mimetype === 'audio/wav'  ? 'wav'
-          : data.mimetype === 'audio/ogg'  ? 'ogg'
-          : 'webm'  // audio/webm par défaut (MediaRecorder)
-    } else {
-      ext = isGif ? 'gif' : 'webp'
-    }
+    const ext = data.mimetype === 'audio/mpeg' ? 'mp3'
+              : data.mimetype === 'audio/mp4'  ? 'm4a'
+              : data.mimetype === 'audio/wav'  ? 'wav'
+              : data.mimetype === 'audio/ogg'  ? 'ogg'
+              : 'webm'  // audio/webm par défaut (MediaRecorder)
 
     const fname = `${randomUUID()}.${ext}`
     const dir   = path.join(UPLOADS_DIR, 'posts')
     mkdirSync(dir, { recursive: true })
 
-    const final = isAudio
-      ? buf  // pas de transcodage audio (pas de ffmpeg en deps), on stocke tel quel
-      : isGif
-        ? buf
-        : await sharp(buf).resize(1200, 1200, { fit: 'inside', withoutEnlargement: true }).webp({ quality: 85 }).toBuffer()
-
-    await writeFile(path.join(dir, fname), final)
-    return reply.send({ url: `/uploads/posts/${fname}`, kind: isAudio ? 'audio' : 'image' })
+    // pas de transcodage audio (pas de ffmpeg en deps), on stocke tel quel
+    await writeFile(path.join(dir, fname), buf)
+    return reply.send({ url: `/uploads/posts/${fname}`, kind: 'audio' })
   })
 }

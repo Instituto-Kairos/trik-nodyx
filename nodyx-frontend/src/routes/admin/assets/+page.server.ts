@@ -2,14 +2,16 @@ import { fail } from '@sveltejs/kit'
 import type { PageServerLoad, Actions } from './$types'
 import { apiFetch } from '$lib/api'
 
-export const load: PageServerLoad = async ({ fetch, parent }) => {
+export const load: PageServerLoad = async ({ fetch, parent, url }) => {
 	const { token } = await parent()
-	const res = await apiFetch(fetch, '/assets/admin/all', {
+	// ?type= filtra por categoria (ex.: o Bulk de todos os usuários, trik_019).
+	const type = url.searchParams.get('type') ?? ''
+	const res = await apiFetch(fetch, `/assets/admin/all${type ? `?type=${encodeURIComponent(type)}` : ''}`, {
 		headers: { Authorization: `Bearer ${token}` },
 	})
-	if (!res.ok) return { assets: [] }
+	if (!res.ok) return { assets: [], type }
 	const { assets } = await res.json()
-	return { assets }
+	return { assets, type }
 }
 
 export const actions: Actions = {

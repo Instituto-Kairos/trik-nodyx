@@ -433,7 +433,7 @@ export default async function musicRoutes(app: FastifyInstance) {
       buffer,
       originalFilename: data.filename,
       mimeType:         data.mimetype,
-      assetType:        'image',
+      assetType:        'bulk',
       name:             data.filename,
     })
     return reply.send({

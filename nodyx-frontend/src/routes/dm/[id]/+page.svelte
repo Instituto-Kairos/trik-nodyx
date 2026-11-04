@@ -886,9 +886,13 @@
 		}
 		uploading = true
 		try {
+			// Imagem vira asset Bulk de quem enviou (trik_019): /social/upload
+			// agora só aceita áudio. O multipart só vê os campos antes do arquivo.
 			const form = new FormData()
+			form.append('name', (file.name.replace(/\.[^.]+$/, '') || 'dm').slice(0, 100))
+			form.append('asset_type', 'bulk')
 			form.append('file', file, file.name)
-			const res = await apiFetch(fetch, '/social/upload', {
+			const res = await apiFetch(fetch, '/assets', {
 				method:  'POST',
 				body:    form,
 				headers: { Authorization: `Bearer ${data.token}` },
@@ -897,7 +901,8 @@
 				console.error('[dm:upload] échec', res.status)
 				return
 			}
-			const { url } = await res.json() as { url: string }
+			const { asset } = await res.json() as { asset: { file_path: string } }
+			const url = `/uploads/${asset.file_path}`
 			// Insère l'URL dans la textarea (à la fin si déjà du texte, sinon
 			// tout seul). MessageBody la rendra inline comme <img> au envoi.
 			messageInput = messageInput.trim()

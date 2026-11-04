@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { requireAuth } from '../middleware/auth'
+import { requireAuth, optionalAuth } from '../middleware/auth'
 import { adminOnly } from '../middleware/adminOnly'
 import { rateLimit } from '../middleware/rateLimit'
 import { validate } from '../middleware/validate'
@@ -10,12 +10,17 @@ import {
   listUserAssets,
   searchAssets,
   deleteAsset,
+  listOwnBulk,
+  setAssetType,
   type AssetType,
 } from '../services/assetService'
 import { scanBuffer } from '../services/fileScanner'
 import { db, redis } from '../config/database'
 
-const VALID_TYPES = ['frame', 'banner', 'font', 'badge', 'sticker', 'theme', 'emoji', 'sound', 'image', 'video', 'staff'] as const
+// trik_019: categorias da biblioteca + tipos internos (sound/video/font/theme).
+const VALID_TYPES = ['ik', 'au', 'staff', 'emoji', 'badge', 'bulk', 'sound', 'video', 'font', 'theme'] as const
+// Categorias de imagem entre as quais o tipo pode ser trocado (PATCH /:id/type).
+const IMAGE_CATEGORIES = ['ik', 'au', 'staff', 'emoji', 'badge', 'bulk'] as const
 
 // Per-user upload quota: 200 MB per 24h rolling window.
 // Cible : empêcher les regular users de flood l'instance (avatars, stickers,
@@ -67,12 +72,14 @@ async function isInstanceStaff(userId: string): Promise<boolean> {
   return ['owner', 'admin', 'moderator'].includes(r.rows[0]?.role ?? '')
 }
 
+const IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] as const
 const ALLOWED_MIME_BY_TYPE: Record<string, readonly string[]> = {
-  frame:   ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
-  banner:  ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
-  badge:   ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
-  sticker: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
-  emoji:   ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+  ik:      IMAGE_MIMES,
+  au:      IMAGE_MIMES,
+  badge:   IMAGE_MIMES,
+  emoji:   IMAGE_MIMES,
+  bulk:    IMAGE_MIMES,
+  staff:   IMAGE_MIMES,
   font:    [
     'font/ttf', 'font/otf', 'font/woff', 'font/woff2',
     'application/font-woff', 'application/font-woff2',
@@ -80,8 +87,6 @@ const ALLOWED_MIME_BY_TYPE: Record<string, readonly string[]> = {
   ],
   sound:   ['audio/mpeg', 'audio/ogg', 'audio/wav', 'audio/webm', 'audio/mp4', 'audio/flac'],
   theme:   ['application/json', 'text/plain'],
-  image:   ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
-  staff:   ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
   video:   ['video/mp4', 'video/webm', 'video/ogg', 'video/quicktime', 'video/x-matroska'],
 }
 
@@ -94,6 +99,10 @@ const SearchQuery = z.object({
 
 const RenameBody = z.object({
   name: z.string().trim().min(1).max(100),
+})
+
+const TypeBody = z.object({
+  asset_type: z.enum(IMAGE_CATEGORIES),
 })
 
 export default async function assetRoutes(app: FastifyInstance) {
@@ -206,11 +215,34 @@ export default async function assetRoutes(app: FastifyInstance) {
     return reply.send({ assets: rows })
   })
 
+  // ── GET /api/v1/assets/mine/bulk — Bulk do próprio usuário (trik_019) ────
+  // Declarada ANTES de /:id. O Bulk é privado: cada um vê só o seu; o owner vê
+  // todos em /assets/admin/all.
+  app.get('/mine/bulk', {
+    preHandler: [rateLimit, requireAuth],
+  }, async (req, reply) => {
+    const assets = await listOwnBulk(req.user!.userId)
+    return reply.send({ assets })
+  })
+
   // ── GET /api/v1/assets/:id — Get asset metadata ────────────────────────────
-  app.get<{ Params: { id: string } }>('/:id', { preHandler: [rateLimit] }, async (req, reply) => {
+  app.get<{ Params: { id: string } }>('/:id', { preHandler: [rateLimit, optionalAuth] }, async (req, reply) => {
     const asset = await getAssetMeta(req.params.id)
-    if (!asset) return reply.code(404).send({ error: 'Asset introuvable.' })
-    return reply.send({ asset })
+    if (asset) return reply.send({ asset })
+
+    // Bulk (privado) e staff: só o criador ou owner/admin abrem pela página.
+    const userId = req.user?.userId
+    if (userId) {
+      const { rows } = await db.query<{ creator_id: string | null; asset_type: string }>(
+        `SELECT * FROM community_assets WHERE id = $1 AND is_banned = false`,
+        [req.params.id]
+      )
+      const row = rows[0]
+      if (row && (row.creator_id === userId || await isInstanceAdmin(userId))) {
+        return reply.send({ asset: row })
+      }
+    }
+    return reply.code(404).send({ error: 'Asset introuvable.' })
   })
 
   // ── DELETE /api/v1/assets/:id — Delete own asset ───────────────────────────
@@ -232,12 +264,17 @@ export default async function assetRoutes(app: FastifyInstance) {
   app.get('/admin/all', {
     preHandler: [adminOnly],
   }, async (req, reply) => {
+    // ?type= filtra (ex.: o Bulk de todos, trik_019); tipo desconhecido = sem filtro.
+    const type = (req.query as { type?: string }).type
+    const filter = type && (VALID_TYPES as readonly string[]).includes(type) ? type : null
     const { rows } = await db.query(
       `SELECT a.*, u.username AS creator_username
        FROM community_assets a
        LEFT JOIN users u ON u.id = a.creator_id
+       WHERE ($1::text IS NULL OR a.asset_type = $1)
        ORDER BY a.created_at DESC
-       LIMIT 200`
+       LIMIT 200`,
+      [filter]
     )
     return reply.send({ assets: rows })
   })
@@ -257,6 +294,37 @@ export default async function assetRoutes(app: FastifyInstance) {
     await fs.unlink(path.join(process.cwd(), 'uploads', file_path)).catch(() => {})
     if (thumbnail_path) await fs.unlink(path.join(process.cwd(), 'uploads', thumbnail_path)).catch(() => {})
     return reply.send({ ok: true })
+  })
+
+  // ── PATCH /api/v1/assets/:id/type — Trocar a categoria (trik_019) ──────────
+  // O criador troca a dos próprios assets; owner/admin trocam qualquer um.
+  // 'staff' continua só para owner/admin. Só entre categorias de imagem.
+  app.patch<{ Params: { id: string } }>('/:id/type', {
+    preHandler: [rateLimit, requireAuth, validate({ body: TypeBody })],
+  }, async (req, reply) => {
+    const userId = req.user!.userId
+    const { asset_type } = req.body as z.infer<typeof TypeBody>
+
+    const { rows } = await db.query<{ creator_id: string | null; asset_type: string; mime_type: string }>(
+      `SELECT creator_id, asset_type, mime_type FROM community_assets WHERE id = $1`,
+      [req.params.id]
+    )
+    const cur = rows[0]
+    if (!cur) return reply.code(404).send({ error: 'Asset introuvable.' })
+
+    const admin = await isInstanceAdmin(userId)
+    if (cur.creator_id !== userId && !admin) {
+      return reply.code(403).send({ error: 'Forbidden', code: 'FORBIDDEN' })
+    }
+    if ((asset_type === 'staff' || cur.asset_type === 'staff') && !admin) {
+      return reply.code(403).send({ error: 'Seuls les admins peuvent gérer les assets staff.' })
+    }
+    if (!(IMAGE_CATEGORIES as readonly string[]).includes(cur.asset_type) || !cur.mime_type.startsWith('image/')) {
+      return reply.code(400).send({ error: 'Seules les images peuvent changer de catégorie.' })
+    }
+
+    const asset = await setAssetType(req.params.id, asset_type)
+    return reply.send({ asset })
   })
 
   // ── PATCH /api/v1/assets/:id — Admin rename ────────────────────────────────

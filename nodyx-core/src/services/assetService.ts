@@ -8,7 +8,10 @@ const UPLOADS_DIR = path.join(process.cwd(), 'uploads', 'assets')
 const MAX_DIMENSION = 1024  // max width or height in px
 const THUMB_SIZE    = 256   // thumbnail square size
 
-export type AssetType = 'frame' | 'banner' | 'font' | 'badge' | 'sticker' | 'theme' | 'emoji' | 'sound' | 'image' | 'video' | 'staff'
+// Categorias da biblioteca (trik_019): ik, au, staff, emoji (Emotes),
+// badge (Emblemas) e bulk (privado de quem enviou). sound/video/font/theme são
+// tipos internos (soundboard, /admin/media, música), fora da biblioteca.
+export type AssetType = 'ik' | 'au' | 'staff' | 'emoji' | 'badge' | 'bulk' | 'sound' | 'video' | 'font' | 'theme'
 
 export interface AssetRow {
   id: string
@@ -90,13 +93,14 @@ export async function uploadAsset(opts: {
     `INSERT INTO community_assets
        (asset_type, name, description, creator_id,
         file_path, file_hash, file_size, mime_type, original_filename,
-        thumbnail_path, tags, metadata)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        thumbnail_path, tags, metadata, is_public)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
      RETURNING *`,
     [
       assetType, name, description ?? null, creatorId,
       filePath, hash, finalBuffer.length, finalMime, originalFilename,
       thumbPath, tags ?? [], JSON.stringify(metadata ?? {}),
+      assetType !== 'bulk',
     ]
   )
   return rows[0]
@@ -119,7 +123,7 @@ export async function getAsset(id: string): Promise<AssetRow | null> {
 
 export async function getAssetMeta(id: string): Promise<AssetRow | null> {
   const { rows } = await db.query<AssetRow>(
-    `SELECT * FROM community_assets WHERE id = $1 AND is_banned = false AND asset_type <> 'staff'`,
+    `SELECT * FROM community_assets WHERE id = $1 AND is_banned = false AND asset_type NOT IN ('staff', 'bulk')`,
     [id]
   )
   return rows[0] ?? null
@@ -130,7 +134,7 @@ export async function getAssetMeta(id: string): Promise<AssetRow | null> {
 export async function listUserAssets(userId: string): Promise<AssetRow[]> {
   const { rows } = await db.query<AssetRow>(
     `SELECT * FROM community_assets
-     WHERE creator_id = $1 AND is_banned = false AND asset_type <> 'staff'
+     WHERE creator_id = $1 AND is_banned = false AND asset_type NOT IN ('staff', 'bulk')
      ORDER BY created_at DESC`,
     [userId]
   )
@@ -147,8 +151,8 @@ export async function searchAssets(opts: {
 }): Promise<AssetRow[]> {
   const { q, assetType, limit = 20, offset = 0 } = opts
   const params: unknown[] = []
-  // 'staff' (trik_016) nunca sai na busca pública: só em /assets/admin/all.
-  const conditions: string[] = ['is_public = true', 'is_banned = false', "asset_type <> 'staff'"]
+  // 'staff' (trik_016) e 'bulk' (trik_019) nunca saem na busca pública.
+  const conditions: string[] = ['is_public = true', 'is_banned = false', "asset_type NOT IN ('staff', 'bulk')"]
 
   if (assetType) {
     params.push(assetType)
@@ -169,6 +173,32 @@ export async function searchAssets(opts: {
     params
   )
   return rows
+}
+
+// ── Bulk do próprio usuário (trik_019) ───────────────────────────────────────
+
+export async function listOwnBulk(userId: string, limit = 200): Promise<AssetRow[]> {
+  const { rows } = await db.query<AssetRow>(
+    `SELECT * FROM community_assets
+     WHERE creator_id = $1 AND asset_type = 'bulk' AND is_banned = false
+     ORDER BY created_at DESC LIMIT $2`,
+    [userId, limit]
+  )
+  return rows
+}
+
+// ── Trocar o tipo (categoria) de um asset ────────────────────────────────────
+// Quem pode é decidido na rota; aqui só aplica, mantendo is_public coerente.
+
+export async function setAssetType(id: string, assetType: AssetType): Promise<AssetRow | null> {
+  const { rows } = await db.query<AssetRow>(
+    `UPDATE community_assets
+        SET asset_type = $2, is_public = ($2 <> 'bulk')
+      WHERE id = $1
+      RETURNING *`,
+    [id, assetType]
+  )
+  return rows[0] ?? null
 }
 
 // ── Delete an asset (only by creator) ────────────────────────────────────────

@@ -48,8 +48,6 @@
 	let replyTo     = $state<any | null>(null)
 	let replyToRoot = $state<string | null>(null)   // id du post RACINE du fil (réponses aplaties)
 	let editorKey   = $state(0)           // force-remount editor after submit
-	let mediaUrl    = $state<string | null>(null)
-	let mediaUploading = $state(false)
 
 	// "+2 ✨" qui s'envole quand on poste (récompense réputation visible)
 	let burstOn  = $state(false)
@@ -67,28 +65,6 @@
 	const charLeft  = $derived(500 - textLen)
 	const charColor = $derived(charLeft < 0 ? '#ef4444' : charLeft < 100 ? '#f59e0b' : 'var(--nx-text-muted)')
 
-	// ── Image upload ──────────────────────────────────────────────────────────
-	let fileInput: HTMLInputElement
-
-	async function uploadMedia(e: Event) {
-		const file = (e.target as HTMLInputElement).files?.[0]
-		if (!file) return
-		mediaUploading = true
-		try {
-			const form = new FormData()
-			form.append('file', file)
-			const res = await apiFetch(fetch, '/social/upload', {
-				method: 'POST',
-				headers: { Authorization: `Bearer ${token}` },
-				body: form,
-			})
-			if (res.ok) mediaUrl = (await res.json()).url
-		} finally {
-			mediaUploading = false
-			fileInput.value = ''
-		}
-	}
-
 	// ── Post actions ─────────────────────────────────────────────────────────
 	async function submitPost() {
 		if (isEmpty || sending) return
@@ -96,7 +72,6 @@
 		try {
 			const body: Record<string, string> = { content }
 			if (replyTo) body.reply_to_id = replyTo.id
-			if (mediaUrl)  body.media_url  = mediaUrl
 			const res = await apiFetch(fetch, '/social/status', {
 				method: 'POST',
 				headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -115,7 +90,6 @@
 					await refreshReplies(rootId)
 				}
 				content  = ''
-				mediaUrl = null
 				editorKey++   // reset TipTap
 				replyTo = null
 				replyToRoot = null
@@ -437,34 +411,10 @@
 							{/key}
 						</div>
 
-						<!-- Media preview -->
-						{#if mediaUrl}
-							<div class="composer-media-preview">
-								<img src={mediaUrl} alt={tFn('feed.attachment_alt')} class="composer-media-img" />
-								<button onclick={() => mediaUrl = null} class="composer-media-remove" title={tFn('feed.remove_media_title')}>×</button>
-							</div>
-						{/if}
-
 						<div class="composer-toolbar">
-							<!-- Image upload -->
-							<label class="composer-media-btn" title={tFn('feed.add_image_title')} class:composer-media-btn--loading={mediaUploading}>
-								{#if mediaUploading}
-									<svg class="w-4 h-4 spin" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-										<path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"/>
-									</svg>
-								{:else}
-									<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-										<path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/>
-									</svg>
-								{/if}
-								<input
-									bind:this={fileInput}
-									type="file"
-									accept="image/jpeg,image/png,image/webp,image/gif"
-									onchange={uploadMedia}
-									class="sr-only"
-								/>
-							</label>
+							<!-- Imagens: colar (Ctrl+V) ou arrastar no editor → asset Bulk (trik_019).
+							     O antigo botão de upload salvava arquivos soltos em uploads/posts. -->
+							<span class="composer-paste-hint">{tFn('feed.paste_hint')}</span>
 
 							<!-- Wave progress bar -->
 							<div class="composer-wave-track">
@@ -472,7 +422,7 @@
 							</div>
 							<span class="composer-char-count" style="color: {charColor}">{charLeft}</span>
 							<div class="composer-actions">
-								<button onclick={() => { composing = false; content = ''; mediaUrl = null; replyTo = null; editorKey++ }} class="composer-cancel">
+								<button onclick={() => { composing = false; content = ''; replyTo = null; editorKey++ }} class="composer-cancel">
 									{tFn('feed.cancel')}
 								</button>
 								<button
@@ -956,52 +906,12 @@
 }
 
 /* Media preview */
-.composer-media-preview {
-	position: relative;
-	margin-top: 0.75rem;
-	max-width: 320px;
-}
-.composer-media-img {
-	width: 100%;
-	max-height: 240px;
-	object-fit: cover;
-	border: 1px solid color-mix(in srgb, var(--nx-text) 8%, transparent);
-	display: block;
-}
-.composer-media-remove {
-	position: absolute;
-	top: 0.375rem;
-	right: 0.375rem;
-	width: 22px;
-	height: 22px;
-	background: rgba(0,0,0,0.7);
-	border: 1px solid color-mix(in srgb, var(--nx-text) 15%, transparent);
-	border-radius: 50%;
+.composer-paste-hint {
+	font-size: 0.6875rem;
 	color: var(--nx-text-muted);
-	font-size: 0.875rem;
-	line-height: 1;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	transition: background 0.15s;
+	opacity: 0.7;
+	white-space: nowrap;
 }
-.composer-media-remove:hover { background: rgba(239,68,68,0.7); }
-
-/* Upload button */
-.composer-media-btn {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 28px;
-	height: 28px;
-	border: 1px solid color-mix(in srgb, var(--nx-text) 10%, transparent);
-	color: color-mix(in srgb, var(--nx-text) 40%, transparent);
-	cursor: pointer;
-	transition: all 0.15s;
-	flex-shrink: 0;
-}
-.composer-media-btn:hover { color: var(--nx-text-muted); border-color: color-mix(in srgb, var(--nx-text) 20%, transparent); }
-.composer-media-btn--loading { cursor: wait; opacity: 0.6; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
 .spin { animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }

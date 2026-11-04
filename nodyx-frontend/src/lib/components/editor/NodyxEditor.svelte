@@ -122,17 +122,72 @@
 		if (mediaImages.length > 0) return
 		mediaLoading = true
 		try {
-			// Staff da instância também vê os assets 'staff' (trik_016), marcados com 🛡️.
+			// IK e AU são públicos; o Bulk é só de quem enviou (trik_019); a staff
+			// da instância também vê os assets 'staff' (trik_016). Cada um com selo.
 			const role  = (page.data as any).user?.role ?? ''
 			const staff = token && ['owner', 'admin', 'moderator'].includes(role)
-			const [res, staffRes] = await Promise.all([
-				fetch('/api/v1/assets?type=image&limit=100'),
-				staff ? apiFetch(fetch, '/assets/staff', { headers: { Authorization: `Bearer ${token}` } }).catch(() => null) : null,
+			const auth  = { headers: { Authorization: `Bearer ${token}` } }
+			const read  = async (r: Response | null) => r?.ok ? ((await r.json()).assets ?? []) : []
+			const [ik, au, bulk, staffRes] = await Promise.all([
+				fetch('/api/v1/assets?type=ik&limit=100').catch(() => null),
+				fetch('/api/v1/assets?type=au&limit=100').catch(() => null),
+				token ? apiFetch(fetch, '/assets/mine/bulk', auth).catch(() => null) : null,
+				staff ? apiFetch(fetch, '/assets/staff', auth).catch(() => null) : null,
 			])
-			const staffAssets = staffRes?.ok ? ((await staffRes.json()).assets ?? []) : []
-			const publicAssets = res.ok ? ((await res.json()).assets ?? []) : []
-			mediaImages = [...staffAssets, ...publicAssets]
+			mediaImages = [...await read(bulk), ...await read(staffRes), ...await read(ik), ...await read(au)]
 		} finally { mediaLoading = false }
+	}
+
+	// ── Colar / arrastar imagem → asset Bulk (trik_019) ───────────────────────
+	// Substitui o antigo botão de imagem do feed: a imagem vira um asset privado
+	// de quem colou (dá para reclassificar depois em /library) e entra no texto.
+	const PASTE_MAX_BYTES = 12 * 1024 * 1024
+	let pasteUploading = $state(0)
+	let pasteError     = $state('')
+
+	function imageFilesFrom(list: FileList | DataTransferItemList | null | undefined): File[] {
+		if (!list) return []
+		const out: File[] = []
+		for (const it of Array.from(list as ArrayLike<File | DataTransferItem>)) {
+			const f = it instanceof File ? it : (it.kind === 'file' ? it.getAsFile() : null)
+			if (f && f.type.startsWith('image/')) out.push(f)
+		}
+		return out
+	}
+
+	async function uploadPastedImages(files: File[], pos?: number) {
+		if (!token || files.length === 0) return
+		pasteError = ''
+		for (const file of files) {
+			if (file.size > PASTE_MAX_BYTES) { pasteError = tFn('library.err.too_large_simple'); continue }
+			pasteUploading++
+			try {
+				const form = new FormData()
+				const base = file.name && file.name !== 'image.png' ? file.name.replace(/\.[^.]+$/, '') : ''
+				form.append('name', (base || `colada-${new Date().toISOString().slice(0, 16).replace('T', '-')}`).slice(0, 100))
+				form.append('asset_type', 'bulk')
+				form.append('file', file)   // por último: o multipart só vê os campos antes do arquivo
+				const res = await apiFetch(fetch, '/assets', {
+					method:  'POST',
+					headers: { Authorization: `Bearer ${token}` },
+					body:    form,
+				})
+				if (!res.ok) {
+					pasteError = (await res.json().catch(() => ({}))).error ?? tFn('editor.paste_error')
+					continue
+				}
+				const { asset } = await res.json()
+				const attrs = { src: `/uploads/${asset.file_path}`, alt: asset.name ?? '' }
+				const chain = editor?.chain().focus()
+				if (pos !== undefined) chain?.insertContentAt(pos, { type: 'image', attrs }).run()
+				else chain?.setImage(attrs).run()
+				mediaImages = []   // o seletor recarrega e já mostra a nova no Bulk
+			} catch {
+				pasteError = tFn('editor.paste_error')
+			} finally {
+				pasteUploading--
+			}
+		}
 	}
 
 	function pickMedia(asset: { file_path: string; name: string }) {
@@ -794,6 +849,24 @@
 			// handleKeyDown roda ANTES do TipTap: é o único lugar de onde se pode
 			// tomar as setas e o Enter do editor enquanto o dropdown está aberto.
 			editorProps: {
+				// Imagem colada/arrastada sobe como asset Bulk em vez de virar
+				// data: URI gigante no HTML (ou de se perder).
+				handlePaste(_view, event) {
+					const files = imageFilesFrom(event.clipboardData?.items)
+					if (files.length === 0 || !token) return false
+					event.preventDefault()
+					void uploadPastedImages(files)
+					return true
+				},
+				handleDrop(view, event, _slice, moved) {
+					if (moved) return false
+					const files = imageFilesFrom(event.dataTransfer?.files)
+					if (files.length === 0 || !token) return false
+					event.preventDefault()
+					const at = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos
+					void uploadPastedImages(files, at)
+					return true
+				},
 				handleKeyDown(_view, event) {
 					if (!mentionOpen || mentionItems.length === 0) return false
 					if (event.key === 'ArrowDown') {
@@ -1008,7 +1081,26 @@
 
 	async function uploadBlobToPosts(blob: Blob, filename: string): Promise<string | null> {
 		const fd = new FormData()
+		// Capa (imagem) vira asset Bulk; /social/upload só aceita áudio (trik_019).
+		const isImage = blob.type.startsWith('image/')
+		if (isImage) {
+			fd.append('name', filename.replace(/\.[^.]+$/, '').slice(0, 100) || 'cover')
+			fd.append('asset_type', 'bulk')
+		}
 		fd.append('file', new File([blob], filename, { type: blob.type }))
+		if (isImage) {
+			const res = await apiFetch(fetch, '/assets', {
+				method:  'POST',
+				headers: { Authorization: `Bearer ${token}` },
+				body:    fd,
+			})
+			if (!res.ok) {
+				const j = await res.json().catch(() => ({}))
+				audioError = j.error ?? tFn('editor.audio.err_upload', { status: res.status })
+				return null
+			}
+			return `/uploads/${(await res.json()).asset.file_path}`
+		}
 		const res = await apiFetch(fetch, '/social/upload', {
 			method:  'POST',
 			headers: { Authorization: `Bearer ${token}` },
@@ -1781,7 +1873,11 @@
 							<img src="/uploads/{asset.file_path}" alt={asset.name}
 							     class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"/>
 							{#if asset.asset_type === 'staff'}
-								<span class="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-violet-900/80 text-violet-200 text-[10px] font-medium" title={tFn('library.type.staff_tip')}>🛡️ Staff</span>
+								<span class="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-violet-900/80 text-violet-200 text-[10px] font-medium" title={tFn('library.type.staff_tip')}>🛡️ {tFn('library.type.staff')}</span>
+							{:else if asset.asset_type === 'bulk'}
+								<span class="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-gray-900/80 text-gray-200 text-[10px] font-medium" title={tFn('library.type.bulk_tip')}>📦 {tFn('library.type.bulk')}</span>
+							{:else if asset.asset_type === 'au'}
+								<span class="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-indigo-900/80 text-indigo-200 text-[10px] font-medium">🌀 {tFn('library.type.au')}</span>
 							{/if}
 							<div class="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-end">
 								<p class="w-full px-2 py-1.5 text-[10px] text-white themed:text-[var(--nx-text)] font-medium truncate opacity-0 group-hover:opacity-100 transition-opacity"
@@ -1807,6 +1903,11 @@
 		bind:this={editorEl}
 		class="nodyx-content px-4 {compact ? 'min-h-[120px] max-h-[55vh]' : 'min-h-[320px] max-h-[65vh]'} overflow-y-auto py-4"
 	></div>
+	{#if pasteUploading > 0 || pasteError}
+		<p class="px-4 pb-2 text-xs {pasteError ? 'text-red-400' : 'text-gray-400 themed:text-[var(--nx-text-muted)]'}" aria-live="polite">
+			{pasteError || tFn('editor.paste_uploading')}
+		</p>
+	{/if}
 
 	<!-- ── Autocomplete de @menção ───────────────────────────────────────── -->
 	<!-- `position: fixed` ancorado no caret (coordsAtPos): a área de conteúdo
