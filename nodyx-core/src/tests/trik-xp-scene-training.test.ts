@@ -41,7 +41,7 @@ vi.mock('../models/trikAu', () => ({
 
 vi.mock('../models/trikNarrador', () => ({
   getNarratorUserId:                  vi.fn().mockResolvedValue(null),
-  getNarratorTagFor:                  vi.fn().mockResolvedValue(null),
+  getNarratorTagsFor:                 vi.fn().mockResolvedValue([]),
   hasNarratorTag:                     vi.fn(() => false),
   applyNarratorAward:                 vi.fn(),
   revertNarratorAward:                vi.fn().mockResolvedValue(undefined),
@@ -60,6 +60,7 @@ import {
   getChannelPurposes, getOrCreateProgress, getCharacterOwnerUsername,
 } from '../models/trik'
 import { findCatalogByName, getMasteryUsedToday } from '../models/trikMastery'
+import { getNarratorTagsFor } from '../models/trikNarrador'
 import { getGameWeek, getThreadWeatherDay, listCharacterEffects, findPartnerCharacters } from '../models/trikEffects'
 import { postTrikMessage, reactSceneRejected, reactSceneCounted } from '../services/trik/bot'
 import { processScenePost } from '../services/trik/xp'
@@ -118,6 +119,7 @@ beforeEach(() => {
   vi.mocked(reactSceneRejected).mockResolvedValue(undefined)
   vi.mocked(reactSceneCounted).mockResolvedValue(undefined)
 
+  vi.mocked(getNarratorTagsFor).mockResolvedValue([])
   vi.mocked(isXpThread).mockResolvedValue(true)
   vi.mocked(getPlayer).mockResolvedValue({ id: 'player-1' } as any)
   vi.mocked(getCharactersWithTemplate).mockResolvedValue([

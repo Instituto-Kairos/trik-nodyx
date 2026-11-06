@@ -27,7 +27,7 @@ vi.mock('../models/trikAu', () => ({
 
 vi.mock('../models/trikNarrador', () => ({
   getNarratorUserId:                  vi.fn().mockResolvedValue(null),
-  getNarratorTagFor:                  vi.fn().mockResolvedValue(null),
+  getNarratorTagsFor:                 vi.fn().mockResolvedValue([]),
   hasNarratorTag:                     vi.fn(() => false),
   applyNarratorAward:                 vi.fn(),
   revertNarratorAward:                vi.fn().mockResolvedValue(undefined),

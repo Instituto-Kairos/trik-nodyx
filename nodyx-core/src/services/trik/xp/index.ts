@@ -28,7 +28,7 @@ import {
   findCatalogByName, getMasteryUsedToday, type CatalogEntry, type MasteryKind,
 } from '../../../models/trikMastery'
 import {
-  getNarratorTagFor, hasNarratorTag, applyNarratorAward, revertNarratorAward, listNarratorAwardedPostIdsByThread,
+  getNarratorTagsFor, hasNarratorTag, applyNarratorAward, revertNarratorAward, listNarratorAwardedPostIdsByThread,
 } from '../../../models/trikNarrador'
 import {
   isAuThread, getAuCharactersWithTemplate, applyAuSceneAward, revertAuSceneAward, listAuAwardedPostIdsByThread,
@@ -237,13 +237,13 @@ export async function processScenePost(params: {
 
     const parsed = parseScenePost(params.content)
 
-    // Cena de narrador: post de um narrador com a tag DELE (trik_018: #lore,
-    // #au...). Não exige estrutura de plaquinha: com estrutura conta só a cena,
-    // sem ela o post todo. Autor que não é narrador, ou post sem a tag dele,
-    // segue o fluxo normal de cena.
+    // Cena de narrador: post de um narrador com uma das tags DELE (trik_018,
+    // trik_020: #lore, #au...). Não exige estrutura de plaquinha: com estrutura
+    // conta só a cena, sem ela o post todo. Autor que não é narrador, ou post
+    // sem nenhuma tag dele, segue o fluxo normal de cena.
     const plain = stripTags(params.content)
-    const narratorTag = await getNarratorTagFor(params.authorUserId)
-    if (narratorTag && hasNarratorTag(plain, narratorTag)) {
+    const narratorTags = await getNarratorTagsFor(params.authorUserId)
+    if (narratorTags.some(tag => hasNarratorTag(plain, tag))) {
       return await processNarratorPost(params.authorUserId, params.postId, parsed?.cena ?? plain)
     }
 

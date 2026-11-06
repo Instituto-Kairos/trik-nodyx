@@ -27,42 +27,74 @@ export async function getNarratorUserId(): Promise<string | null> {
   return rows[0]?.id ?? null
 }
 
-// ── Narradores (trik_018): cada um com a sua tag ────────────────────────────
+// ── Narradores (trik_018, trik_020): cada um com as suas tags ───────────────
 
 /** Tags que já significam outra coisa na plaquinha e não podem virar tag de narrador. */
 const RESERVED_NARRATOR_TAGS = new Set(['treino', 'aula', 'tarefa', 'trabalho', 'com'])
 
+/** Tag implícita do narrador fixo (NARRADOR): vale mesmo sem linha em trik_narrator_tags. */
+const MAIN_TAG = 'lore'
+
 export interface NarratorRow {
   user_id:  string
   username: string
-  tag:      string
+  /** Sem '#'. Post com qualquer uma delas rende xp pro mesmo pool. */
+  tags:     string[]
   /** O narrador fixo do #lore (NARRADOR): não pode ser removido pela aba. */
   is_main:  boolean
 }
 
+async function tagsByUser(): Promise<Map<string, string[]>> {
+  const { rows } = await db.query<{ user_id: string; tag: string }>(
+    `SELECT user_id, tag FROM trik_narrator_tags ORDER BY created_at, tag`,
+  )
+  const map = new Map<string, string[]>()
+  for (const r of rows) map.set(r.user_id, [...(map.get(r.user_id) ?? []), r.tag])
+  return map
+}
+
+/** #lore primeiro e sem repetir, pro narrador fixo. */
+function withMainTag(tags: string[]): string[] {
+  return [MAIN_TAG, ...tags.filter(t => t.toLowerCase() !== MAIN_TAG)]
+}
+
 /** Todos os narradores. O fixo do #lore entra mesmo sem linha na tabela. */
 export async function listNarrators(): Promise<NarratorRow[]> {
-  const [{ rows }, mainId] = await Promise.all([
-    db.query<{ user_id: string; username: string; tag: string }>(
-      `SELECT n.user_id, u.username, n.tag
+  const [{ rows }, tags, mainId] = await Promise.all([
+    db.query<{ user_id: string; username: string }>(
+      `SELECT n.user_id, u.username
          FROM trik_narrators n JOIN users u ON u.id = n.user_id
         ORDER BY n.created_at`,
     ),
+    tagsByUser(),
     getNarratorUserId(),
   ])
-  const list: NarratorRow[] = rows.map(r => ({ ...r, is_main: r.user_id === mainId }))
+  const list: NarratorRow[] = rows.map(r => {
+    const is_main = r.user_id === mainId
+    const own = tags.get(r.user_id) ?? []
+    return { ...r, tags: is_main ? withMainTag(own) : own, is_main }
+  })
   if (mainId && !list.some(n => n.user_id === mainId)) {
     const { rows: u } = await db.query<{ username: string }>(`SELECT username FROM users WHERE id = $1`, [mainId])
-    list.unshift({ user_id: mainId, username: u[0]?.username ?? NARRADOR.username, tag: 'lore', is_main: true })
+    list.unshift({
+      user_id: mainId, username: u[0]?.username ?? NARRADOR.username,
+      tags: withMainTag(tags.get(mainId) ?? []), is_main: true,
+    })
   }
   return list
 }
 
-/** Tag de narrador do usuário (sem '#'), ou null se ele não é narrador. */
-export async function getNarratorTagFor(userId: string): Promise<string | null> {
-  const { rows } = await db.query<{ tag: string }>(`SELECT tag FROM trik_narrators WHERE user_id = $1`, [userId])
-  if (rows[0]) return rows[0].tag
-  return (await getNarratorUserId()) === userId ? 'lore' : null
+/** Tags de narrador do usuário (sem '#'); vazio se ele não é narrador. */
+export async function getNarratorTagsFor(userId: string): Promise<string[]> {
+  const [{ rows }, mainId] = await Promise.all([
+    db.query<{ tag: string }>(
+      `SELECT tag FROM trik_narrator_tags WHERE user_id = $1 ORDER BY created_at, tag`,
+      [userId],
+    ),
+    getNarratorUserId(),
+  ])
+  const own = rows.map(r => r.tag)
+  return mainId === userId ? withMainTag(own) : own
 }
 
 /** `#tag` em qualquer parte do texto puro, em qualquer caixa. `#au` não casa `#aurora`. */
@@ -72,16 +104,64 @@ export function hasNarratorTag(text: string, tag: string): boolean {
 }
 
 export class NarratorAdminError extends Error {
-  constructor(public code: 'USER_NOT_FOUND' | 'INVALID_TAG' | 'TAG_TAKEN' | 'ALREADY_NARRATOR' | 'MAIN_NARRATOR', message: string) {
+  constructor(
+    public code: 'USER_NOT_FOUND' | 'INVALID_TAG' | 'TAG_TAKEN' | 'ALREADY_NARRATOR' | 'MAIN_NARRATOR'
+      | 'NOT_NARRATOR' | 'LAST_TAG' | 'TAG_NOT_FOUND',
+    message: string,
+  ) {
     super(message)
   }
 }
 
-export async function addNarrator(username: string, rawTag: string, adminId: string): Promise<NarratorRow> {
-  const tag = rawTag.trim().replace(/^#/, '')
+/** "#au, #evento festa" → ['au', 'evento', 'festa'] (sem repetir; não valida). */
+export function splitTags(raw: string): string[] {
+  const seen = new Set<string>()
+  return raw.split(/[\s,;]+/)
+    .map(t => t.trim().replace(/^#+/, ''))
+    .filter(t => {
+      const key = t.toLowerCase()
+      if (!t || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+}
+
+function assertValidTag(tag: string): void {
   if (!/^[\wÀ-ÿ]{2,30}$/.test(tag) || RESERVED_NARRATOR_TAGS.has(tag.toLowerCase())) {
-    throw new NarratorAdminError('INVALID_TAG', 'Tag inválida (2 a 30 letras/números, sem espaço; treino, aula, tarefa, trabalho e com são reservadas)')
+    throw new NarratorAdminError('INVALID_TAG', `#${tag} é inválida (2 a 30 letras/números, sem espaço; treino, aula, tarefa, trabalho e com são reservadas)`)
   }
+}
+
+/** Nenhuma das tags pode ser de outro narrador (#lore é sempre do fixo). */
+function assertTagsFree(tags: string[], narrators: NarratorRow[], userId: string): void {
+  for (const tag of tags) {
+    const key = tag.toLowerCase()
+    const owner = narrators.find(n => n.tags.some(t => t.toLowerCase() === key))
+    if (owner && owner.user_id !== userId) throw new NarratorAdminError('TAG_TAKEN', `#${tag} já é de outro narrador`)
+    if (!owner && key === MAIN_TAG) throw new NarratorAdminError('TAG_TAKEN', `#${MAIN_TAG} é do narrador fixo`)
+  }
+}
+
+async function insertTags(q: Queryable, userId: string, tags: string[], adminId: string): Promise<void> {
+  for (const tag of tags) {
+    try {
+      await q.query(
+        `INSERT INTO trik_narrator_tags (tag, user_id, added_by) VALUES ($1, $2, $3)`,
+        [tag, userId, adminId],
+      )
+    } catch (err: any) {
+      if (err?.code === '23505') throw new NarratorAdminError('TAG_TAKEN', `#${tag} já é de outro narrador`)
+      throw err
+    }
+  }
+}
+
+/** `rawTags`: uma ou várias tags, separadas por espaço ou vírgula. */
+export async function addNarrator(username: string, rawTags: string, adminId: string): Promise<NarratorRow> {
+  const tags = splitTags(rawTags)
+  if (tags.length === 0) throw new NarratorAdminError('INVALID_TAG', 'Informe pelo menos uma tag')
+  tags.forEach(assertValidTag)
+
   const { rows: users } = await db.query<{ id: string; username: string }>(
     `SELECT id, username FROM users WHERE LOWER(username) = LOWER($1) AND is_system = false LIMIT 1`,
     [username.trim().replace(/^@/, '')],
@@ -91,27 +171,67 @@ export async function addNarrator(username: string, rawTag: string, adminId: str
 
   const atuais = await listNarrators()
   if (atuais.some(n => n.user_id === user.id)) throw new NarratorAdminError('ALREADY_NARRATOR', 'Esse usuário já é narrador')
-  if (atuais.some(n => n.tag.toLowerCase() === tag.toLowerCase())) throw new NarratorAdminError('TAG_TAKEN', `#${tag} já é de outro narrador`)
+  assertTagsFree(tags, atuais, user.id)
 
+  const client = await (db as any).connect()
   try {
-    await db.query(
-      `INSERT INTO trik_narrators (user_id, tag, added_by) VALUES ($1, $2, $3)`,
-      [user.id, tag, adminId],
-    )
-  } catch (err: any) {
-    if (err?.code === '23505') throw new NarratorAdminError('TAG_TAKEN', `#${tag} já é de outro narrador`)
+    await client.query('BEGIN')
+    await client.query(`INSERT INTO trik_narrators (user_id, added_by) VALUES ($1, $2)`, [user.id, adminId])
+    await insertTags(client, user.id, tags, adminId)
+    await client.query('COMMIT')
+  } catch (err) {
+    await client.query('ROLLBACK')
     throw err
+  } finally {
+    client.release()
   }
-  return { user_id: user.id, username: user.username, tag, is_main: false }
+  return { user_id: user.id, username: user.username, tags, is_main: false }
 }
 
-/** Tira o usuário da lista. O pool (prêmios e distribuições) fica guardado:
- *  se ele voltar a ser narrador, o saldo antigo reaparece. */
+/** Acrescenta tags (uma ou várias) a um narrador que já existe. */
+export async function addNarratorTags(userId: string, rawTags: string, adminId: string): Promise<string[]> {
+  const tags = splitTags(rawTags)
+  if (tags.length === 0) throw new NarratorAdminError('INVALID_TAG', 'Informe pelo menos uma tag')
+  tags.forEach(assertValidTag)
+
+  const atuais = await listNarrators()
+  const narrator = atuais.find(n => n.user_id === userId)
+  if (!narrator) throw new NarratorAdminError('NOT_NARRATOR', 'Narrador não encontrado')
+  assertTagsFree(tags, atuais, userId)
+
+  const novas = tags.filter(t => !narrator.tags.some(o => o.toLowerCase() === t.toLowerCase()))
+  await insertTags(db as unknown as Queryable, userId, novas, adminId)
+  return [...narrator.tags, ...novas]
+}
+
+/** Tira uma tag do narrador. Prêmios já dados com ela ficam. Não deixa o
+ *  narrador sem nenhuma (aí é remover o narrador) e o #lore do fixo não sai. */
+export async function removeNarratorTag(userId: string, rawTag: string): Promise<string[]> {
+  const tag = rawTag.trim().replace(/^#+/, '').toLowerCase()
+  const narrator = (await listNarrators()).find(n => n.user_id === userId)
+  if (!narrator) throw new NarratorAdminError('NOT_NARRATOR', 'Narrador não encontrado')
+  if (narrator.is_main && tag === MAIN_TAG) {
+    throw new NarratorAdminError('MAIN_NARRATOR', `#${MAIN_TAG} é fixa do narrador principal`)
+  }
+  if (!narrator.tags.some(t => t.toLowerCase() === tag)) {
+    throw new NarratorAdminError('TAG_NOT_FOUND', `#${tag} não é desse narrador`)
+  }
+  if (narrator.tags.length <= 1) {
+    throw new NarratorAdminError('LAST_TAG', 'O narrador precisa de pelo menos uma tag — pra tirar todas, remova o narrador')
+  }
+  await db.query(`DELETE FROM trik_narrator_tags WHERE user_id = $1 AND lower(tag) = $2`, [userId, tag])
+  return narrator.tags.filter(t => t.toLowerCase() !== tag)
+}
+
+/** Tira o usuário da lista e libera as tags dele. O pool (prêmios e
+ *  distribuições) fica guardado: se ele voltar a ser narrador, o saldo antigo
+ *  reaparece. */
 export async function removeNarrator(userId: string): Promise<boolean> {
   if ((await getNarratorUserId()) === userId) {
     throw new NarratorAdminError('MAIN_NARRATOR', 'O narrador do #lore não pode ser removido')
   }
   const { rowCount } = await db.query(`DELETE FROM trik_narrators WHERE user_id = $1`, [userId])
+  await db.query(`DELETE FROM trik_narrator_tags WHERE user_id = $1`, [userId])
   return (rowCount ?? 0) > 0
 }
 

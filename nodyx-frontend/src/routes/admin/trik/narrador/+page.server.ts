@@ -10,7 +10,7 @@ export const load: PageServerLoad = async ({ fetch, cookies, url }) => {
 
 	const resList = await apiFetch(fetch, '/admin/trik/narradores', { headers });
 	if (!resList.ok) return { narrators: [], selected: null, detail: null, loadError: true };
-	const narrators: Array<{ user_id: string; username: string; tag: string; is_main: boolean; available: number }> =
+	const narrators: Array<{ user_id: string; username: string; tags: string[]; is_main: boolean; available: number }> =
 		(await resList.json()).narrators ?? [];
 
 	const wanted = url.searchParams.get('u');
@@ -60,6 +60,39 @@ export const actions: Actions = {
 			return fail(res.status, { error: body.error ?? 'Erro ao remover narrador' });
 		}
 		redirect(303, '/admin/trik/narrador');
+	},
+
+	// trik_020: tags extras do narrador (uma ou várias, separadas por espaço/vírgula).
+	adicionarTag: async ({ request, fetch, cookies }) => {
+		const form = await request.formData();
+		const userId = String(form.get('userId') ?? '');
+		const tag = String(form.get('tag') ?? '').trim();
+		if (!tag) return fail(400, { tagError: 'Digite a tag' });
+
+		const res = await apiFetch(fetch, `/admin/trik/narradores/${userId}/tags`, {
+			method: 'POST',
+			headers: json(cookies.get('token')),
+			body: JSON.stringify({ tag })
+		});
+		const body = await res.json().catch(() => ({}));
+		if (!res.ok) return fail(res.status, { tagError: body.error ?? 'Erro ao adicionar tag' });
+		return { tagAdded: true };
+	},
+
+	removerTag: async ({ request, fetch, cookies }) => {
+		const form = await request.formData();
+		const userId = String(form.get('userId') ?? '');
+		const tag = String(form.get('tag') ?? '');
+		const res = await apiFetch(
+			fetch,
+			`/admin/trik/narradores/${userId}/tags/${encodeURIComponent(tag)}`,
+			{ method: 'DELETE', headers: { Authorization: `Bearer ${cookies.get('token')}` } }
+		);
+		if (!res.ok) {
+			const body = await res.json().catch(() => ({}));
+			return fail(res.status, { tagError: body.error ?? 'Erro ao remover tag' });
+		}
+		return { tagRemoved: true };
 	},
 
 	distribuir: async ({ request, fetch, cookies }) => {

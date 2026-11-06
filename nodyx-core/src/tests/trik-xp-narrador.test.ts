@@ -28,7 +28,7 @@ vi.mock('../models/trikAu', () => ({
 vi.mock('../models/trikNarrador', () => ({
   getNarratorUserId:                  vi.fn(),
   // trik_018: tag por narrador. Mesma regra de models/trikNarrador.ts.
-  getNarratorTagFor:                  vi.fn(),
+  getNarratorTagsFor:                 vi.fn(),
   hasNarratorTag: (text: string, tag: string) => new RegExp(`#${tag}(?![\\wÀ-ÿ])`, 'i').test(text),
   applyNarratorAward:                 vi.fn(),
   revertNarratorAward:                vi.fn().mockResolvedValue(undefined),
@@ -44,7 +44,7 @@ vi.mock('../services/trik/bot', () => ({
 
 import { isXpThread, getPlayer, applySceneAward, listAwardedPostIdsByThread, revertSceneAward } from '../models/trik'
 import {
-  getNarratorUserId, getNarratorTagFor, applyNarratorAward, revertNarratorAward, listNarratorAwardedPostIdsByThread,
+  getNarratorUserId, getNarratorTagsFor, applyNarratorAward, revertNarratorAward, listNarratorAwardedPostIdsByThread,
 } from '../models/trikNarrador'
 import { reactSceneCounted, reactSceneRejected } from '../services/trik/bot'
 import { processScenePost, revertScenePost, revertThreadScenes } from '../services/trik/xp'
@@ -91,8 +91,8 @@ describe('processScenePost — #lore do narrador', () => {
     vi.clearAllMocks()
     vi.mocked(isXpThread).mockResolvedValue(true)
     vi.mocked(getNarratorUserId).mockResolvedValue(NARRATOR_ID)
-    vi.mocked(getNarratorTagFor).mockImplementation(async (uid: string) =>
-      uid === NARRATOR_ID ? 'lore' : uid === AU_NARRATOR ? 'au' : null)
+    vi.mocked(getNarratorTagsFor).mockImplementation(async (uid: string) =>
+      uid === NARRATOR_ID ? ['lore'] : uid === AU_NARRATOR ? ['au', 'evento'] : [])
     vi.mocked(applyNarratorAward).mockResolvedValue(true)
   })
 
@@ -149,6 +149,13 @@ describe('processScenePost — #lore do narrador', () => {
 
   it('narrador do AU com #au: vai pro pool DELE', async () => {
     const result = await post(AU_NARRATOR, `<p>${'x'.repeat(600)} #au</p>`)
+
+    expect(result).toEqual({ awarded: true, narrator: true, xp: 18 })
+    expect(applyNarratorAward).toHaveBeenCalledWith(AU_NARRATOR, POST_ID, 18)
+  })
+
+  it('narrador com várias tags: qualquer uma delas vai pro mesmo pool', async () => {
+    const result = await post(AU_NARRATOR, `<p>${'x'.repeat(600)} #Evento</p>`)
 
     expect(result).toEqual({ awarded: true, narrator: true, xp: 18 })
     expect(applyNarratorAward).toHaveBeenCalledWith(AU_NARRATOR, POST_ID, 18)

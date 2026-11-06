@@ -13,7 +13,7 @@
 	interface Narrator {
 		user_id: string;
 		username: string;
-		tag: string;
+		tags: string[];
 		is_main: boolean;
 		available?: number;
 	}
@@ -70,7 +70,11 @@
 	const awards = $derived(detail?.awards ?? []);
 	const distributions = $derived(detail?.distributions ?? []);
 
+	const tagList = (tags: string[]) => tags.map((t) => '#' + t).join(' ');
+	const tagsLabel = $derived(narrator ? tagList(narrator.tags) : '');
+
 	let showAdd = $state(false);
+	let newTag = $state('');
 	let character = $state('');
 	let xp = $state<number | null>(null);
 	// Trocar de narrador zera a escolha: o personagem de um não vale no outro.
@@ -95,7 +99,7 @@
 	<div>
 		<h1 class="text-2xl font-bold text-white mb-1">Módulo RPG — Narradores</h1>
 		<p class="text-sm text-gray-500">
-			Cada narrador tem a sua tag. Post do narrador com a tag dele num tópico que vale XP rende 15 XP a
+			Cada narrador tem as suas tags (uma ou mais). Post do narrador com qualquer tag dele num tópico que vale XP rende 15 XP a
 			cada 500 caracteres (proporcional, mínimo de 500). Esse XP não vai pra personagem nenhum: fica
 			acumulado no pool do narrador e pode ser distribuído entre os personagens dele, do /registro ou do
 			/registro-au. Editar ou apagar o post desfaz o prêmio.
@@ -118,7 +122,7 @@
 					? 'border-indigo-400 text-white'
 					: 'border-transparent text-gray-500 hover:text-gray-300'}"
 			>
-				@{n.username} <span class="text-gray-500">#{n.tag}</span>
+				@{n.username} <span class="text-gray-500">{tagList(n.tags)}</span>
 				{#if (n.available ?? 0) !== 0}
 					<span class="ml-1 text-xs {(n.available ?? 0) < 0 ? 'text-red-400' : 'text-emerald-400'}">{n.available}</span>
 				{/if}
@@ -141,17 +145,17 @@
 					class="w-56 rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-white placeholder-gray-600" />
 			</div>
 			<div class="space-y-1">
-				<label for="nar-tag" class="block text-xs text-gray-500">Tag</label>
-				<input id="nar-tag" name="tag" required placeholder="ex.: au" maxlength="31"
-					class="w-40 rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-white placeholder-gray-600" />
+				<label for="nar-tag" class="block text-xs text-gray-500">Tags</label>
+				<input id="nar-tag" name="tag" required placeholder="ex.: au, evento" maxlength="300"
+					class="w-56 rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-white placeholder-gray-600" />
 			</div>
 			<button type="submit" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-sm font-medium text-white">
 				Adicionar
 			</button>
 			{#if form?.addError}<p class="w-full text-sm text-red-400">{form.addError}</p>{/if}
 			<p class="w-full text-xs text-gray-500">
-				A tag vai sem o <code>#</code>. Cada tag pertence a um narrador só; treino, aula, tarefa, trabalho e
-				com são reservadas.
+				Uma ou mais tags, separadas por espaço ou vírgula (o <code>#</code> é opcional). Cada tag pertence a
+				um narrador só; treino, aula, tarefa, trabalho e com são reservadas.
 			</p>
 		</form>
 	{/if}
@@ -168,7 +172,7 @@
 		<div class="flex flex-wrap items-center justify-between gap-3">
 			<p class="text-sm text-gray-400">
 				Posts de <strong class="text-white">@{narrator.username}</strong> com
-				<code class="text-gray-300">#{narrator.tag}</code> rendem XP pra este pool.
+				{narrator.tags.length > 1 ? 'qualquer uma das tags abaixo' : 'a tag abaixo'} rendem XP pra este pool.
 			</p>
 			{#if !narrator.is_main}
 				<form method="POST" action="?/remover" use:enhance={({ cancel }) => {
@@ -180,6 +184,47 @@
 					</button>
 				</form>
 			{/if}
+		</div>
+
+		<!-- ── Tags do narrador (trik_020) ─────────────────────────────────────── -->
+		<div class="rounded-xl border border-gray-800 bg-gray-900/40 p-4 space-y-3">
+			<div class="flex flex-wrap items-center gap-2">
+				<span class="text-[10px] font-bold uppercase tracking-widest text-gray-500 mr-1">Tags</span>
+				{#each narrator.tags as t (t)}
+					{@const fixed = narrator.is_main && t.toLowerCase() === 'lore'}
+					<span class="inline-flex items-center gap-1 rounded-full bg-gray-800 border border-gray-700 pl-3 {fixed || narrator.tags.length <= 1 ? 'pr-3' : 'pr-1'} py-1 text-sm text-gray-200">
+						#{t}
+						{#if !fixed && narrator.tags.length > 1}
+							<form method="POST" action="?/removerTag" use:enhance class="inline">
+								<input type="hidden" name="userId" value={narrator.user_id} />
+								<input type="hidden" name="tag" value={t} />
+								<button type="submit" title="Remover #{t}" aria-label="Remover #{t}"
+									class="w-5 h-5 rounded-full text-gray-500 hover:text-red-400 hover:bg-red-900/40 leading-none">×</button>
+							</form>
+						{/if}
+					</span>
+				{/each}
+			</div>
+			<form
+				method="POST"
+				action="?/adicionarTag"
+				use:enhance={() => {
+					return async ({ result, update }) => {
+						await update({ reset: false });
+						if (result.type === 'success') newTag = '';
+					};
+				}}
+				class="flex flex-wrap items-center gap-2"
+			>
+				<input type="hidden" name="userId" value={narrator.user_id} />
+				<input name="tag" bind:value={newTag} placeholder="nova tag (ex.: evento)" maxlength="300"
+					class="w-56 rounded-lg bg-gray-800 border border-gray-700 px-3 py-1.5 text-sm text-white placeholder-gray-600" />
+				<button type="submit" disabled={!newTag.trim()}
+					class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs font-medium text-white disabled:opacity-40 disabled:hover:bg-indigo-600">
+					+ Adicionar tag
+				</button>
+				{#if form?.tagError}<p class="w-full text-sm text-red-400">{form.tagError}</p>{/if}
+			</form>
 		</div>
 
 		{#if form?.distributed}
@@ -199,7 +244,7 @@
 				</div>
 			</div>
 			<div class="rounded-xl border border-gray-800 bg-gray-900/40 px-4 py-3">
-				<div class="text-[10px] font-bold uppercase tracking-widest text-gray-500">Ganho com #{narrator.tag}</div>
+				<div class="text-[10px] font-bold uppercase tracking-widest text-gray-500">Ganho com {tagsLabel}</div>
 				<div class="text-2xl font-bold text-gray-300">{balance.earned} XP</div>
 			</div>
 			<div class="rounded-xl border border-gray-800 bg-gray-900/40 px-4 py-3">
@@ -210,7 +255,7 @@
 		{#if balance.available < 0}
 			<p class="text-xs text-red-400">
 				Saldo negativo: um post premiado foi editado ou apagado depois de o XP já ter sido
-				distribuído. Os próximos posts com #{narrator.tag} pagam essa diferença primeiro.
+				distribuído. Os próximos posts com {tagsLabel} pagam essa diferença primeiro.
 			</p>
 		{/if}
 
@@ -335,7 +380,7 @@
 
 		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
 			<section class="space-y-3">
-				<h2 class="text-sm font-semibold text-white">Posts com #{narrator.tag}</h2>
+				<h2 class="text-sm font-semibold text-white">Posts com {tagsLabel}</h2>
 				<div class="rounded-xl border border-gray-800 bg-gray-900/40 overflow-x-auto">
 					<table class="w-full text-sm">
 						<thead>
@@ -357,7 +402,7 @@
 							{/each}
 							{#if awards.length === 0}
 								<tr>
-									<td colspan="3" class="px-4 py-6 text-center text-gray-500">Nenhum post com #{narrator.tag} ainda.</td>
+									<td colspan="3" class="px-4 py-6 text-center text-gray-500">Nenhum post com {tagsLabel} ainda.</td>
 								</tr>
 							{/if}
 						</tbody>

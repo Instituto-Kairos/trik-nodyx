@@ -65,7 +65,12 @@ const NarradorDistribuirBody = z.object({
 
 const NarradorAddBody = z.object({
   username: z.string().trim().min(1).max(50),
-  tag:      z.string().trim().min(2).max(31),
+  // Uma ou várias tags, separadas por espaço ou vírgula (trik_020).
+  tag:      z.string().trim().min(2).max(300),
+})
+
+const NarradorTagBody = z.object({
+  tag: z.string().trim().min(2).max(300),
 })
 
 const TesteBody = z.object({
@@ -1205,6 +1210,37 @@ export async function trikAdminPlugin(app: FastifyInstance) {
       return ok ? reply.code(204).send() : reply.code(404).send({ error: 'Narrador não encontrado', code: 'NOT_FOUND' })
     } catch (err) {
       if (err instanceof TrikNarrador.NarratorAdminError) return reply.code(400).send({ error: err.message, code: err.code })
+      throw err
+    }
+  })
+
+  // trik_020: tags extras do narrador (todas rendem xp pro mesmo pool).
+  app.post('/narradores/:userId/tags', {
+    preHandler: validate({ body: NarradorTagBody }),
+  }, async (request, reply) => {
+    const { userId } = request.params as { userId: string }
+    const { tag } = request.body as z.infer<typeof NarradorTagBody>
+    if (!/^[0-9a-f-]{36}$/i.test(userId)) return reply.code(404).send({ error: 'Narrador não encontrado', code: 'NOT_FOUND' })
+    try {
+      return reply.send({ tags: await TrikNarrador.addNarratorTags(userId, tag, request.user!.userId) })
+    } catch (err) {
+      if (err instanceof TrikNarrador.NarratorAdminError) {
+        return reply.code(err.code === 'NOT_NARRATOR' ? 404 : 400).send({ error: err.message, code: err.code })
+      }
+      throw err
+    }
+  })
+
+  app.delete('/narradores/:userId/tags/:tag', async (request, reply) => {
+    const { userId, tag } = request.params as { userId: string; tag: string }
+    if (!/^[0-9a-f-]{36}$/i.test(userId)) return reply.code(404).send({ error: 'Narrador não encontrado', code: 'NOT_FOUND' })
+    try {
+      return reply.send({ tags: await TrikNarrador.removeNarratorTag(userId, tag) })
+    } catch (err) {
+      if (err instanceof TrikNarrador.NarratorAdminError) {
+        const status = err.code === 'NOT_NARRATOR' || err.code === 'TAG_NOT_FOUND' ? 404 : 400
+        return reply.code(status).send({ error: err.message, code: err.code })
+      }
       throw err
     }
   })
