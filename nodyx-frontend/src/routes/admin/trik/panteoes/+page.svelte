@@ -43,10 +43,10 @@
 
 <div class="space-y-6">
 	<div>
-		<h1 class="text-2xl font-bold text-white mb-1">Módulo RPG — Panteões e Divindades</h1>
+		<h1 class="text-2xl font-bold text-white mb-1">Módulo RPG — Panteões e Divindades/Caminhos Divinos</h1>
 		<p class="text-sm text-gray-500">
-			Opções dos campos "Panteão" e "Vínculo divino" do /registro — o vínculo só lista as divindades
-			do panteão escolhido. Panteão e divindade podem ter efeitos (inclusive os de temperatura) — valem pra quem tem o vínculo. Remover daqui não
+			Opções dos campos "Panteão" e "Vínculo divino" do /registro — o vínculo só lista as divindades/caminhos divinos
+			do panteão escolhido. Panteão e divindade/caminho divino podem ter efeitos (inclusive os de temperatura) — valem pra quem tem o vínculo. Remover daqui não
 			apaga personagens, só tira o vínculo deles com o item.
 		</p>
 	</div>
@@ -103,7 +103,7 @@
 					<form
 						method="POST"
 						action="?/deletePantheon"
-						use:enhance={confirmDelete(`Remover o panteão "${p.name}" e todas as suas ${p.deities.length} divindade(s)?`)}
+						use:enhance={confirmDelete(`Remover o panteão "${p.name}" e suas ${p.deities.length} divindade(s)/caminho(s) divino(s)?`)}
 					>
 						<input type="hidden" name="id" value={p.id} />
 						<button type="submit" class="text-xs text-gray-500 hover:text-red-400 transition-colors">
@@ -134,7 +134,7 @@
 						</li>
 					{/each}
 					{#if p.deities.length === 0}
-						<li class="text-xs text-gray-500">Nenhuma divindade ainda.</li>
+						<li class="text-xs text-gray-500">Nenhuma divindade/caminho divino ainda.</li>
 					{/if}
 				</ul>
 
@@ -145,8 +145,8 @@
 						name="name"
 						required
 						maxlength="100"
-						placeholder="Nova divindade"
-						aria-label="Nova divindade em {p.name}"
+						placeholder="Nova divindade/caminho divino"
+						aria-label="Nova divindade/caminho divino em {p.name}"
 						autocomplete="off"
 						class="flex-1 min-w-0 rounded-lg bg-gray-800 border border-gray-700 px-3 py-1.5 text-sm text-white placeholder-gray-600"
 					/>

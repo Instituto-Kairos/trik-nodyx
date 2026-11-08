@@ -193,7 +193,7 @@ export async function listOwnBulk(userId: string, limit = 200): Promise<AssetRow
 export async function setAssetType(id: string, assetType: AssetType): Promise<AssetRow | null> {
   const { rows } = await db.query<AssetRow>(
     `UPDATE community_assets
-        SET asset_type = $2, is_public = ($2 <> 'bulk')
+        SET asset_type = $2::text, is_public = ($2::text <> 'bulk')
       WHERE id = $1
       RETURNING *`,
     [id, assetType]

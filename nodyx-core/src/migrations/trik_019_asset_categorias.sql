@@ -13,11 +13,13 @@
 
 BEGIN;
 
+-- O constraint antigo não aceita 'bulk': derrubar ANTES do UPDATE.
+ALTER TABLE community_assets DROP CONSTRAINT IF EXISTS valid_asset_type;
+
 UPDATE community_assets
    SET asset_type = 'bulk', is_public = false
  WHERE asset_type IN ('image', 'sticker', 'frame', 'banner');
 
-ALTER TABLE community_assets DROP CONSTRAINT IF EXISTS valid_asset_type;
 ALTER TABLE community_assets ADD CONSTRAINT valid_asset_type
   CHECK (asset_type = ANY(ARRAY[
     'ik','au','staff','emoji','badge','bulk',

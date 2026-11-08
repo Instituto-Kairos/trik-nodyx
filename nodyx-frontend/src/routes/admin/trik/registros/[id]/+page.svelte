@@ -61,6 +61,7 @@
 		zero: '🔴 sem efeito'
 	};
 
+	const grant = $derived(form as { granted?: number; leveledUp?: boolean } | null);
 	const keepOpen: SubmitFunction = () => async ({ update }) => update({ reset: false });
 	const card = 'rounded-xl border border-gray-800 bg-gray-900/40 p-4 space-y-2';
 	const title = 'text-[10px] font-bold uppercase tracking-widest text-gray-500';
@@ -173,6 +174,39 @@
 			{/if}
 		</section>
 	</div>
+
+	<section class={card}>
+		<h2 class={title}>Bonificar XP</h2>
+		{#if grant?.granted}
+			<p class="text-sm text-emerald-400">
+				+{grant.granted} XP concedido{grant.leveledUp ? ' — subiu de nível! 🎉' : '.'}
+			</p>
+		{/if}
+		<form method="POST" action="?/grantXp" use:enhance class="flex flex-wrap gap-2">
+			<input
+				type="number" name="xp" min="1" max="100000" step="1" required placeholder="XP"
+				aria-label="Quantidade de XP"
+				class="w-24 rounded bg-gray-800 border border-gray-700 px-2 py-1 text-xs text-white"
+			/>
+			<input
+				type="text" name="reason" maxlength="200" placeholder="Motivo (opcional)"
+				aria-label="Motivo"
+				class="flex-1 min-w-40 rounded bg-gray-800 border border-gray-700 px-2 py-1 text-xs text-white"
+			/>
+			<button type="submit" class="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-xs text-white">Bonificar</button>
+		</form>
+		{#if sheet.xpGrants?.length}
+			<ul class="divide-y divide-gray-800 text-xs">
+				{#each sheet.xpGrants as g (g.id)}
+					<li class="py-1 flex gap-2 text-gray-300">
+						<span class="text-emerald-400 font-semibold">+{g.xp}</span>
+						<span class="flex-1">{g.reason ?? '—'}</span>
+						<span class="text-gray-500 whitespace-nowrap">{g.granted_by ? `@${g.granted_by} · ` : ''}{fmtDateTime(g.created_at)}</span>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+	</section>
 
 	<section class={card}>
 		<h2 class={title}>Desbloqueios</h2>

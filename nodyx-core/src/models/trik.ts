@@ -448,6 +448,36 @@ export async function applySceneAward(
 }
 
 /**
+ * Bônus de XP dado pelo admin (trik_021): registra a concessão e soma o xp
+ * com level up normal, numa transação só. Devolve null se o personagem não
+ * existe (FK).
+ */
+export async function grantXp(
+  characterId: string,
+  xp: number,
+  reason: string | null,
+  grantedBy: string
+): Promise<{ leveledUp: boolean; progress: TrikCharacterProgress } | null> {
+  const client = await (db as any).connect()
+  try {
+    await client.query('BEGIN')
+    await client.query(
+      `INSERT INTO trik_xp_grants (character_id, xp, reason, granted_by) VALUES ($1, $2, $3, $4)`,
+      [characterId, xp, reason, grantedBy]
+    )
+    const result = await applyXpInTx(client, characterId, xp)
+    await client.query('COMMIT')
+    return result
+  } catch (err: any) {
+    await client.query('ROLLBACK')
+    if (err?.code === '23503') return null
+    throw err
+  } finally {
+    client.release()
+  }
+}
+
+/**
  * Desconta o xp bruto do post (e a maestria de arma/matéria, se a cena tiver
  * creditado alguma) e apaga o registro. NUNCA desfaz um level up já aplicado
  * (ver fase-dois.md — pontos de level já podem ter sido gastos em /levelup),

@@ -330,6 +330,10 @@ const TraitBody = z.object({
   kind:   z.enum(TrikEffects.TRAIT_KINDS),
   itemId: z.string().uuid(),
 })
+const XpGrantBody = z.object({
+  xp:     z.number().int().min(1).max(100000),
+  reason: z.string().trim().max(200).optional(),
+})
 const CharacterTraitParams = z.object({
   id:     z.string().uuid(),
   kind:   z.enum(TrikEffects.TRAIT_KINDS),
@@ -1012,6 +1016,24 @@ export async function trikAdminPlugin(app: FastifyInstance) {
     const sheet = await getCharacterSheet(id)
     if (!sheet) return reply.code(404).send({ error: 'Personagem não encontrado', code: 'NOT_FOUND' })
     return reply.send({ sheet })
+  })
+
+  // Bônus de XP manual (ficha completa). Level up avisa no canal de anúncio
+  // igual a uma cena.
+  app.post('/characters/:id/xp-grants', {
+    preHandler: validate({ params: IdParams, body: XpGrantBody }),
+  }, async (request, reply) => {
+    const { id } = request.params as z.infer<typeof IdParams>
+    const { xp, reason } = request.body as z.infer<typeof XpGrantBody>
+    const result = await TrikModel.grantXp(id, xp, reason || null, request.user!.userId)
+    if (!result) return reply.code(404).send({ error: 'Personagem não encontrado', code: 'NOT_FOUND' })
+    if (result.leveledUp) {
+      const character = await TrikModel.getCharacterById(id)
+      if (character) {
+        notifyLevelUp(id, character.name).catch(err => request.log.error(err, 'trik: aviso de level up falhou'))
+      }
+    }
+    return reply.code(201).send({ leveledUp: result.leveledUp, progress: result.progress })
   })
 
   app.get('/character-traits', async (_request, reply) => {

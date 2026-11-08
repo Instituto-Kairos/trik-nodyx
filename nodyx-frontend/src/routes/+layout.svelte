@@ -1092,16 +1092,11 @@
 
 		<!-- Messages privés (si connecté) -->
 		{#if user}
-		<a href="/dm" class="flex-1 flex flex-col items-center justify-center py-2 min-h-14 gap-0.5 relative {isActive('/dm') ? 'text-indigo-400' : 'text-gray-500'}">
+		<a href="/galeria" class="flex-1 flex flex-col items-center justify-center py-2 min-h-14 gap-0.5 relative {isActive('/galeria') ? 'text-indigo-400' : 'text-gray-500'}">
 			<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-				<path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-5l-4 4v-4z"/>
+				<path stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
 			</svg>
-			{#if dmUnread > 0}
-				<span class="absolute top-1.5 right-[calc(50%-14px)] min-w-4 h-4 rounded-full bg-indigo-500 text-white text-[9px] font-bold px-1 flex items-center justify-center">
-					{dmUnread > 9 ? '9+' : dmUnread}
-				</span>
-			{/if}
-			<span class="text-xs font-medium">{tFn('nav.bar_dm')}</span>
+			<span class="text-xs font-medium">{tFn('nav.galeria')}</span>
 		</a>
 		{/if}
 

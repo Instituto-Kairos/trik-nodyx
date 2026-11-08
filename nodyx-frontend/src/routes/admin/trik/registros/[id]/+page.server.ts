@@ -44,6 +44,21 @@ export const actions: Actions = {
 		return { ok: true };
 	},
 
+	grantXp: async ({ request, fetch, cookies, params }) => {
+		const form = await request.formData();
+		const xp = Number(form.get('xp'));
+		const reason = String(form.get('reason') ?? '').trim();
+		if (!Number.isInteger(xp) || xp < 1) return fail(400, { error: 'Informe um XP inteiro maior que zero' });
+		const res = await apiFetch(fetch, `/admin/trik/characters/${params.id}/xp-grants`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cookies.get('token')}` },
+			body: JSON.stringify({ xp, ...(reason && { reason }) })
+		});
+		if (!res.ok) return fail(400, { error: await errorOf(res, 'Erro ao bonificar') });
+		const json = await res.json();
+		return { ok: true, granted: xp, leveledUp: Boolean(json.leveledUp) };
+	},
+
 	removeTrait: async ({ request, fetch, cookies, params }) => {
 		const form = await request.formData();
 		const kind = String(form.get('kind') ?? '');

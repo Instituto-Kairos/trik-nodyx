@@ -39,6 +39,8 @@ export interface CharacterSheet {
     post_id: string; xp_awarded: number; mastery_kind: string | null; mastery_awarded: string
     item_name: string | null; game_date: string | null; bonus_detail: unknown; created_at: string
   }[]
+  /** Bônus de XP manuais (trik_021), mais recentes primeiro. */
+  xpGrants: { id: string; xp: number; reason: string | null; granted_by: string | null; created_at: string }[]
 }
 
 /** null = personagem não existe. */
@@ -56,7 +58,7 @@ export async function getCharacterSheet(characterId: string): Promise<CharacterS
   if (!row) return null
   const { player_name, username, ...character } = row
 
-  const [progressRes, bonusesRes, weaponsRes, knowledgesRes, scenesRes, traits, pantheonEffects, ...catalogs] = await Promise.all([
+  const [progressRes, bonusesRes, weaponsRes, knowledgesRes, scenesRes, grantsRes, traits, pantheonEffects, ...catalogs] = await Promise.all([
     db.query(`SELECT * FROM trik_character_progress WHERE character_id = $1`, [characterId]),
     db.query(
       `SELECT b.*, pa.name AS pantheon_name, d.name AS deity_name
@@ -87,6 +89,13 @@ export async function getCharacterSheet(characterId: string): Promise<CharacterS
          LEFT JOIN trik_knowledges k ON k.id = a.knowledge_id
         WHERE a.character_id = $1
         ORDER BY a.created_at DESC LIMIT 15`,
+      [characterId]
+    ),
+    db.query(
+      `SELECT g.id, g.xp, g.reason, u.username AS granted_by, g.created_at
+         FROM trik_xp_grants g LEFT JOIN users u ON u.id = g.granted_by
+        WHERE g.character_id = $1
+        ORDER BY g.created_at DESC LIMIT 15`,
       [characterId]
     ),
     listCharacterTraits(characterId),
@@ -125,5 +134,6 @@ export async function getCharacterSheet(characterId: string): Promise<CharacterS
     traits:   traits.map(t => ({ ...t, effects: traitEffects.get(t.id) ?? [] })),
     mastery:  { weapons: weaponsRes.rows, knowledges: knowledgesRes.rows },
     recentScenes: scenesRes.rows,
+    xpGrants:     grantsRes.rows,
   }
 }

@@ -46,7 +46,7 @@ export const actions: Actions = {
 		const pantheonId = String(form.get('pantheonId') ?? '');
 		const name = String(form.get('name') ?? '').trim();
 		if (!pantheonId) return fail(400, { error: 'Panteão inválido' });
-		if (!name) return fail(400, { error: 'Digite o nome da divindade' });
+		if (!name) return fail(400, { error: 'Digite o nome da divindade/caminho divino' });
 		return (await send(fetch, cookies.get('token'), `/admin/trik/pantheons/${encodeURIComponent(pantheonId)}/deities`, 'POST', { name })) ?? { ok: true, created: name };
 	},
 
