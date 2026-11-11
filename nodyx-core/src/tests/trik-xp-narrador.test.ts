@@ -101,7 +101,7 @@ describe('processScenePost — #lore do narrador', () => {
     const result = await post(NARRATOR_ID, `<p>${texto}</p>`)
 
     expect(result).toEqual({ awarded: true, narrator: true, xp: 30 })
-    expect(applyNarratorAward).toHaveBeenCalledWith(NARRATOR_ID, POST_ID, 30)
+    expect(applyNarratorAward).toHaveBeenCalledWith(NARRATOR_ID, POST_ID, 30, ['lore'])
     expect(reactSceneCounted).toHaveBeenCalledWith(POST_ID)
     expect(getPlayer).not.toHaveBeenCalled()
     expect(applySceneAward).not.toHaveBeenCalled()
@@ -151,14 +151,20 @@ describe('processScenePost — #lore do narrador', () => {
     const result = await post(AU_NARRATOR, `<p>${'x'.repeat(600)} #au</p>`)
 
     expect(result).toEqual({ awarded: true, narrator: true, xp: 18 })
-    expect(applyNarratorAward).toHaveBeenCalledWith(AU_NARRATOR, POST_ID, 18)
+    expect(applyNarratorAward).toHaveBeenCalledWith(AU_NARRATOR, POST_ID, 18, ['au'])
   })
 
   it('narrador com várias tags: qualquer uma delas vai pro mesmo pool', async () => {
     const result = await post(AU_NARRATOR, `<p>${'x'.repeat(600)} #Evento</p>`)
 
     expect(result).toEqual({ awarded: true, narrator: true, xp: 18 })
-    expect(applyNarratorAward).toHaveBeenCalledWith(AU_NARRATOR, POST_ID, 18)
+    expect(applyNarratorAward).toHaveBeenCalledWith(AU_NARRATOR, POST_ID, 18, ['evento'])
+  })
+
+  it('post com duas tags do mesmo narrador: registra as duas', async () => {
+    await post(AU_NARRATOR, `<p>${'x'.repeat(600)} #au #evento</p>`)
+
+    expect(applyNarratorAward).toHaveBeenCalledWith(AU_NARRATOR, POST_ID, 18, ['au', 'evento'])
   })
 
   it('tag de outro narrador não vale: #lore do narrador do AU segue o fluxo normal', async () => {

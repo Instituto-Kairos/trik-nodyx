@@ -11,7 +11,7 @@
 		{
 			value: 'character',
 			label: 'Personagem',
-			description: 'Nível geral do personagem — ganho por cena (Fase 2). Único que já aplica xp de verdade.'
+			description: 'Nível geral do personagem — ganho por cena (Fase 2). Além do XP, cada nível pode exigir maestria (nível mínimo em qualquer arma) e/ou uma aula específica; faltando, o XP fica guardado e o personagem sobe assim que cumprir.'
 		},
 		{
 			value: 'knowledge',
@@ -47,6 +47,11 @@
 		rewardSecondaryInterest: number;
 		/** Treinos (weapon) ou aulas (knowledge) pra sair do nível; sem uso no 'character'. */
 		requirement: number;
+		/** trik_023, só 'character': nível mínimo em qualquer arma (0 = sem requisito). */
+		reqWeaponLevel: number;
+		/** trik_023, só 'character': matéria exigida ('' = sem requisito) e nível nela. */
+		reqKnowledgeId: string;
+		reqKnowledgeLevel: number;
 	}
 
 	interface ApiLevel {
@@ -62,7 +67,12 @@
 		reward_secondary_interest?: number;
 		req_mastery?: number;
 		req_education?: number;
+		req_weapon_level?: number;
+		req_knowledge_id?: string | null;
+		req_knowledge_level?: number;
 	}
+
+	const knowledges = $derived((data.knowledges ?? []) as { id: string; name: string }[]);
 
 	let rows = $state<LevelRow[]>([]);
 
@@ -87,7 +97,10 @@
 						? (l.req_mastery ?? 0)
 						: currentType === 'knowledge'
 							? (l.req_education ?? 0)
-							: 0
+							: 0,
+				reqWeaponLevel: l.req_weapon_level ?? 0,
+				reqKnowledgeId: l.req_knowledge_id ?? '',
+				reqKnowledgeLevel: l.req_knowledge_level ?? 0
 			}));
 	});
 
@@ -108,7 +121,10 @@
 				rewardSecondaryInterest: 0,
 				// Linha nova = um degrau novo; 0 significaria "nível máximo", que não é
 				// o que quem clica em "+ Adicionar nível" espera.
-				requirement: 5
+				requirement: 5,
+				reqWeaponLevel: 0,
+				reqKnowledgeId: '',
+				reqKnowledgeLevel: 0
 			}
 		];
 	}
@@ -130,10 +146,15 @@
 	// Só manda o campo que o tipo atual usa — pro 'character' nenhum dos dois.
 	const levelsJson = $derived(
 		JSON.stringify(
-			rows.map(({ requirement, ...r }) => {
+			rows.map(({ requirement, reqWeaponLevel, reqKnowledgeId, reqKnowledgeLevel, ...r }) => {
 				if (currentType === 'weapon') return { ...r, goalXp: 1, reqMastery: requirement };
 				if (currentType === 'knowledge') return { ...r, goalXp: 1, reqEducation: requirement };
-				return r;
+				return {
+					...r,
+					reqWeaponLevel,
+					reqKnowledgeId: reqKnowledgeId || null,
+					reqKnowledgeLevel: reqKnowledgeId ? reqKnowledgeLevel : 0
+				};
 			})
 		)
 	);
@@ -190,6 +211,8 @@
 							<th class="px-4 py-3" title="Abre o slot de interesse primário (−2 no requisito da categoria; troca semanal)">Abre interesse 1º</th>
 							<th class="px-4 py-3" title="Abre o slot de interesse secundário (−1 no requisito da categoria; troca semanal)">Abre interesse 2º</th>
 							<th class="px-4 py-3">Desbloqueia Objetivo</th>
+							<th class="px-4 py-3" title="Pra sair deste nível: nível mínimo em QUALQUER arma (#treino). 0 = sem requisito">Req. maestria</th>
+							<th class="px-4 py-3" title="Pra sair deste nível: nível mínimo numa matéria (#aula) específica">Req. aula</th>
 						{/if}
 						<th class="px-4 py-3"></th>
 					</tr>
@@ -285,6 +308,42 @@
 								<td class="px-4 py-2">
 									<input type="checkbox" bind:checked={row.rewardGoal} class="w-4 h-4" />
 								</td>
+								<td class="px-4 py-2">
+									<input
+										type="number"
+										min="0"
+										max="32767"
+										bind:value={row.reqWeaponLevel}
+										title="Nível mínimo em qualquer arma (0 = sem requisito)"
+										class="w-16 rounded-lg bg-gray-800 border border-gray-700 px-2 py-1.5 text-white"
+									/>
+								</td>
+								<td class="px-4 py-2">
+									<div class="flex items-center gap-2">
+										<select
+											bind:value={row.reqKnowledgeId}
+											onchange={() => {
+												if (row.reqKnowledgeId && row.reqKnowledgeLevel < 1) row.reqKnowledgeLevel = 1;
+											}}
+											class="max-w-40 rounded-lg bg-gray-800 border border-gray-700 px-2 py-1.5 text-white"
+										>
+											<option value="">— nenhuma —</option>
+											{#each knowledges as k (k.id)}
+												<option value={k.id}>{k.name}</option>
+											{/each}
+										</select>
+										{#if row.reqKnowledgeId}
+											<span class="text-xs text-gray-500">nív.</span>
+											<input
+												type="number"
+												min="1"
+												max="32767"
+												bind:value={row.reqKnowledgeLevel}
+												class="w-16 rounded-lg bg-gray-800 border border-gray-700 px-2 py-1.5 text-white"
+											/>
+										{/if}
+									</div>
+								</td>
 							{/if}
 							<td class="px-4 py-2">
 								<button
@@ -299,7 +358,7 @@
 					{/each}
 					{#if rows.length === 0}
 						<tr>
-							<td colspan={isCharacter ? 11 : 3} class="px-4 py-6 text-center text-gray-500">
+							<td colspan={isCharacter ? 13 : 3} class="px-4 py-6 text-center text-gray-500">
 								Nenhum nível cadastrado ainda.
 							</td>
 						</tr>

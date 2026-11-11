@@ -243,8 +243,9 @@ export async function processScenePost(params: {
     // sem nenhuma tag dele, segue o fluxo normal de cena.
     const plain = stripTags(params.content)
     const narratorTags = await getNarratorTagsFor(params.authorUserId)
-    if (narratorTags.some(tag => hasNarratorTag(plain, tag))) {
-      return await processNarratorPost(params.authorUserId, params.postId, parsed?.cena ?? plain)
+    const usedTags = narratorTags.filter(tag => hasNarratorTag(plain, tag))
+    if (usedTags.length > 0) {
+      return await processNarratorPost(params.authorUserId, params.postId, parsed?.cena ?? plain, usedTags)
     }
 
     if (!parsed) {
@@ -345,13 +346,13 @@ async function processAuScenePost(userId: string, postId: string, header: string
   return { awarded: true, au: true, characterId: character.id, xp }
 }
 
-async function processNarratorPost(narratorId: string, postId: string, text: string): Promise<SceneXpResult> {
+async function processNarratorPost(narratorId: string, postId: string, text: string, tags: string[]): Promise<SceneXpResult> {
   const xp = calculateNarratorXp(text.length)
   if (xp <= 0) {
     await notifySceneRejected(postId, 'below_minimum')
     return { awarded: false, reason: 'below_minimum' }
   }
-  if (!await applyNarratorAward(narratorId, postId, xp)) return { awarded: false, reason: 'already_awarded' }
+  if (!await applyNarratorAward(narratorId, postId, xp, tags)) return { awarded: false, reason: 'already_awarded' }
   await reactSceneCounted(postId)
   return { awarded: true, narrator: true, xp }
 }

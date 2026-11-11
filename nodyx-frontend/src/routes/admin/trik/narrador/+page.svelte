@@ -35,6 +35,8 @@
 	interface Award {
 		post_id: string;
 		xp_awarded: number;
+		/** Tags do narrador usadas no post, sem '#'. Vazio = prêmio antigo não identificado. */
+		tags?: string[];
 		created_at: string;
 		thread_id: string;
 		thread_title: string;
@@ -386,6 +388,7 @@
 						<thead>
 							<tr class="text-left text-[10px] font-bold uppercase tracking-widest text-gray-500 border-b border-gray-800">
 								<th class="px-4 py-3">Tópico</th>
+								<th class="px-4 py-3">Tag</th>
 								<th class="px-4 py-3">XP</th>
 								<th class="px-4 py-3">Quando</th>
 							</tr>
@@ -396,13 +399,22 @@
 									<td class="px-4 py-2">
 										<a href={threadHref(a)} class="text-indigo-400 hover:text-indigo-300">{a.thread_title}</a>
 									</td>
+									<td class="px-4 py-2 whitespace-nowrap">
+										{#if a.tags?.length}
+											{#each a.tags as t (t)}
+												<span class="mr-1 rounded bg-gray-800 px-1.5 py-0.5 text-xs text-amber-300">#{t}</span>
+											{/each}
+										{:else}
+											<span class="text-gray-600">—</span>
+										{/if}
+									</td>
 									<td class="px-4 py-2 text-emerald-400">+{a.xp_awarded}</td>
 									<td class="px-4 py-2 text-gray-500">{fmtDate(a.created_at)}</td>
 								</tr>
 							{/each}
 							{#if awards.length === 0}
 								<tr>
-									<td colspan="3" class="px-4 py-6 text-center text-gray-500">Nenhum post com {tagsLabel} ainda.</td>
+									<td colspan="4" class="px-4 py-6 text-center text-gray-500">Nenhum post com {tagsLabel} ainda.</td>
 								</tr>
 							{/if}
 						</tbody>

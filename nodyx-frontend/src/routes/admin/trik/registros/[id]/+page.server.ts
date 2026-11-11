@@ -10,9 +10,10 @@ const TRAIT_KINDS = ['disorder', 'disturbance', 'unique_ability', 'peculiarity']
 export const load: PageServerLoad = async ({ fetch, cookies, params }) => {
 	const token = cookies.get('token');
 	const headers = { Authorization: `Bearer ${token}` };
-	const [res, targets, ...catalogRes] = await Promise.all([
+	const [res, targets, pantheonRes, ...catalogRes] = await Promise.all([
 		apiFetch(fetch, `/admin/trik/characters/${encodeURIComponent(params.id)}/sheet`, { headers }),
 		loadEffectTargets(fetch, token),
+		apiFetch(fetch, '/admin/trik/pantheons', { headers }),
 		...TRAIT_KINDS.map((kind) => apiFetch(fetch, `/admin/trik/bonus-catalog?kind=${kind}`, { headers }))
 	]);
 	if (res.status === 404) error(404, 'Personagem não encontrado');
@@ -22,7 +23,9 @@ export const load: PageServerLoad = async ({ fetch, cookies, params }) => {
 	for (const [i, kind] of TRAIT_KINDS.entries()) {
 		traitCatalog[kind] = catalogRes[i].ok ? ((await catalogRes[i].json()).items ?? []) : [];
 	}
-	return { sheet: (await res.json()).sheet, traitCatalog, ...targets };
+	// Catálogo pros vínculos secundário/terciário (trik_024).
+	const pantheons = pantheonRes.ok ? ((await pantheonRes.json()).pantheons ?? []) : [];
+	return { sheet: (await res.json()).sheet, traitCatalog, pantheons, ...targets };
 };
 
 async function errorOf(res: Response, fallback: string) {
@@ -31,6 +34,22 @@ async function errorOf(res: Response, fallback: string) {
 }
 
 export const actions: Actions = {
+	// Vínculo divino secundário/terciário (trik_024). Panteão vazio = remove.
+	setBond: async ({ request, fetch, cookies, params }) => {
+		const form = await request.formData();
+		const rank = String(form.get('rank') ?? '');
+		if (rank !== 'secondary' && rank !== 'tertiary') return fail(400, { error: 'Vínculo inválido' });
+		const pantheonId = String(form.get('pantheonId') ?? '') || null;
+		const divineBondId = (pantheonId && String(form.get('divineBondId') ?? '')) || null;
+		const res = await apiFetch(fetch, `/admin/trik/characters/${params.id}/divine-bonds/${rank}`, {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cookies.get('token')}` },
+			body: JSON.stringify({ pantheonId, divineBondId })
+		});
+		if (!res.ok) return fail(400, { error: await errorOf(res, 'Erro ao salvar o vínculo') });
+		return { ok: true };
+	},
+
 	// Valor do select: "<kind>:<itemId>".
 	unlockTrait: async ({ request, fetch, cookies, params }) => {
 		const [kind, itemId] = String((await request.formData()).get('trait') ?? '').split(':');

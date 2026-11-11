@@ -275,6 +275,37 @@ interface TrikXpLevelRow {
   reward_acquired_aptitudes: number
   reward_primary_interest:   number
   reward_secondary_interest: number
+  /** trik_023 — requisitos extras pra sair do nível (0/null = sem requisito). */
+  req_weapon_level?:    number
+  req_knowledge_id?:    string | null
+  req_knowledge_level?: number
+}
+
+/**
+ * trik_023: o personagem cumpre os requisitos de maestria/aula do nível?
+ * Maestria = nível em QUALQUER arma; aula = nível numa matéria específica.
+ * Só consulta o banco quando o nível tem requisito.
+ */
+async function meetsLevelRequirements(
+  client: TxClient, characterId: string, row: TrikXpLevelRow
+): Promise<boolean> {
+  const weaponLevel = Number(row.req_weapon_level ?? 0)
+  if (weaponLevel > 0) {
+    const { rows } = await client.query(
+      `SELECT COALESCE(MAX(level), 0) AS lvl FROM trik_character_weapon_progress WHERE character_id = $1`,
+      [characterId]
+    )
+    if (Number(rows[0]?.lvl ?? 0) < weaponLevel) return false
+  }
+  const knowledgeLevel = Number(row.req_knowledge_level ?? 0)
+  if (row.req_knowledge_id && knowledgeLevel > 0) {
+    const { rows } = await client.query(
+      `SELECT level FROM trik_character_knowledge_progress WHERE character_id = $1 AND knowledge_id = $2`,
+      [characterId, row.req_knowledge_id]
+    )
+    if (Number(rows[0]?.level ?? 0) < knowledgeLevel) return false
+  }
+  return true
 }
 
 /**
@@ -286,6 +317,11 @@ interface TrikXpLevelRow {
  *
  * Roda dentro da transação do chamador (`client`, sem BEGIN/COMMIT) — ver
  * applySceneAward, que junta prêmio + xp + maestria numa transação só.
+ *
+ * trik_023: além do xp, o nível pode exigir maestria (qualquer arma) e/ou
+ * aula (matéria específica) — ver meetsLevelRequirements. Faltando, o xp
+ * represa como no nível máximo; chamar com xpDelta = 0 depois de a maestria
+ * subir reavalia (applySceneAward já credita a maestria ANTES do xp).
  *
  * Só cobre o type 'character' (grava em trik_character_progress). A maestria
  * de arma/matéria (types 'weapon'/'knowledge', disparada por #treino/#aula)
@@ -322,7 +358,8 @@ export async function applyXpInTx(
     const { rows: levelRows } = await client.query(
       `SELECT goal_xp, reward_conduct, reward_principles, reward_preferences, reward_goal,
               reward_natural_aptitudes, reward_acquired_aptitudes,
-              reward_primary_interest, reward_secondary_interest
+              reward_primary_interest, reward_secondary_interest,
+              req_weapon_level, req_knowledge_id, req_knowledge_level
          FROM trik_progression WHERE type = 'character' AND level = $1`,
       [level]
     )
@@ -331,6 +368,7 @@ export async function applyXpInTx(
 
     const goalXp = Number(nextGoal.goal_xp)
     if (progressXp < goalXp) break
+    if (!await meetsLevelRequirements(client, characterId, nextGoal)) break // falta maestria/aula: xp represa
 
     progressXp -= goalXp
     level += 1
@@ -432,10 +470,12 @@ export async function applySceneAward(
       return null
     }
 
-    const { leveledUp } = await applyXpInTx(client, characterId, xpAwarded)
+    // Maestria ANTES do xp (trik_023): se esta cena subir a arma/matéria que
+    // faltava como requisito do nível, o xp já vê o nível novo e sobe junto.
     const masteryResult = mastery
       ? await applyMasteryInTx(client, mastery.kind, characterId, mastery.itemId, mastery.units, mastery.reqReduction ?? 0)
       : undefined
+    const { leveledUp } = await applyXpInTx(client, characterId, xpAwarded)
 
     await client.query('COMMIT')
     return { leveledUp, ...(masteryResult && { mastery: masteryResult }) }
@@ -1007,6 +1047,9 @@ export interface TrikXpLevel {
   reward_acquired_aptitudes: number
   reward_primary_interest:   number
   reward_secondary_interest: number
+  req_weapon_level:    number
+  req_knowledge_id:    string | null
+  req_knowledge_level: number
 }
 
 export async function listXpLevels(type: string): Promise<TrikXpLevel[]> {
@@ -1034,6 +1077,11 @@ export interface XpLevelInput {
   reqMastery?:        number
   /** Só relevante no type 'knowledge' — omitido/0 = nível máximo. */
   reqEducation?:      number
+  /** trik_023, só 'character': nível mínimo em qualquer arma (0 = sem requisito). */
+  reqWeaponLevel?:    number
+  /** trik_023, só 'character': matéria exigida e o nível mínimo nela. */
+  reqKnowledgeId?:    string | null
+  reqKnowledgeLevel?: number
 }
 
 /**
@@ -1054,11 +1102,13 @@ export async function setXpLevels(type: string, levels: XpLevelInput[]): Promise
         `INSERT INTO trik_progression
            (type, level, goal_xp, reward_conduct, reward_principles, reward_preferences, reward_goal,
             req_mastery, req_education, reward_natural_aptitudes, reward_acquired_aptitudes,
-            reward_primary_interest, reward_secondary_interest)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+            reward_primary_interest, reward_secondary_interest,
+            req_weapon_level, req_knowledge_id, req_knowledge_level)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
         [type, lvl.level, lvl.goalXp, lvl.rewardConduct, lvl.rewardPrinciples, lvl.rewardPreferences, lvl.rewardGoal,
          lvl.reqMastery ?? 0, lvl.reqEducation ?? 0, lvl.rewardNaturalAptitudes ?? 0, lvl.rewardAcquiredAptitudes ?? 0,
-         lvl.rewardPrimaryInterest ?? 0, lvl.rewardSecondaryInterest ?? 0]
+         lvl.rewardPrimaryInterest ?? 0, lvl.rewardSecondaryInterest ?? 0,
+         lvl.reqWeaponLevel ?? 0, lvl.reqKnowledgeId ?? null, lvl.reqKnowledgeId ? (lvl.reqKnowledgeLevel ?? 0) : 0]
       )
     }
     await client.query('COMMIT')
@@ -1320,6 +1370,41 @@ export interface TrikCharacterBonuses {
   goal_id:                string | null
   pantheon_id:            string | null
   divine_bond_id:         string | null
+  /** trik_024: vínculos extras, atribuídos pelo admin. */
+  secondary_pantheon_id?:    string | null
+  secondary_divine_bond_id?: string | null
+  tertiary_pantheon_id?:     string | null
+  tertiary_divine_bond_id?:  string | null
+}
+
+/**
+ * Grava o vínculo divino secundário ou terciário (trik_024). pantheonId null
+ * limpa o vínculo. Quem chama já validou o par com resolvePantheonChoice.
+ * false = personagem não existe.
+ */
+export async function setExtraDivineBond(
+  characterId: string,
+  rank: 'secondary' | 'tertiary',
+  pantheonId: string | null,
+  deityId: string | null,
+): Promise<boolean> {
+  // Nomes de coluna vêm só deste mapa, nunca do input.
+  const cols = rank === 'secondary'
+    ? ['secondary_pantheon_id', 'secondary_divine_bond_id']
+    : ['tertiary_pantheon_id', 'tertiary_divine_bond_id']
+  try {
+    await db.query(
+      `INSERT INTO trik_character_bonuses (character_id, ${cols[0]}, ${cols[1]})
+       VALUES ($1, $2, $3)
+       ON CONFLICT (character_id) DO UPDATE
+         SET ${cols[0]} = EXCLUDED.${cols[0]}, ${cols[1]} = EXCLUDED.${cols[1]}`,
+      [characterId, pantheonId, pantheonId ? deityId : null]
+    )
+    return true
+  } catch (err: any) {
+    if (err?.code === '23503') return false
+    throw err
+  }
 }
 
 export async function getCharacterBonuses(characterId: string): Promise<TrikCharacterBonuses | null> {

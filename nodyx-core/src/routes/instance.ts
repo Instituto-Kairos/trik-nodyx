@@ -459,6 +459,28 @@ export default async function instanceRoutes(app: FastifyInstance) {
     return reply.code(201).send({ tag })
   })
 
+  // PUT /api/v1/instance/tags/order — admin only. Body: { ids: string[] } na ordem desejada.
+  // Registrada antes de /tags/:id para não ser engolida pelo parâmetro.
+  app.put('/tags/order', { preHandler: [rateLimit, requireAuth] }, async (request, reply) => {
+    const communityId = await getCommunityId()
+    if (!communityId) return reply.code(404).send({ error: 'Community not found', code: 'NOT_FOUND' })
+
+    const member = await CommunityModel.getMember(communityId, request.user!.userId)
+    if (!member || member.role === 'member') {
+      return reply.code(403).send({ error: 'Forbidden', code: 'FORBIDDEN' })
+    }
+
+    const { ids } = request.body as { ids?: unknown }
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    if (!Array.isArray(ids) || ids.length > 500 || !ids.every(i => typeof i === 'string' && uuid.test(i))) {
+      return reply.code(400).send({ error: 'ids must be an array of tag ids', code: 'BAD_REQUEST' })
+    }
+
+    await TagModel.reorder(communityId, ids as string[])
+    const tags = await TagModel.listByCommunity(communityId)
+    return reply.send({ tags })
+  })
+
   // PATCH /api/v1/instance/tags/:id — admin only (nome e/ou cor)
   app.patch('/tags/:id', { preHandler: [rateLimit, requireAuth] }, async (request, reply) => {
     const communityId = await getCommunityId()

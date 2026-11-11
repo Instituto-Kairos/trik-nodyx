@@ -5,7 +5,7 @@
 
 import { db } from '../config/database'
 import {
-  listBonusCatalog, listCharacterTraits, listPantheonEffects,
+  listBonusCatalog, listCharacterTraits, listPantheonEffects, scaleBondEffect, DIVINE_BOND_WEIGHTS,
   type BonusCatalogKind, type TrikEffect, type CharacterTrait,
 } from './trikEffects'
 
@@ -30,6 +30,14 @@ export interface CharacterSheet {
   }
   pantheon: { id: string; name: string; effects: TrikEffect[] } | null
   deity:    { id: string; name: string; effects: TrikEffect[] } | null
+  /** trik_024: vínculos secundário (0.5x) e terciário (0.25x). Efeitos já
+   *  escalados como o motor os vê (liga/desliga ficam de fora). */
+  extraBonds: {
+    rank:     'secondary' | 'tertiary'
+    weight:   number
+    pantheon: { id: string; name: string; effects: TrikEffect[] } | null
+    deity:    { id: string; name: string; effects: TrikEffect[] } | null
+  }[]
   traits:   (CharacterTrait & { effects: TrikEffect[] })[]
   mastery: {
     weapons:    { id: string; name: string; category: string | null; level: number; progress: string }[]
@@ -61,10 +69,16 @@ export async function getCharacterSheet(characterId: string): Promise<CharacterS
   const [progressRes, bonusesRes, weaponsRes, knowledgesRes, scenesRes, grantsRes, traits, pantheonEffects, ...catalogs] = await Promise.all([
     db.query(`SELECT * FROM trik_character_progress WHERE character_id = $1`, [characterId]),
     db.query(
-      `SELECT b.*, pa.name AS pantheon_name, d.name AS deity_name
+      `SELECT b.*, pa.name AS pantheon_name, d.name AS deity_name,
+              pa2.name AS secondary_pantheon_name, d2.name AS secondary_deity_name,
+              pa3.name AS tertiary_pantheon_name, d3.name AS tertiary_deity_name
          FROM trik_character_bonuses b
          LEFT JOIN trik_pantheons pa ON pa.id = b.pantheon_id
          LEFT JOIN trik_deities d ON d.id = b.divine_bond_id
+         LEFT JOIN trik_pantheons pa2 ON pa2.id = b.secondary_pantheon_id
+         LEFT JOIN trik_deities d2 ON d2.id = b.secondary_divine_bond_id
+         LEFT JOIN trik_pantheons pa3 ON pa3.id = b.tertiary_pantheon_id
+         LEFT JOIN trik_deities d3 ON d3.id = b.tertiary_divine_bond_id
         WHERE b.character_id = $1`,
       [characterId]
     ),
@@ -118,6 +132,18 @@ export async function getCharacterSheet(characterId: string): Promise<CharacterS
   }
 
   const b = bonusesRes.rows[0] ?? {}
+  const bondPart = (id: string | null, name: string | null, weight: number) => id
+    ? {
+        id, name: name ?? '',
+        effects: (pantheonEffects[id] ?? []).map(e => scaleBondEffect(e, weight)).filter((e): e is TrikEffect => !!e),
+      }
+    : null
+  const extraBonds = (['secondary', 'tertiary'] as const).map(rank => ({
+    rank,
+    weight:   DIVINE_BOND_WEIGHTS[rank],
+    pantheon: bondPart(b[`${rank}_pantheon_id`], b[`${rank}_pantheon_name`], DIVINE_BOND_WEIGHTS[rank]),
+    deity:    bondPart(b[`${rank}_divine_bond_id`], b[`${rank}_deity_name`], DIVINE_BOND_WEIGHTS[rank]),
+  }))
   return {
     character: character as CharacterSheet['character'],
     player:    { name: player_name, username },
@@ -131,6 +157,7 @@ export async function getCharacterSheet(characterId: string): Promise<CharacterS
     },
     pantheon: b.pantheon_id ? { id: b.pantheon_id, name: b.pantheon_name, effects: pantheonEffects[b.pantheon_id] ?? [] } : null,
     deity:    b.divine_bond_id ? { id: b.divine_bond_id, name: b.deity_name, effects: pantheonEffects[b.divine_bond_id] ?? [] } : null,
+    extraBonds,
     traits:   traits.map(t => ({ ...t, effects: traitEffects.get(t.id) ?? [] })),
     mastery:  { weapons: weaponsRes.rows, knowledges: knowledgesRes.rows },
     recentScenes: scenesRes.rows,

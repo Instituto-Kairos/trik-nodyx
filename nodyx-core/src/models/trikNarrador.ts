@@ -236,14 +236,15 @@ export async function removeNarrator(userId: string): Promise<boolean> {
 }
 
 /** Grava o prêmio do post. false = o post já tinha prêmio (edições
- *  concorrentes) — nada foi creditado de novo. */
-export async function applyNarratorAward(userId: string, postId: string, xp: number): Promise<boolean> {
+ *  concorrentes) — nada foi creditado de novo. `tags` = as do narrador que o
+ *  post usou (sem '#'), pro histórico da aba (trik_023). */
+export async function applyNarratorAward(userId: string, postId: string, xp: number, tags: string[] = []): Promise<boolean> {
   const { rows } = await db.query(
-    `INSERT INTO trik_narrator_awards (post_id, user_id, xp_awarded)
-     VALUES ($1, $2, $3)
+    `INSERT INTO trik_narrator_awards (post_id, user_id, xp_awarded, tags)
+     VALUES ($1, $2, $3, $4)
      ON CONFLICT (post_id) DO NOTHING
      RETURNING post_id`,
-    [postId, userId, xp],
+    [postId, userId, xp, tags.map(t => t.toLowerCase())],
   )
   return rows.length > 0
 }
@@ -297,6 +298,8 @@ export function getNarratorBalance(userId: string): Promise<NarratorBalance> {
 export interface NarratorAwardRow {
   post_id:      string
   xp_awarded:   number
+  /** Tags do narrador usadas no post, sem '#' (vazio em prêmio antigo não identificado). */
+  tags:         string[]
   created_at:   string
   thread_id:    string
   thread_title: string
@@ -307,7 +310,7 @@ export interface NarratorAwardRow {
 
 export async function listNarratorAwards(userId: string, limit = 50): Promise<NarratorAwardRow[]> {
   const { rows } = await db.query<NarratorAwardRow>(
-    `SELECT a.post_id, a.xp_awarded, a.created_at,
+    `SELECT a.post_id, a.xp_awarded, a.tags, a.created_at,
             t.id AS thread_id, t.title AS thread_title, t.slug AS thread_slug,
             t.category_id, c.slug AS category_slug
        FROM trik_narrator_awards a

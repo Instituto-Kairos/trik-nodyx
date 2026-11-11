@@ -43,6 +43,30 @@ export const actions: Actions = {
 		return { updated: tagId };
 	},
 
+	// Move uma tag uma posição para cima/baixo e grava a ordem completa.
+	move: async ({ fetch, request, cookies }) => {
+		const token = cookies.get('token')!;
+		const form  = await request.formData();
+		const tagId = form.get('tag_id') as string;
+		const dir   = form.get('dir') === 'up' ? -1 : 1;
+
+		const list = await apiFetch(fetch, '/instance/tags');
+		const { tags } = list.ok ? await list.json() : { tags: [] };
+		const ids: string[] = tags.map((t: { id: string }) => t.id);
+
+		const i = ids.indexOf(tagId);
+		const j = i + dir;
+		if (i < 0 || j < 0 || j >= ids.length) return;
+		[ids[i], ids[j]] = [ids[j], ids[i]];
+
+		const res = await apiFetch(fetch, '/instance/tags/order', {
+			method: 'PUT',
+			headers: { Authorization: `Bearer ${token}` },
+			body: JSON.stringify({ ids }),
+		});
+		if (!res.ok) return fail(res.status, { error: (await res.json()).error ?? 'Erreur réorganisation tags' });
+	},
+
 	delete: async ({ fetch, request, cookies }) => {
 		const token = cookies.get('token')!;
 		const form  = await request.formData();

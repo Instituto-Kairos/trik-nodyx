@@ -435,10 +435,39 @@ export async function saveWeatherDays(days: WeatherDayInput[]): Promise<void> {
 const EFFECT_SELECT = `e.id, e.effect, e.activity, e.weapon_id, e.knowledge_id, e.weapon_category,
   e.knowledge_category, e.alert_kind, e.condition_kind, e.condition_value, e.value`
 
+// ─── Vínculos divinos (trik_024) ────────────────────────────────────────────
+
+/** Peso de cada vínculo divino: principal cheio, secundário metade, terciário um quarto. */
+export const DIVINE_BOND_WEIGHTS = { primary: 1, secondary: 0.5, tertiary: 0.25 } as const
+export type DivineBondRank = keyof typeof DIVINE_BOND_WEIGHTS
+
+/** Efeitos liga/desliga: não dá pra "meio anular" um alerta — fora do vínculo
+ *  principal eles não valem (decisão do usuário, 2026-11-09). */
+const ON_OFF_EFFECTS: readonly string[] = ['anula_alerta', 'sensibilidade', 'espelho']
+
+/**
+ * Efeito de panteão/divindade visto por um vínculo de peso `weight`. null = não
+ * vale. reduz_requisito/limite_diario escalam o valor; multiplica escala só o
+ * ganho (×1.5 no secundário vira ×1.25 — escalar o 1.5 direto daria ×0.75,
+ * uma penalidade).
+ */
+export function scaleBondEffect(effect: TrikEffect, weight: number): TrikEffect | null {
+  if (weight >= 1) return effect
+  if (ON_OFF_EFFECTS.includes(effect.effect)) return null
+  if (effect.value === null) return effect
+  const v = Number(effect.value)
+  const scaled = effect.effect === 'multiplica' ? 1 + (v - 1) * weight : v * weight
+  return { ...effect, value: String(Math.round(scaled * 10000) / 10000) }
+}
+
 /**
  * Efeitos de cada personagem, juntando os 9 donos: aptidões (4 slots),
  * preferências, objetivo, panteão, vínculo divino e as 4 listas desbloqueadas
  * — mais os interesses (trik_012), que viram efeitos sintéticos.
+ *
+ * Panteão/divindade vêm dos três vínculos (trik_024) com o peso de cada um
+ * (scaleBondEffect). O mesmo panteão/divindade em dois vínculos conta UMA vez,
+ * pelo maior peso.
  */
 export async function listCharacterEffects(characterIds: string[]): Promise<Record<string, TrikEffect[]>> {
   const out: Record<string, TrikEffect[]> = Object.fromEntries(characterIds.map(id => [id, []]))
@@ -457,14 +486,33 @@ export async function listCharacterEffects(characterIds: string[]): Promise<Reco
                               b.first_acquired_aptitude_id, b.second_acquired_aptitude_id)
          OR e.preference_id IN (b.first_preference_id, b.second_preference_id)
          OR e.goal_id = b.goal_id
-         OR e.pantheon_id = b.pantheon_id
-         OR e.deity_id = b.divine_bond_id
       WHERE b.character_id = ANY($1)
      UNION ALL
      ${traitParts.join('\n     UNION ALL\n     ')}`,
     [characterIds]
   )
   for (const { character_id, ...effect } of rows) out[character_id]?.push(effect)
+
+  const { rows: bondRows } = await db.query<TrikEffect & { character_id: string; weight: string }>(
+    `SELECT bd.character_id, MAX(bd.weight) AS weight, ${EFFECT_SELECT}
+       FROM (
+         SELECT character_id, pantheon_id AS pid, divine_bond_id AS did, ${DIVINE_BOND_WEIGHTS.primary}::numeric AS weight
+           FROM trik_character_bonuses WHERE character_id = ANY($1)
+         UNION ALL
+         SELECT character_id, secondary_pantheon_id, secondary_divine_bond_id, ${DIVINE_BOND_WEIGHTS.secondary}
+           FROM trik_character_bonuses WHERE character_id = ANY($1)
+         UNION ALL
+         SELECT character_id, tertiary_pantheon_id, tertiary_divine_bond_id, ${DIVINE_BOND_WEIGHTS.tertiary}
+           FROM trik_character_bonuses WHERE character_id = ANY($1)
+       ) bd
+       JOIN trik_effects e ON e.pantheon_id = bd.pid OR e.deity_id = bd.did
+      GROUP BY bd.character_id, e.id`,
+    [characterIds]
+  )
+  for (const { character_id, weight, ...effect } of bondRows) {
+    const scaled = scaleBondEffect(effect, Number(weight))
+    if (scaled) out[character_id]?.push(scaled)
+  }
   const interests = await listCharacterInterests(characterIds)
   for (const [id, list] of Object.entries(interests)) out[id]?.push(...interestEffects(list))
   return out

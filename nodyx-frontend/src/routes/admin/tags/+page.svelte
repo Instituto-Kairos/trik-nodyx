@@ -2,6 +2,7 @@
 	import { enhance } from '$app/forms';
 	import type { PageData, ActionData } from './$types';
 	import { t } from '$lib/i18n';
+	import { tagBadgeStyle } from '$lib/tagStyle';
 
 	const tFn = $derived($t);
 
@@ -12,12 +13,6 @@
 	// Linha em edição (uma por vez). Fecha sozinha quando o update volta ok.
 	let editId = $state<string | null>(null);
 
-	function luminance(hex: string) {
-		const r = parseInt(hex.slice(1, 3), 16);
-		const g = parseInt(hex.slice(3, 5), 16);
-		const b = parseInt(hex.slice(5, 7), 16);
-		return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-	}
 </script>
 
 <svelte:head><title>{tFn('atags.page_title')}</title></svelte:head>
@@ -69,7 +64,7 @@
 					</tr>
 				</thead>
 				<tbody class="divide-y divide-gray-800/60">
-					{#each tags as tag}
+					{#each tags as tag, idx (tag.id)}
 						<tr class="bg-gray-900/30 hover:bg-gray-900/60 transition-colors">
 							{#if editId === tag.id}
 							<td class="px-4 py-3" colspan="3">
@@ -95,12 +90,21 @@
 							{:else}
 							<td class="px-4 py-3" data-label={tFn('atags.col_tag')}>
 								<span class="inline-block rounded-full px-3 py-1 text-xs font-semibold"
-									style="background:{tag.color}; color:{luminance(tag.color) > 0.5 ? '#111' : '#fff'}">
+									style={tagBadgeStyle(tag.color)}>
 									{tag.name}
 								</span>
 							</td>
 							<td class="px-4 py-3 text-gray-400 font-mono text-xs" data-label={tFn('atags.col_slug')}>{tag.slug}</td>
 							<td class="px-4 py-3 text-right whitespace-nowrap">
+								<form method="POST" action="?/move" use:enhance class="inline mr-3">
+									<input type="hidden" name="tag_id" value={tag.id} />
+									<button type="submit" name="dir" value="up" disabled={idx === 0}
+										aria-label="Subir"
+										class="px-1.5 text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed">▲</button>
+									<button type="submit" name="dir" value="down" disabled={idx === tags.length - 1}
+										aria-label="Descer"
+										class="px-1.5 text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed">▼</button>
+								</form>
 								<button type="button" onclick={() => (editId = tag.id)}
 									class="text-xs text-indigo-400 hover:text-indigo-300 mr-3">
 									{tFn('common.edit')}

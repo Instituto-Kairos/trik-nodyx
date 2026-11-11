@@ -16,7 +16,16 @@ export const load: PageServerLoad = async ({ fetch, cookies, url }) => {
 		headers: { Authorization: `Bearer ${token}` }
 	});
 	const levels = res.ok ? ((await res.json()).levels ?? []) : [];
-	return { levels, type };
+
+	// Matérias pro requisito "aula exigida" do nível de personagem (trik_023).
+	let knowledges: { id: string; name: string }[] = [];
+	if (type === 'character') {
+		const cat = await apiFetch(fetch, '/admin/trik/catalog?type=knowledge', {
+			headers: { Authorization: `Bearer ${token}` }
+		});
+		knowledges = cat.ok ? ((await cat.json()).entries ?? []) : [];
+	}
+	return { levels, type, knowledges };
 };
 
 export const actions: Actions = {

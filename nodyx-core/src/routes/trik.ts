@@ -30,6 +30,7 @@ import * as TrikAu from '../models/trikAu'
 import { syncGameWeek, dayAlerts } from '../services/trik/weather'
 import { getCharacterSheet } from '../models/trikSheet'
 import { getPlayerAndCharacters, submitRegistro } from '../services/trik/registro'
+import { getPlayerSummary } from '../models/trikSummary'
 import { submitPlaquinha } from '../services/trik/registro/plaquinha'
 import { submitLevelup } from '../services/trik/xp/levelup'
 import { notifyLevelUp } from '../services/trik/xp'
@@ -151,6 +152,13 @@ const RegistroCharacterPatch = naoVazio({
 
 const RegistroIdParams = z.object({ id: z.string().uuid() })
 
+// trik_024: vínculo divino secundário/terciário. pantheonId null = limpa.
+const ExtraBondParams = z.object({ id: z.string().uuid(), rank: z.enum(['secondary', 'tertiary']) })
+const ExtraBondBody = z.object({
+  pantheonId:   z.string().uuid().nullable(),
+  divineBondId: z.string().uuid().nullable().optional(),
+}).refine(b => !b.divineBondId || !!b.pantheonId, 'Escolha o panteão do vínculo divino')
+
 const PlaquinhaBody = z.object({
   channelId:         z.string().uuid(),
   characterId:       z.string().uuid(),
@@ -245,6 +253,10 @@ const XpLevelsBody = z.object({
     // (que trata como 0). SMALLINT no banco → teto 32767.
     reqMastery:        z.number().int().min(0).max(32767).optional(),
     reqEducation:      z.number().int().min(0).max(32767).optional(),
+    // trik_023, só 'character': requisitos extras pra sair do nível.
+    reqWeaponLevel:    z.number().int().min(0).max(32767).optional(),
+    reqKnowledgeId:    z.string().uuid().nullable().optional(),
+    reqKnowledgeLevel: z.number().int().min(0).max(32767).optional(),
   })),
 })
 
@@ -424,6 +436,12 @@ export async function trikPlayerPlugin(app: FastifyInstance) {
   app.get('/characters/mine', async (request, reply) => {
     const { characters } = await getPlayerAndCharacters(request.user!.userId)
     return reply.send({ characters })
+  })
+
+  // Resumo dos personagens do jogador logado pro widget da página inicial:
+  // nível/xp, média das últimas cenas, maestrias e pendências de level up.
+  app.get('/characters/mine/summary', async (request, reply) => {
+    return reply.send({ characters: await getPlayerSummary(request.user!.userId) })
   })
 
   // GET /api/v1/trik/aliases?q= — alvos mencionáveis por nome de personagem.
@@ -829,7 +847,15 @@ export async function trikAdminPlugin(app: FastifyInstance) {
     if (new Set(levelNumbers).size !== levelNumbers.length) {
       return reply.code(400).send({ error: 'Nível repetido na curva', code: 'VALIDATION' })
     }
-    await TrikModel.setXpLevels(body.type, body.levels)
+    try {
+      await TrikModel.setXpLevels(body.type, body.levels)
+    } catch (err: any) {
+      // req_knowledge_id apontando pra matéria que não existe (apagada no meio).
+      if (err?.code === '23503') {
+        return reply.code(400).send({ error: 'Matéria exigida não existe mais', code: 'VALIDATION' })
+      }
+      throw err
+    }
     return reply.send({ ok: true })
   })
 
@@ -1016,6 +1042,23 @@ export async function trikAdminPlugin(app: FastifyInstance) {
     const sheet = await getCharacterSheet(id)
     if (!sheet) return reply.code(404).send({ error: 'Personagem não encontrado', code: 'NOT_FOUND' })
     return reply.send({ sheet })
+  })
+
+  // Vínculo divino secundário/terciário (trik_024) — só pelo admin, na ficha
+  // completa. Mesma validação do principal: a divindade precisa ser do panteão.
+  app.put('/characters/:id/divine-bonds/:rank', {
+    preHandler: validate({ params: ExtraBondParams, body: ExtraBondBody }),
+  }, async (request, reply) => {
+    const { id, rank } = request.params as z.infer<typeof ExtraBondParams>
+    const { pantheonId, divineBondId } = request.body as z.infer<typeof ExtraBondBody>
+    if (pantheonId) {
+      const choice = await TrikModel.resolvePantheonChoice(pantheonId, divineBondId ?? null)
+      if (!choice) return reply.code(400).send({ error: 'Panteão ou divindade fora do catálogo', code: 'VALIDATION' })
+    }
+    if (!await TrikModel.setExtraDivineBond(id, rank, pantheonId, divineBondId ?? null)) {
+      return reply.code(404).send({ error: 'Personagem não encontrado', code: 'NOT_FOUND' })
+    }
+    return reply.send({ ok: true })
   })
 
   // Bônus de XP manual (ficha completa). Level up avisa no canal de anúncio

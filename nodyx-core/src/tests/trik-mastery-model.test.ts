@@ -365,6 +365,67 @@ describe('applySceneAward — prêmio + xp + maestria numa transação só', () 
   })
 })
 
+describe('applySceneAward — requisitos de maestria/aula do nível (trik_023)', () => {
+  // Nível 1 do personagem pede 10 xp + `req`. weaponLevel/knowledgeLevel = nível
+  // atual do personagem na melhor arma / na matéria k1. A curva de maestria de
+  // arma tem o nível 1 → 2 com 1 treino, pra testar a cena que sobe as duas coisas.
+  function setup(req: Record<string, unknown>, state: { weaponLevel: number; knowledgeLevel: number | null }) {
+    const updates: string[] = []
+    mockClient.query.mockImplementation(async (sql: string, params: any[] = []) => {
+      if (sql.includes('INSERT INTO trik_scene_awards')) return { rows: [{ id: 'a1' }] }
+      if (sql.includes("type = 'character'")) {
+        return { rows: params[0] === 1
+          ? [{ goal_xp: '10', reward_conduct: 0, reward_principles: 0, reward_preferences: 0, reward_goal: false, ...req }]
+          : [] }
+      }
+      if (sql.includes('FROM trik_progression')) return { rows: params[1] === 1 ? [{ req: 1 }] : [] }
+      if (sql.includes('MAX(level)')) return { rows: [{ lvl: state.weaponLevel }] }
+      if (sql.includes('FROM trik_character_knowledge_progress') && !sql.includes('FOR UPDATE')) {
+        return { rows: state.knowledgeLevel === null ? [] : [{ level: state.knowledgeLevel }] }
+      }
+      if (sql.includes('FROM trik_character_progress') && sql.includes('FOR UPDATE')) {
+        return { rows: [{ level: 1, progress_xp: '0', points_conduct: 0, points_principles: 0, points_preferences: 0, has_goal: false }] }
+      }
+      if (sql.includes('FOR UPDATE')) return { rows: [{ level: 1, progress: '0.00' }] }
+      if (sql.startsWith('UPDATE trik_character_weapon_progress')) state.weaponLevel = Math.max(state.weaponLevel, params[2])
+      if (sql.startsWith('UPDATE')) { updates.push(sql); return { rows: [{ level: 1 }] } }
+      return { rows: [] }
+    })
+    return updates
+  }
+
+  it('xp suficiente mas sem a maestria exigida: não sobe (xp represa)', async () => {
+    setup({ req_weapon_level: 2 }, { weaponLevel: 1, knowledgeLevel: null })
+    expect(await applySceneAward('char-1', 'post-1', 12)).toEqual({ leveledUp: false })
+  })
+
+  it('maestria em qualquer arma no nível exigido: sobe', async () => {
+    setup({ req_weapon_level: 2 }, { weaponLevel: 3, knowledgeLevel: null })
+    expect(await applySceneAward('char-1', 'post-1', 12)).toEqual({ leveledUp: true })
+  })
+
+  it('aula específica abaixo do nível (ou nunca cursada): não sobe', async () => {
+    setup({ req_knowledge_id: 'k1', req_knowledge_level: 2 }, { weaponLevel: 0, knowledgeLevel: 1 })
+    expect(await applySceneAward('char-1', 'post-1', 12)).toEqual({ leveledUp: false })
+    setup({ req_knowledge_id: 'k1', req_knowledge_level: 2 }, { weaponLevel: 0, knowledgeLevel: null })
+    expect(await applySceneAward('char-1', 'post-1', 12)).toEqual({ leveledUp: false })
+  })
+
+  it('maestria E aula exigidas: precisa das duas', async () => {
+    const req = { req_weapon_level: 2, req_knowledge_id: 'k1', req_knowledge_level: 2 }
+    setup(req, { weaponLevel: 2, knowledgeLevel: 1 })
+    expect(await applySceneAward('char-1', 'post-1', 12)).toEqual({ leveledUp: false })
+    setup(req, { weaponLevel: 2, knowledgeLevel: 2 })
+    expect(await applySceneAward('char-1', 'post-1', 12)).toEqual({ leveledUp: true })
+  })
+
+  it('cena de #treino que sobe a arma pro nível exigido libera o nível do personagem na mesma cena', async () => {
+    setup({ req_weapon_level: 2 }, { weaponLevel: 1, knowledgeLevel: null })
+    const result = await applySceneAward('char-1', 'post-1', 12, { kind: 'weapon', itemId: 'w1', units: 1 })
+    expect(result).toEqual({ leveledUp: true, mastery: { level: 2, progress: 0, leveledUp: true } })
+  })
+})
+
 describe('revertSceneAward', () => {
   // O DELETE ... RETURNING devolve a linha do prêmio (ou nada, se o post não tem).
   function setupAward(award: Record<string, unknown> | null) {

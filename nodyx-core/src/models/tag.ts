@@ -6,6 +6,7 @@ export interface Tag {
   name:         string
   slug:         string
   color:        string
+  position:     number
   created_at:   Date
 }
 
@@ -22,7 +23,7 @@ function slugify(name: string): string {
 
 export async function listByCommunity(communityId: string): Promise<Tag[]> {
   const { rows } = await db.query<Tag>(
-    `SELECT * FROM tags WHERE community_id = $1 ORDER BY name ASC`,
+    `SELECT * FROM tags WHERE community_id = $1 ORDER BY position ASC, name ASC`,
     [communityId]
   )
   return rows
@@ -35,12 +36,36 @@ export async function create(data: {
 }): Promise<Tag> {
   const slug = slugify(data.name)
   const { rows } = await db.query<Tag>(
-    `INSERT INTO tags (community_id, name, slug, color)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO tags (community_id, name, slug, color, position)
+     VALUES ($1, $2, $3, $4,
+       (SELECT COALESCE(MAX(position), 0) + 1 FROM tags WHERE community_id = $1))
      RETURNING *`,
     [data.community_id, data.name, slug, data.color]
   )
   return rows[0]
+}
+
+/**
+ * Grava a ordem das tags: `ids` na sequência desejada vira position 1..n.
+ * Só toca tags desta comunidade; ids desconhecidos são ignorados. Tags que
+ * ficaram fora da lista vão para depois das listadas, mantendo a ordem relativa.
+ */
+export async function reorder(communityId: string, ids: string[]): Promise<void> {
+  await db.query(
+    `WITH ordem AS (
+       SELECT t.id,
+              ROW_NUMBER() OVER (
+                ORDER BY COALESCE(a.ord, 2147483647), t.position, t.name
+              ) AS rn
+         FROM tags t
+         LEFT JOIN unnest($2::uuid[]) WITH ORDINALITY AS a(id, ord) ON a.id = t.id
+        WHERE t.community_id = $1
+     )
+     UPDATE tags SET position = ordem.rn
+       FROM ordem
+      WHERE tags.id = ordem.id`,
+    [communityId, ids]
+  )
 }
 
 /**
@@ -74,7 +99,7 @@ export async function getTagsForThread(threadId: string): Promise<Tag[]> {
     `SELECT t.* FROM tags t
      JOIN thread_tags tt ON tt.tag_id = t.id
      WHERE tt.thread_id = $1
-     ORDER BY t.name ASC`,
+     ORDER BY t.position ASC, t.name ASC`,
     [threadId]
   )
   return rows
@@ -87,7 +112,7 @@ export async function getTagsForThreads(threadIds: string[]): Promise<Map<string
     `SELECT t.*, tt.thread_id FROM tags t
      JOIN thread_tags tt ON tt.tag_id = t.id
      WHERE tt.thread_id = ANY($1)
-     ORDER BY t.name ASC`,
+     ORDER BY t.position ASC, t.name ASC`,
     [threadIds]
   )
 

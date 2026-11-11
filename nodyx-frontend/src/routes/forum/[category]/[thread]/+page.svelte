@@ -42,6 +42,7 @@
 	import PollCard from '$lib/components/PollCard.svelte';
 	import PollCreator from '$lib/components/PollCreator.svelte';
 	import { t } from '$lib/i18n';
+	import { tagBadgeStyle } from '$lib/tagStyle';
 	import { replyCount } from '$lib/forumCounts';
 	import Breadcrumb, { type Crumb } from '$lib/components/Breadcrumb.svelte';
 
@@ -331,7 +332,7 @@
 					{/if}
 					{#each (thread.tags ?? []) as tag}
 						<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium"
-							style="background-color: {tag.color}22; color: {tag.color}; border: 1px solid {tag.color}55">
+							style={tagBadgeStyle(tag.color)}>
 							{tag.name}
 						</span>
 					{/each}

@@ -14,6 +14,7 @@ import articlesShowcase   from './articles-showcase'
 import recentThreads      from './recent-threads'
 import socialLinksBar     from './social-links-bar'
 import twitchStream       from './twitch-stream'
+import trikCharacters     from './trik-characters'
 
 export const PLUGIN_REGISTRY: Record<string, WidgetPlugin> = {
 	[heroBanner.id]:         heroBanner,
@@ -26,6 +27,7 @@ export const PLUGIN_REGISTRY: Record<string, WidgetPlugin> = {
 	[recentThreads.id]:      recentThreads,
 	[socialLinksBar.id]:     socialLinksBar,
 	[twitchStream.id]:       twitchStream,
+	[trikCharacters.id]:     trikCharacters,
 }
 
 // Liste ordonnée pour le catalogue admin (phases croissantes, puis alphabétique)

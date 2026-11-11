@@ -25,6 +25,27 @@
 	const traits = $derived((sheet.traits ?? []) as Trait[]);
 	const traitCatalog = $derived((data.traitCatalog ?? {}) as Record<string, { id: string; name: string }[]>);
 
+	// trik_024: vínculos secundário (0.5x) e terciário (0.25x), só pelo admin.
+	interface BondPart {
+		id: string;
+		name: string;
+		effects: TrikEffect[];
+	}
+	interface ExtraBond {
+		rank: 'secondary' | 'tertiary';
+		weight: number;
+		pantheon: BondPart | null;
+		deity: BondPart | null;
+	}
+	const pantheons = $derived((data.pantheons ?? []) as { id: string; name: string; deities: { id: string; name: string }[] }[]);
+	const extraBonds = $derived((sheet.extraBonds ?? []) as ExtraBond[]);
+	const BOND_LABEL = { secondary: 'Secundário', tertiary: 'Terciário' } as const;
+	// Panteão escolhido no select de cada vínculo, pra filtrar as divindades.
+	let bondPantheon = $state<Record<string, string>>({});
+	$effect(() => {
+		bondPantheon = Object.fromEntries(extraBonds.map((b) => [b.rank, b.pantheon?.id ?? '']));
+	});
+
 	const describe = (e: TrikEffect) => describeEffect(e, weapons, knowledges);
 
 	const TRAIT_LABEL: Record<string, string> = {
@@ -172,6 +193,53 @@
 			{#if !sheet.pantheon && c.pantheon}
 				<p class="text-xs text-gray-500">Registro antigo em texto: {c.pantheon}{c.divine_bond ? ` · ${c.divine_bond}` : ''}</p>
 			{/if}
+
+			{#each extraBonds as bond (bond.rank)}
+				<div class="border-t border-gray-800 pt-2 mt-2 space-y-1">
+					<h3 class="text-xs font-semibold text-gray-300">
+						Vínculo {BOND_LABEL[bond.rank].toLowerCase()}
+						<span class="text-gray-500 font-normal">· bônus {bond.weight}x, sem efeitos liga/desliga</span>
+					</h3>
+					{#if bond.pantheon}
+						{@render slot('Panteão', { ...bond.pantheon, category: null })}
+						{@render slot('Divindade', bond.deity ? { ...bond.deity, category: null } : null)}
+					{/if}
+					<form method="POST" action="?/setBond" use:enhance={keepOpen} class="flex flex-wrap items-center gap-2">
+						<input type="hidden" name="rank" value={bond.rank} />
+						<select
+							name="pantheonId"
+							bind:value={bondPantheon[bond.rank]}
+							aria-label="Panteão do vínculo {BOND_LABEL[bond.rank].toLowerCase()}"
+							class="rounded-lg bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm text-white"
+						>
+							<option value="">— nenhum —</option>
+							{#each pantheons as p (p.id)}
+								<option value={p.id}>{p.name}</option>
+							{/each}
+						</select>
+						{#if bondPantheon[bond.rank]}
+							{@const deities = pantheons.find((p) => p.id === bondPantheon[bond.rank])?.deities ?? []}
+							<select
+								name="divineBondId"
+								value={bond.pantheon?.id === bondPantheon[bond.rank] ? (bond.deity?.id ?? '') : ''}
+								aria-label="Divindade do vínculo {BOND_LABEL[bond.rank].toLowerCase()}"
+								class="rounded-lg bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm text-white"
+							>
+								<option value="">— sem divindade —</option>
+								{#each deities as d (d.id)}
+									<option value={d.id}>{d.name}</option>
+								{/each}
+							</select>
+						{/if}
+						<button
+							type="submit"
+							class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs font-medium text-white transition-colors"
+						>
+							{bondPantheon[bond.rank] ? 'Salvar' : bond.pantheon ? 'Remover' : 'Salvar'}
+						</button>
+					</form>
+				</div>
+			{/each}
 		</section>
 	</div>
 
