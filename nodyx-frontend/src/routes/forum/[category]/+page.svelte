@@ -308,6 +308,9 @@
 				</div>
 
 				<h1 class="text-2xl sm:text-4xl font-bold text-[var(--nx-text)] tracking-tight mb-2">{categoryName}</h1>
+				{#if data.category?.description}
+					<p class="text-sm sm:text-base text-[var(--nx-text-muted)] max-w-3xl">{data.category.description}</p>
+				{/if}
 
 				<!-- Stats de la catégorie -->
 				<div class="flex flex-wrap items-center gap-4 mt-4">
