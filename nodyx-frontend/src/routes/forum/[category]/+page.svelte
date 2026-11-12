@@ -666,14 +666,33 @@
 								{tFn('forum.badge_featured')}
 							</span>
 						{/if}
+						<!-- Tags: mobile (2) e desktop (4) -->
 						{#each (thread.tags || []).slice(0, 2) as tag}
-							<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium"
+							<span
+								class="inline-flex items-center px-2 py-0.5 text-xs font-medium sm:hidden"
 								style={tagBadgeStyle(tag.color)}>
 								{tag.name}
 							</span>
 						{/each}
+
+						{#each (thread.tags || []).slice(0, 4) as tag}
+							<span
+								class="hidden sm:inline-flex items-center px-2 py-0.5 text-xs font-medium"
+								style={tagBadgeStyle(tag.color)}>
+								{tag.name}
+							</span>
+						{/each}
+
 						{#if (thread.tags?.length || 0) > 2}
-							<span class="text-xs text-[var(--nx-text-muted)]">+{(thread.tags?.length || 0) - 2}</span>
+							<span class="text-xs text-[var(--nx-text-muted)] sm:hidden">
+								+{(thread.tags?.length || 0) - 2}
+							</span>
+						{/if}
+
+						{#if (thread.tags?.length || 0) > 4}
+							<span class="text-xs text-[var(--nx-text-muted)] hidden sm:inline">
+								+{(thread.tags?.length || 0) - 4}
+							</span>
 						{/if}
 					</div>
 

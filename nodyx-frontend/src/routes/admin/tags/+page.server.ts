@@ -43,28 +43,59 @@ export const actions: Actions = {
 		return { updated: tagId };
 	},
 
-	// Move uma tag uma posição para cima/baixo e grava a ordem completa.
-	move: async ({ fetch, request, cookies }) => {
+	// Reordena uma tag uma posição para cima/baixo e grava a ordem completa.
+	reorder: async ({ fetch, request, cookies }) => {
 		const token = cookies.get('token')!;
-		const form  = await request.formData();
-		const tagId = form.get('tag_id') as string;
-		const dir   = form.get('dir') === 'up' ? -1 : 1;
+		const form = await request.formData();
 
+		// Recebe a sequência de IDs enviada pelo frontend.
+		let ids: string[];
+
+		try {
+			ids = JSON.parse(String(form.get('ids') ?? ''));
+		} catch {
+			return fail(400, { error: 'Ordem de tags inválida.' });
+		}
+
+		if (!Array.isArray(ids) || !ids.every((id) => typeof id === 'string')) {
+			return fail(400, { error: 'Ordem de tags inválida.' });
+		}
+
+		// Consulta a lista atual para validar os IDs recebidos.
 		const list = await apiFetch(fetch, '/instance/tags');
-		const { tags } = list.ok ? await list.json() : { tags: [] };
-		const ids: string[] = tags.map((t: { id: string }) => t.id);
 
-		const i = ids.indexOf(tagId);
-		const j = i + dir;
-		if (i < 0 || j < 0 || j >= ids.length) return;
-		[ids[i], ids[j]] = [ids[j], ids[i]];
+		if (!list.ok) {
+			return fail(list.status, { error: 'Não foi possível consultar as tags.' });
+		}
 
+		const { tags } = await list.json();
+		const currentIds: string[] = tags.map((tag: { id: string }) => tag.id);
+
+		// Impede IDs repetidos, ausentes ou desconhecidos.
+		const isValid =
+			ids.length === currentIds.length &&
+			new Set(ids).size === currentIds.length &&
+			ids.every((id) => currentIds.includes(id));
+
+		if (!isValid) {
+			return fail(400, { error: 'A lista de tags recebida é inválida.' });
+		}
+
+		// Persiste a nova ordem no backend.
 		const res = await apiFetch(fetch, '/instance/tags/order', {
 			method: 'PUT',
 			headers: { Authorization: `Bearer ${token}` },
 			body: JSON.stringify({ ids }),
 		});
-		if (!res.ok) return fail(res.status, { error: (await res.json()).error ?? 'Erreur réorganisation tags' });
+
+		if (!res.ok) {
+			const result = await res.json();
+			return fail(res.status, {
+				error: result.error ?? 'Erro ao reorganizar tags.',
+			});
+		}
+
+		return { reordered: true };
 	},
 
 	delete: async ({ fetch, request, cookies }) => {
