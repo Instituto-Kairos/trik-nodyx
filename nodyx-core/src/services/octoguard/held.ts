@@ -25,6 +25,7 @@ import { io } from '../../socket/io'
 import { logOctoGuardAction } from './logger'
 import { purgeOldEdits, EDITS_RETENTION_DAYS } from './context'
 import { announceThread } from '../webhooks/announce'
+import { setThreadGrades } from '../privateContent'
 
 /** D17 : un contenu retenu sans décision est refusé au bout de 72 h. */
 export const HELD_EXPIRY_HOURS = 72
@@ -41,6 +42,8 @@ export interface HeldPayload {
   title?:       string
   reply_to_id?: string | null
   tag_ids?:     string[]
+  /** Conteúdo privado (trik_025): cargos que veem o tópico */
+  grade_ids?:   string[]
 }
 
 export interface HoldInput {
@@ -229,6 +232,12 @@ async function publish(h: HeldRow): Promise<string | null> {
   }
   if (h.kind === 'thread' && h.category_id && p.title) {
     const thread = await ThreadModel.create({ category_id: h.category_id, author_id: h.author_id, title: p.title })
+    // Cargos ANTES do primeiro post: o tópico nunca existe aberto (trik_025).
+    // Falhou = nada é publicado, como o primeiro post.
+    if (p.grade_ids?.length) {
+      try { await setThreadGrades(thread.id, p.grade_ids) }
+      catch (err) { await ThreadModel.remove(thread.id).catch(() => {}); throw err }
+    }
     try {
       await PostModel.create({ thread_id: thread.id, author_id: h.author_id, content: p.content })
     } catch (err) {

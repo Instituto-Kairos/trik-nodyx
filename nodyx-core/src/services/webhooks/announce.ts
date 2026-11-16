@@ -24,7 +24,9 @@ export function announceThread(threadId: string, family: 'forum_article' | 'foru
       `SELECT t.title, t.slug, c.id AS cat_id, c.name AS cat_name, c.slug AS cat_slug, u.username AS author,
               (SELECT p.content FROM posts p WHERE p.thread_id = t.id ORDER BY p.created_at ASC LIMIT 1) AS content
          FROM threads t JOIN categories c ON c.id = t.category_id LEFT JOIN users u ON u.id = t.author_id
-        WHERE t.id = $1`, [threadId])
+        WHERE t.id = $1
+          -- tópico restrito a cargo (trik_025): nunca sai da instância
+          AND nx_can_view_thread(t.id, NULL)`, [threadId])
     const t = rows[0]
     if (!t) return
     emitEvent({

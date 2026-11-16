@@ -4,13 +4,16 @@ import { apiFetch } from '$lib/api'
 
 export const load: PageServerLoad = async ({ fetch, parent }) => {
 	const { token } = await parent()
-	const [infoRes, catRes] = await Promise.all([
+	const [infoRes, catRes, gradesRes] = await Promise.all([
 		apiFetch(fetch, '/instance/info'),
 		apiFetch(fetch, '/instance/categories'),
+		// Cargos da comunidade, para a categoria privada (trik_025)
+		apiFetch(fetch, '/forums/grade-options', { headers: { Authorization: `Bearer ${token}` } }).catch(() => null),
 	])
 	const { slug, community_id } = await infoRes.json()
 	const { categories } = await catRes.json()
-	return { slug, community_id, categories }
+	const { grades } = gradesRes?.ok ? await gradesRes.json() : { grades: [] }
+	return { slug, community_id, categories, grades }
 }
 
 export const actions: Actions = {
@@ -46,6 +49,11 @@ export const actions: Actions = {
 		if (parent_id !== '__unchanged__') body.parent_id = parent_id === '' ? null : parent_id
 		const postMinRole = form.get('post_min_role') as string
 		if (postMinRole) body.post_min_role = postMinRole
+		// Cargos que veem a categoria (trik_025). O marcador garante que o
+		// formulário trouxe o seletor: desmarcar tudo também é uma escolha.
+		if (form.get('grades_present') === '1') {
+			body.grade_ids = (form.getAll('grade_ids') as string[]).filter(Boolean)
+		}
 
 		const res = await apiFetch(fetch, `/admin/categories/${id}`, {
 			method: 'PATCH',

@@ -12,6 +12,7 @@
 import sanitizeHtml from 'sanitize-html'
 import { db } from '../config/database'
 import * as ThreadModel from '../models/thread'
+import { canViewThread } from './privateContent'
 import { canReadEvent } from './eventAccess'
 import { ownOrigins } from '../utils/instanceOrigins'
 
@@ -76,7 +77,7 @@ const UNAVAILABLE: LinkCard = { type: 'unavailable' }
 export async function resolveCard(ref: LinkRef, viewerId: string | null): Promise<LinkCard> {
   if (ref.kind === 'thread') {
     const t = await ThreadModel.findById(ref.thread)
-    if (!t) return UNAVAILABLE
+    if (!t || !(await canViewThread(t.id, viewerId))) return UNAVAILABLE
     const threadUrl = `/forum/${t.category_slug ?? 'forum'}/${t.slug ?? t.id}`
     if (ref.postId) {
       const { rows } = await db.query<{ id: string; content: string; created_at: string; username: string; avatar: string | null }>(

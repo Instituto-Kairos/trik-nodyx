@@ -1,4 +1,5 @@
 <script lang="ts">
+	import GradePicker from '$lib/components/GradePicker.svelte'
 	import { scramble } from '$lib/actions/scramble'
 	import { renderSpoilers } from '$lib/spoiler'
 	import { loadCustomEmojis, renderCustomEmojis, customEmojisStore } from '$lib/customEmojis'
@@ -266,6 +267,26 @@
 			if (!res.ok) tagsError = tFn('forum.tags_err_load');
 		} catch { allTags = []; tagsError = tFn('forum.tags_err_load'); }
 	}
+	// Cargos que veem o tópico (trik_025): a equipe muda aqui. As opções só são
+	// buscadas ao abrir o painel, como os tags.
+	let gradeOptions  = $state<Array<{ id: string; name: string; color: string }> | null>(null);
+	let gradesEditing = $state(false);
+	let gradesPick    = $state<string[]>([]);
+	let gradesBusy    = $state(false);
+	let gradesError   = $state<string | null>(null);
+	async function openGrades() {
+		gradesPick = (thread.grades ?? []).map((g: { id: string }) => g.id);
+		gradesError = null; gradesEditing = true;
+		if (gradeOptions) return;
+		try {
+			const res = await apiFetch(fetch, `/forums/grade-options?category_id=${thread.category_id}`, {
+				headers: data.token ? { Authorization: `Bearer ${data.token}` } : {},
+			});
+			gradeOptions = res.ok ? ((await res.json()).grades ?? []) : [];
+			if (!res.ok) gradesError = tFn('private.err_load');
+		} catch { gradeOptions = []; gradesError = tFn('private.err_load'); }
+	}
+
 	function togglePick(id: string) {
 		if (tagsPick.includes(id)) tagsPick = tagsPick.filter((x) => x !== id);
 		else if (tagsPick.length < 5) tagsPick = [...tagsPick, id];
@@ -396,6 +417,18 @@
 							{tag.name}
 						</a>
 					{/each}
+					{#if (thread.grades ?? []).length}
+						<!-- Tópico restrito a cargos (trik_025) -->
+						<span class="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 border border-[var(--nx-border)] text-[var(--nx-text-muted)]"
+							title={tFn('private.thread_badge_tip')}>
+							🔒 {(thread.grades ?? []).map((g: { name: string }) => g.name).join(', ')}
+						</span>
+					{/if}
+					{#if isMod && !gradesEditing}
+						<button type="button" onclick={openGrades} class="tags-edit-btn" title={tFn('private.thread_edit_tip')}>
+							🔒 {tFn('private.thread_edit')}
+						</button>
+					{/if}
 					{#if isMod && !tagsEditing}
 						<button type="button" onclick={openTags} class="tags-edit-btn" title={tFn('forum.tags_edit_tip')}>
 							<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4" /></svg>
@@ -437,6 +470,29 @@
 						<div class="tags-panel-actions">
 							<button type="button" class="tags-btn" onclick={() => (tagsEditing = false)}>{tFn('common.cancel')}</button>
 							<button type="submit" class="tags-btn tags-btn--primary" disabled={tagsBusy || !allTags || allTags.length === 0}>{tFn('common.save')}</button>
+						</div>
+					</form>
+				{/if}
+
+				{#if isMod && gradesEditing}
+					<form method="POST" action="?/setGrades" class="tags-panel"
+						use:enhance={() => { gradesBusy = true; gradesError = null; return async ({ result, update }) => {
+							gradesBusy = false;
+							if (result.type === 'failure') { gradesError = tFn(String(result.data?.gradesErrorKey ?? 'private.err_save')); return; }
+							await update({ reset: false });
+							if (result.type === 'success') gradesEditing = false;
+						} }}>
+						{#if gradeOptions === null}
+							<p class="tags-panel-note" aria-live="polite">{tFn('common.loading')}</p>
+						{:else if gradeOptions.length === 0 && !gradesError}
+							<p class="tags-panel-note">{tFn('private.no_grades')}{#if canAdmin} <a href="/admin/grades">{tFn('private.no_grades_admin')}</a>{/if}</p>
+						{:else}
+							<GradePicker grades={gradeOptions} bind:selected={gradesPick} label={tFn('private.thread_label')} id="thread-grades" />
+						{/if}
+						{#if gradesError}<p class="tags-panel-err" role="alert">{gradesError}</p>{/if}
+						<div class="tags-panel-actions">
+							<button type="button" class="tags-btn" onclick={() => (gradesEditing = false)}>{tFn('common.cancel')}</button>
+							<button type="submit" class="tags-btn tags-btn--primary" disabled={gradesBusy || !gradeOptions}>{tFn('common.save')}</button>
 						</div>
 					</form>
 				{/if}

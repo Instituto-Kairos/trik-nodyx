@@ -489,7 +489,7 @@ export async function trikPlayerPlugin(app: FastifyInstance) {
     const { q, category } = request.query as { q?: string; category?: string }
     const termo = (q ?? '').trim().slice(0, 100)
 
-    const npccs = await TrikModel.searchNpccThreads(communityId, termo, 8, await auContext(category))
+    const npccs = await TrikModel.searchNpccThreads(communityId, termo, 8, await auContext(category), request.user?.userId ?? null)
     return reply.send({ npccs })
   })
 

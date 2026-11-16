@@ -3,6 +3,7 @@
 	import { tick } from 'svelte'
 	import type { PageData, ActionData } from './$types'
 	import { t } from '$lib/i18n'
+	import GradePicker from '$lib/components/GradePicker.svelte'
 
 	const tFn = $derived($t)
 
@@ -15,6 +16,7 @@
 	type Row = {
 		id: string; name: string; description?: string | null; parent_id: string | null
 		post_min_role?: string | null; thread_count: number; depth: number
+		is_private?: boolean; grade_ids?: string[]
 		index: number; siblings: number; subtreeThreads: number; descendants: Set<string>
 	}
 
@@ -37,6 +39,10 @@
 	const rows = $derived(flatten(data.categories ?? []))
 
 	const ROLES = ['member', 'moderator', 'admin', 'owner'] as const
+
+	// Conteúdo privado (trik_025): cargos da categoria em edição
+	let editGrades = $state<string[]>([])
+	const gradeName = (id: string) => (data.grades ?? []).find((g: { id: string }) => g.id === id)?.name ?? '?'
 
 	// ── Création (avec parent pré-rempli depuis « Ajouter une sous-catégorie ») ──
 	let createOpen   = $state(false)
@@ -153,6 +159,11 @@
 										<span class="adm-label">{tFn('acat.description')}</span>
 										<input name="description" type="text" maxlength="500" value={cat.description ?? ''} class="adm-input" placeholder={tFn('acat.optional')} />
 									</label>
+									{#if (data.grades ?? []).length}
+										<input type="hidden" name="grades_present" value="1" />
+										<GradePicker grades={data.grades} bind:selected={editGrades} label={tFn('private.category_label')}
+											hint={tFn('private.category_hint')} id="cat-grades-{cat.id}" />
+									{/if}
 									<div class="adm-actions">
 										<button type="submit" class="adm-btn adm-btn--primary adm-btn--sm">{tFn('acat.save')}</button>
 										<button type="button" class="adm-btn adm-btn--sm" onclick={() => editingId = null}>{tFn('acat.cancel')}</button>
@@ -175,6 +186,9 @@
 								</div>
 							</td>
 							<td data-label={tFn('acat.post_min_role_label')}>
+								{#if cat.grade_ids?.length}
+									<span class="adm-pill" title={tFn('private.category_label')}>🔒 {cat.grade_ids.map(gradeName).join(', ')}</span>
+								{/if}
 								{#if (cat.post_min_role ?? 'member') !== 'member'}
 									<span class="adm-pill adm-pill--{cat.post_min_role === 'moderator' ? 'moderator' : 'admin'}">{tFn(`acat.role_${cat.post_min_role}`)}</span>
 								{:else}
@@ -199,7 +213,7 @@
 										aria-label={tFn('acat.add_child', { name: cat.name })} title={tFn('acat.add_child', { name: cat.name })}>
 										<svg fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
 									</button>
-									<button type="button" class="adm-btn adm-btn--sm" onclick={() => editingId = cat.id}>{tFn('acat.edit')}</button>
+									<button type="button" class="adm-btn adm-btn--sm" onclick={() => { editGrades = [...(cat.grade_ids ?? [])]; editingId = cat.id }}>{tFn('acat.edit')}</button>
 									<form method="POST" action="?/delete" use:enhance class="inline">
 										<input type="hidden" name="id" value={cat.id} />
 										<button type="submit" class="adm-btn adm-btn--sm adm-btn--danger"

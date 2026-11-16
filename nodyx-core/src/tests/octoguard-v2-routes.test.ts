@@ -2,6 +2,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import jwt from 'jsonwebtoken'
 import { buildApp } from './helpers/buildApp'
 
+// Conteúdo privado por cargo (trik_025): a regra mora no banco (funções SQL,
+// testadas à parte); aqui tudo é visível, como antes, salvo onde um teste muda.
+vi.mock('../services/privateContent', async (orig) => ({
+  ...(await orig<typeof import('../services/privateContent')>()),
+  canViewThread:         vi.fn().mockResolvedValue(true),
+  canViewCategory:       vi.fn().mockResolvedValue(true),
+  usersWhoCanViewThread: vi.fn(async (_t: string, ids: string[]) => ids),
+  getThreadGrades:       vi.fn().mockResolvedValue([]),
+  setThreadGrades:       vi.fn().mockResolvedValue(undefined),
+}))
+
 // OctoGuard 2 côté routes : le forum refuse ce qu'OctoGuard retient et ouvre
 // un dossier au cran « signaler » ; l'API des règles connaît les endroits
 // surveillés et refuse une expression régulière sans re2.

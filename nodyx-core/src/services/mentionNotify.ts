@@ -14,6 +14,7 @@ import { groupRecipients, isTeam } from './mentionGroups'
 import { recipientRules, accepts, isQuietNow } from './mentionPrefs'
 import { sendPushToUser } from '../routes/notifications'
 import { resolveServerLocale, pushStrings } from '../i18n/serverStrings'
+import { usersWhoCanViewThread } from './privateContent'
 
 export type MentionWhere =
   | { kind: 'chat'; channelId: string; messageId?: string | null }
@@ -48,6 +49,11 @@ export async function notifyMentions(opts: {
   groups.forEach((key, id) => { if (!recipients.has(id)) recipients.set(id, key) })
   recipients.delete(actorId)
   for (const id of opts.skip ?? []) recipients.delete(id)
+  // Conteúdo privado (trik_025): num tópico restrito, só é avisado quem pode vê-lo
+  if (where.kind === 'forum' && recipients.size) {
+    const podem = new Set(await usersWhoCanViewThread(where.threadId, [...recipients.keys()]).catch(() => [] as string[]))
+    for (const id of [...recipients.keys()]) if (!podem.has(id)) recipients.delete(id)
+  }
   if (!recipients.size) return 0
 
   // D54-D55 : ce que chaque destinataire accepte (sourdine, « qui peut me mentionner »,

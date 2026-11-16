@@ -7150,5 +7150,20 @@
   "cmd.event_hint": "Type a title and a date, for example: Pizza Friday 8pm.",
   "cmd.event_open": "Open the form",
   "cmd.event_cancel": "Cancel",
-  "cmd.event_aria": "What Nodyx understood"
+  "cmd.event_aria": "What Nodyx understood",
+  "private.pick_label": "Visible only to these grades",
+  "private.pick_hint_off": "No grade selected: no restriction.",
+  "private.pick_hint_on": "Only people with one of these grades (and the team) will see it.",
+  "private.thread_label": "Who can see this topic",
+  "private.thread_edit": "Grades",
+  "private.thread_edit_tip": "Choose which grades can see this topic",
+  "private.thread_badge_tip": "Topic restricted to some grades",
+  "private.category_label": "Private category: grades that can see it",
+  "private.category_hint": "Subcategories inherit it. The team always sees it.",
+  "private.category_badge_tip": "Category restricted to some grades",
+  "private.no_grades": "This community has no grades yet.",
+  "private.no_grades_admin": "Create grades",
+  "private.err_load": "Could not load the grades.",
+  "private.err_save": "Could not save the grades.",
+  "private.err_forbidden": "You cannot change who sees this topic."
 }

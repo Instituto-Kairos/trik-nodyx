@@ -14,7 +14,7 @@ import { NODYX_VERSION } from '../utils/version'
 import { db, redis } from '../config/database'
 import { parseStoredShellTheme } from '../utils/shellTheme'
 import { rateLimit } from '../middleware/rateLimit'
-import { requireAuth } from '../middleware/auth'
+import { requireAuth, optionalAuth } from '../middleware/auth'
 import * as CommunityModel from '../models/community'
 import * as ThreadModel from '../models/thread'
 import * as TagModel from '../models/tag'
@@ -232,13 +232,14 @@ export default async function instanceRoutes(app: FastifyInstance) {
 
   // GET /api/v1/instance/categories
   // Returns the full category tree (recursive, with thread counts)
-  app.get('/categories', { preHandler: [rateLimit] }, async (_request, reply) => {
+  // Conteúdo privado (trik_025): só as categorias que QUEM PEDE pode ver.
+  app.get('/categories', { preHandler: [rateLimit, optionalAuth] }, async (request, reply) => {
     const communityId = await getCommunityId()
     if (!communityId) {
       return reply.send({ categories: [] })
     }
 
-    const categories = await CommunityModel.getCategoryTree(communityId)
+    const categories = await CommunityModel.getCategoryTree(communityId, request.user?.userId ?? null)
     return reply.send({ categories })
   })
 
@@ -248,7 +249,7 @@ export default async function instanceRoutes(app: FastifyInstance) {
   // sous-catégories incluses). Le filtre DOIT se faire ici : filtré côté client
   // après un LIMIT 10 global, une catégorie absente des 10 derniers fils
   // renvoyait une liste vide.
-  app.get('/threads/recent', { preHandler: [rateLimit] }, async (request, reply) => {
+  app.get('/threads/recent', { preHandler: [rateLimit, optionalAuth] }, async (request, reply) => {
     const communityId = await getCommunityId()
     if (!communityId) {
       return reply.send({ threads: [] })
@@ -258,14 +259,14 @@ export default async function instanceRoutes(app: FastifyInstance) {
     const limit       = Math.min(10, Math.max(1, parseInt(query.limit ?? '10', 10) || 10))
     const categoryRaw = (query.category ?? '').trim()
 
-    const params: unknown[] = [communityId, limit]
+    const params: unknown[] = [communityId, limit, request.user?.userId ?? null]
     let categoryFilter = ''
     if (categoryRaw) {
       params.push(categoryRaw)
       categoryFilter = `AND c.id IN (
          WITH RECURSIVE sub(id) AS (
            SELECT id FROM categories
-           WHERE community_id = $1 AND (id::text = $3 OR slug = $3)
+           WHERE community_id = $1 AND (id::text = $4 OR slug = $4)
            UNION
            SELECT ch.id FROM categories ch JOIN sub ON ch.parent_id = sub.id
          )
@@ -295,6 +296,8 @@ export default async function instanceRoutes(app: FastifyInstance) {
          -- public que s'il a été explicitement mis en avant : un brouillon
          -- d'annonce ne doit pas fuiter avant publication.
          AND (c.post_min_role = 'member' OR t.is_featured = true)
+         -- Conteúdo privado por cargo (trik_025)
+         AND nx_can_view_thread(t.id, $3::uuid)
          ${categoryFilter}
        ORDER BY COALESCE(
          (SELECT MAX(p3.created_at) FROM posts p3 WHERE p3.thread_id = t.id),
@@ -344,7 +347,8 @@ export default async function instanceRoutes(app: FastifyInstance) {
       return reply.send(JSON.parse(cached))
     }
 
-    const conditions: string[] = ['c.community_id = $1', 't.showcased_at IS NOT NULL']
+    // Vitrine pública e em cache: só tópico sem restrição de cargo (trik_025)
+    const conditions: string[] = ['c.community_id = $1', 't.showcased_at IS NOT NULL', 'nx_can_view_thread(t.id, NULL)']
     const params: unknown[] = [communityId]
 
     if (categoryRaw) {

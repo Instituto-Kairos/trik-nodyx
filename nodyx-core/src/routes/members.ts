@@ -143,6 +143,7 @@ export default async function memberRoutes(app: FastifyInstance) {
        JOIN threads t   ON t.id = p.thread_id
        JOIN categories c ON c.id = t.category_id
        WHERE p.created_at > NOW() - INTERVAL '30 minutes'
+         AND nx_can_view_thread(t.id, NULL) -- título de tópico restrito a cargo não sai aqui (trik_025)
        ORDER BY p.author_id, p.created_at DESC`
     )
     const justPostedMap: Record<string, typeof justPostedRows[number]> = {}

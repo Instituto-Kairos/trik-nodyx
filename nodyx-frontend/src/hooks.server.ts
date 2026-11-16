@@ -93,6 +93,16 @@ export const handleFetch: HandleFetch = ({ event, request, fetch }) => {
 	// core le bypasse via sa règle loopback (dégradation gracieuse, l'IP visiteur
 	// n'est alors pas propagée).
 	if (url.includes('127.0.0.1') || url.includes('localhost')) {
+		// Conteúdo privado por cargo (trik_025): o core só mostra um tópico restrito
+		// a quem pode vê-lo, então as LEITURAS feitas no SSR levam a sessão de quem
+		// pede. Só GET, só se a página não pôs um Authorization próprio, e nunca nos
+		// arquivos para robôs (cabeçalho x-nodyx-anonymous, lib/server/seoData.ts).
+		const anonymous = headers.has('x-nodyx-anonymous');
+		headers.delete('x-nodyx-anonymous');
+		const token = event.cookies.get('token');
+		if (!anonymous && token && request.method === 'GET' && !headers.has('authorization')) {
+			headers.set('authorization', `Bearer ${token}`);
+		}
 		if (INTERNAL_API_SECRET) {
 			headers.set('x-forwarded-for', event.getClientAddress());
 			headers.set('x-nodyx-internal', INTERNAL_API_SECRET);

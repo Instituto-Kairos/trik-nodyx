@@ -2,6 +2,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import jwt from 'jsonwebtoken'
 import { buildApp } from './helpers/buildApp'
 
+// Conteúdo privado por cargo (trik_025): a regra mora no banco (funções SQL,
+// testadas à parte); aqui tudo é visível, como antes, salvo onde um teste muda.
+vi.mock('../services/privateContent', async (orig) => ({
+  ...(await orig<typeof import('../services/privateContent')>()),
+  canViewThread:         vi.fn().mockResolvedValue(true),
+  canViewCategory:       vi.fn().mockResolvedValue(true),
+  usersWhoCanViewThread: vi.fn(async (_t: string, ids: string[]) => ids),
+  getThreadGrades:       vi.fn().mockResolvedValue([]),
+  setThreadGrades:       vi.fn().mockResolvedValue(undefined),
+}))
+
 // OctoGuard 2, cran « Retenir » (CDC E4h, lot 2, D17) : le moteur ne publie
 // rien, le contenu attend dans octoguard_held, n'est publié qu'une fois à
 // l'approbation (même sur double clic), jeté au refus ou après 72 h.

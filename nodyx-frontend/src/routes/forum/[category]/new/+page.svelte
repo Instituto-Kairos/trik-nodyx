@@ -1,4 +1,5 @@
 <script lang="ts">
+	import GradePicker from '$lib/components/GradePicker.svelte';
 	import { enhance } from '$app/forms';
 	import { page } from '$app/state';
 	import type { ActionData, PageData } from './$types';
@@ -20,6 +21,8 @@
 
 	const tags = $derived(data.tags ?? []);
 	let selectedTagIds = $state<string[]>([]);
+	// Conteúdo privado (trik_025): cargos que podem ver o tópico (nada = segue a categoria)
+	let selectedGradeIds = $state<string[]>([]);
 	let submitting = $state(false);
 
 	// « Tu es sûr ? » (OctoGuard, lot 5) : avant de publier, OctoGuard dit s'il
@@ -227,6 +230,11 @@
 					<input type="hidden" name="tag_ids" value={tagId} />
 				{/each}
 			</div>
+		{/if}
+
+		<!-- Cargos que podem ver o tópico (trik_025) -->
+		{#if (data.gradeOptions ?? []).length > 0}
+			<GradePicker grades={data.gradeOptions} bind:selected={selectedGradeIds} label={tFn('private.thread_label')} />
 		{/if}
 
 		<!-- Sondage optionnel -->

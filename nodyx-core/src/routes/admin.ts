@@ -39,6 +39,7 @@ function mayTarget(actor: MemberAccess | undefined, targetRole: string | null | 
 }
 import { countActiveMembers, ACTIVE_MEMBERS_FROM } from '../models/memberCount'
 import { restoreAfterBan } from '../services/octoguard/bans'
+import { validGradeIds, setCategoryGrades } from '../services/privateContent'
 
 // Les couleurs du bandeau d'annonce (la barre du haut ne sait en dessiner aucune autre)
 const ANNOUNCEMENT_COLORS: readonly string[] = ['indigo', 'amber', 'green', 'red', 'sky', 'rose']
@@ -86,6 +87,8 @@ const PatchCategoryBody = z.object({
   position:      z.number().int().min(0).optional(),
   parent_id:     z.string().uuid().nullable().optional(),
   post_min_role: z.enum(['member', 'moderator', 'admin', 'owner']).optional(),
+  // Conteúdo privado (trik_025): cargos que veem a categoria (e as subcategorias); [] = pública
+  grade_ids:     z.array(z.string().uuid()).max(50).optional(),
 })
 
 const HexColor    = z.string().regex(/^#[0-9A-Fa-f]{6}$/)
@@ -987,14 +990,31 @@ export default async function adminRoutes(app: FastifyInstance) {
     if (body.parent_id     !== undefined) { fields.push(`parent_id = $${i++}`);   values.push(body.parent_id)   }
     if (body.post_min_role !== undefined) { fields.push(`post_min_role = $${i++}`); values.push(body.post_min_role) }
 
-    if (fields.length === 0) return reply.code(400).send({ error: 'Nothing to update' })
+    if (fields.length === 0 && body.grade_ids === undefined) return reply.code(400).send({ error: 'Nothing to update' })
+
+    // Cargos da categoria (trik_025): validados ANTES de qualquer escrita
+    let gradeIds: string[] | undefined
+    if (body.grade_ids !== undefined) {
+      const { rows: cat } = await db.query<{ community_id: string }>(`SELECT community_id FROM categories WHERE id = $1`, [id])
+      if (!cat[0]) return reply.code(404).send({ error: 'Category not found' })
+      const valid = await validGradeIds(cat[0].community_id, body.grade_ids)
+      if (!valid) return reply.code(400).send({ error: 'Unknown grade', code: 'CATEGORY_GRADES_INVALID' })
+      gradeIds = valid
+    }
 
     values.push(id)
-    const { rows } = await db.query(
-      `UPDATE categories SET ${fields.join(', ')}, updated_at = NOW() WHERE id = $${i} RETURNING *`,
-      values
-    )
+    const { rows } = fields.length
+      ? await db.query(
+          `UPDATE categories SET ${fields.join(', ')}, updated_at = NOW() WHERE id = $${i} RETURNING *`,
+          values
+        )
+      : await db.query(`SELECT * FROM categories WHERE id = $1`, [id])
     if (!rows[0]) return reply.code(404).send({ error: 'Category not found' })
+
+    if (gradeIds !== undefined) {
+      await setCategoryGrades(id, gradeIds)
+      logAction(adminUser.userId, 'category_set_grades', 'category', id, rows[0].name, { grade_ids: gradeIds })
+    }
 
     if (body.post_min_role !== undefined) {
       logAction(adminUser.userId, 'category_set_post_role', 'category', id, rows[0].name,

@@ -236,6 +236,25 @@ export const actions: Actions = {
 		return { tagsSaved: true };
 	},
 
+	// ── Cargos que veem o tópico (trik_025, equipe) ───────────────────────
+	setGrades: async ({ fetch, request, params, cookies }) => {
+		const token = cookies.get('token');
+		if (!token) return fail(401, { gradesErrorKey: 'private.err_forbidden' });
+
+		const form = await request.formData();
+		const gradeIds = (form.getAll('grade_ids') as string[]).filter(Boolean);
+
+		const res = await apiFetch(fetch, `/forums/threads/${params.thread}`, {
+			method: 'PATCH',
+			headers: { Authorization: `Bearer ${token}` },
+			body: JSON.stringify({ grade_ids: gradeIds })
+		});
+		if (!res.ok) {
+			return fail(res.status, { gradesErrorKey: res.status === 403 ? 'private.err_forbidden' : 'private.err_save' });
+		}
+		return { gradesSaved: true };
+	},
+
 	// ── Verrouiller / déverrouiller ───────────────────────────────────────
 	lockThread: async ({ fetch, request, params, cookies }) => {
 		const token = cookies.get('token');

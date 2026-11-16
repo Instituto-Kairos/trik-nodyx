@@ -7,6 +7,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { buildApp } from './helpers/buildApp'
 import jwt from 'jsonwebtoken'
 
+// Conteúdo privado por cargo (trik_025): a regra mora no banco (funções SQL,
+// testadas à parte); aqui tudo é visível, como antes, salvo onde um teste muda.
+vi.mock('../services/privateContent', async (orig) => ({
+  ...(await orig<typeof import('../services/privateContent')>()),
+  canViewThread:         vi.fn().mockResolvedValue(true),
+  canViewCategory:       vi.fn().mockResolvedValue(true),
+  usersWhoCanViewThread: vi.fn(async (_t: string, ids: string[]) => ids),
+  getThreadGrades:       vi.fn().mockResolvedValue([]),
+  setThreadGrades:       vi.fn().mockResolvedValue(undefined),
+}))
+
 vi.mock('../config/database', () => ({
   db: { query: vi.fn() },
   redis: {

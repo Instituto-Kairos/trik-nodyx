@@ -4554,5 +4554,20 @@
   "galeria.tab_au": "AU",
   "galeria.au_exit": "Sair do AU",
   "galeria.album_delete": "Apagar álbum",
-  "galeria.album_delete_confirm": "Apagar o álbum \"{album}\"? As imagens não são apagadas: vão para \"Sem álbum\"."
+  "galeria.album_delete_confirm": "Apagar o álbum \"{album}\"? As imagens não são apagadas: vão para \"Sem álbum\".",
+  "private.pick_label": "Visível só para estes cargos",
+  "private.pick_hint_off": "Nenhum cargo marcado: sem restrição.",
+  "private.pick_hint_on": "Só quem tem um destes cargos (e a equipe) poderá ver.",
+  "private.thread_label": "Quem pode ver este tópico",
+  "private.thread_edit": "Cargos",
+  "private.thread_edit_tip": "Escolher quais cargos podem ver este tópico",
+  "private.thread_badge_tip": "Tópico restrito a alguns cargos",
+  "private.category_label": "Categoria privada: cargos que podem vê-la",
+  "private.category_hint": "As subcategorias herdam. A equipe sempre vê.",
+  "private.category_badge_tip": "Categoria restrita a alguns cargos",
+  "private.no_grades": "Ainda não há cargos nesta comunidade.",
+  "private.no_grades_admin": "Criar cargos",
+  "private.err_load": "Não foi possível carregar os cargos.",
+  "private.err_save": "Não foi possível salvar os cargos.",
+  "private.err_forbidden": "Você não pode mudar quem vê este tópico."
 }

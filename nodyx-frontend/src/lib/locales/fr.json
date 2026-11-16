@@ -7150,5 +7150,20 @@
   "cmd.event_hint": "Écris un titre et une date, par exemple : Pizza vendredi 20h.",
   "cmd.event_open": "Ouvrir le formulaire",
   "cmd.event_cancel": "Annuler",
-  "cmd.event_aria": "Ce que Nodyx a compris"
+  "cmd.event_aria": "Ce que Nodyx a compris",
+  "private.pick_label": "Visible seulement par ces grades",
+  "private.pick_hint_off": "Aucun grade choisi : pas de restriction.",
+  "private.pick_hint_on": "Seules les personnes avec un de ces grades (et l’équipe) le verront.",
+  "private.thread_label": "Qui peut voir ce sujet",
+  "private.thread_edit": "Grades",
+  "private.thread_edit_tip": "Choisir quels grades voient ce sujet",
+  "private.thread_badge_tip": "Sujet réservé à certains grades",
+  "private.category_label": "Catégorie privée : grades qui la voient",
+  "private.category_hint": "Les sous-catégories en héritent. L’équipe voit toujours.",
+  "private.category_badge_tip": "Catégorie réservée à certains grades",
+  "private.no_grades": "Pas encore de grades dans cette communauté.",
+  "private.no_grades_admin": "Créer des grades",
+  "private.err_load": "Impossible de charger les grades.",
+  "private.err_save": "Impossible d’enregistrer les grades.",
+  "private.err_forbidden": "Tu ne peux pas changer qui voit ce sujet."
 }

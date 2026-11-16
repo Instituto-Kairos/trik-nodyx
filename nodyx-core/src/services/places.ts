@@ -87,7 +87,8 @@ export async function suggestPlaces(q: string, viewerId: string): Promise<Place[
               GREATEST((SELECT COUNT(*)::int FROM posts p WHERE p.thread_id = t.id) - 1, 0) AS replies
        FROM threads t LEFT JOIN categories c ON c.id = t.category_id
        WHERE ${fold('t.title')} LIKE $1
-       ORDER BY t.updated_at DESC NULLS LAST LIMIT ${PER_KIND}`, [pat],
+         AND nx_can_view_thread(t.id, $2::uuid) -- conteúdo privado (trik_025)
+       ORDER BY t.updated_at DESC NULLS LAST LIMIT ${PER_KIND}`, [pat, viewerId],
     ).then(r => r.rows.map((t): Place => ({ ref: `thread:${t.id}`, kind: 'thread', title: t.title, url: `/forum/${t.cat_slug ?? 'forum'}/${t.slug ?? t.id}`, hint: { category: t.cat_name, replies: t.replies }, private: false }))),
 
     wikiOn ? db.query<{ id: string; slug: string; title: string; category: string | null }>(
@@ -106,7 +107,8 @@ export async function suggestPlaces(q: string, viewerId: string): Promise<Place[
        LEFT JOIN categories c ON c.id = t.category_id
        WHERE ${fold('p.title')} LIKE $1
          AND (p.thread_id IS NOT NULL OR ch.community_id = $2)
-       ORDER BY p.created_at DESC LIMIT ${PER_KIND}`, [pat, community],
+         AND (p.thread_id IS NULL OR nx_can_view_thread(p.thread_id, $3::uuid))
+       ORDER BY p.created_at DESC LIMIT ${PER_KIND}`, [pat, community, viewerId],
     ).then(r => r.rows.map((p): Place => ({
       ref: `poll:${p.id}`, kind: 'poll', title: p.title, private: false, hint: { votes: p.votes, closed: p.closed },
       url: p.channel_id ? `/chat?channel=${p.channel_id}` : `/forum/${p.cat_slug ?? 'forum'}/${p.t_slug ?? p.thread_id}`,
@@ -145,7 +147,8 @@ export async function resolvePlaces(refs: string[], viewerId: string | null): Pr
   }
   if (ids('thread').length) {
     const { rows } = await db.query<{ id: string; slug: string | null; title: string; cat_slug: string | null }>(
-      `SELECT t.id, t.slug, t.title, c.slug AS cat_slug FROM threads t LEFT JOIN categories c ON c.id = t.category_id WHERE t.id = ANY($1::uuid[])`, [ids('thread')])
+      `SELECT t.id, t.slug, t.title, c.slug AS cat_slug FROM threads t LEFT JOIN categories c ON c.id = t.category_id
+       WHERE t.id = ANY($1::uuid[]) AND nx_can_view_thread(t.id, $2::uuid)`, [ids('thread'), viewerId])
     for (const t of rows) found.set(`thread:${t.id}`, { kind: 'thread', title: t.title, url: `/forum/${t.cat_slug ?? 'forum'}/${t.slug ?? t.id}` })
   }
   if (wikiOn) {
@@ -156,7 +159,8 @@ export async function resolvePlaces(refs: string[], viewerId: string | null): Pr
     const { rows } = await db.query<{ id: string; title: string; channel_id: string | null; thread_id: string | null; community_id: string | null; cat_slug: string | null; t_slug: string | null }>(
       `SELECT p.id, p.title, p.channel_id, p.thread_id, ch.community_id, c.slug AS cat_slug, t.slug AS t_slug
        FROM polls p LEFT JOIN channels ch ON ch.id = p.channel_id LEFT JOIN threads t ON t.id = p.thread_id LEFT JOIN categories c ON c.id = t.category_id
-       WHERE p.id = ANY($1::uuid[])`, [ids('poll')])
+       WHERE p.id = ANY($1::uuid[])
+         AND (p.thread_id IS NULL OR nx_can_view_thread(p.thread_id, $2::uuid))`, [ids('poll'), viewerId])
     for (const p of rows) {
       if (p.channel_id && (!community || p.community_id !== community)) continue   // sondage d'un salon : membres seulement
       found.set(`poll:${p.id}`, { kind: 'poll', title: p.title, url: p.channel_id ? `/chat?channel=${p.channel_id}` : `/forum/${p.cat_slug ?? 'forum'}/${p.t_slug ?? p.thread_id}` })

@@ -2,6 +2,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import jwt from 'jsonwebtoken'
 import { buildApp } from './helpers/buildApp'
 
+// Conteúdo privado por cargo (trik_025): a regra mora no banco (funções SQL,
+// testadas à parte); aqui tudo é visível, como antes, salvo onde um teste muda.
+vi.mock('../services/privateContent', async (orig) => ({
+  ...(await orig<typeof import('../services/privateContent')>()),
+  canViewThread:         vi.fn().mockResolvedValue(true),
+  canViewCategory:       vi.fn().mockResolvedValue(true),
+  usersWhoCanViewThread: vi.fn(async (_t: string, ids: string[]) => ids),
+  getThreadGrades:       vi.fn().mockResolvedValue([]),
+  setThreadGrades:       vi.fn().mockResolvedValue(undefined),
+}))
+
 // La fiche membre (CDC SPECS/NODYX_MODERATION_CDC.md, E3) : la frise, les
 // notes (D5), l'avertissement, et la sourdine qui s'applique enfin.
 

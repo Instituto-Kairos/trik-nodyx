@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { db } from '../config/database'
 import { validate } from '../middleware/validate'
 import { rateLimit } from '../middleware/rateLimit'
+import { optionalAuth } from '../middleware/auth'
 
 const SearchQuery = z.object({
   q:      z.string().min(1).max(200),
@@ -31,10 +32,12 @@ async function getCommunityId(): Promise<string | null> {
 export default async function searchRoutes(app: FastifyInstance) {
   // GET /api/v1/search?q=...&type=threads|posts|all&limit=20&offset=0
   app.get('/', {
-    preHandler: [rateLimit, validate({ query: SearchQuery })],
+    preHandler: [rateLimit, optionalAuth, validate({ query: SearchQuery })],
   }, async (request, reply) => {
     const { q, type = 'all', limit = 20, offset = 0 } = request.query as z.infer<typeof SearchQuery>
     const communityId = await getCommunityId()
+    // Conteúdo privado (trik_025): só o que quem busca pode ver
+    const viewerId = request.user?.userId ?? null
 
     const doThreads = type === 'threads' || type === 'all'
     const doPosts   = type === 'posts'   || type === 'all'
@@ -61,9 +64,10 @@ export default async function searchRoutes(app: FastifyInstance) {
              JOIN categories cat ON cat.id = t.category_id
              WHERE cat.community_id = $2
                AND t.search_vector @@ plainto_tsquery('french', $1)
+               AND nx_can_view_thread(t.id, $5::uuid)
              ORDER BY ts_rank(t.search_vector, plainto_tsquery('french', $1)) DESC
              LIMIT $3 OFFSET $4`,
-            [q, communityId, limit, offset]
+            [q, communityId, limit, offset, viewerId]
           )
         : Promise.resolve({ rows: [] as any[] }),
 
@@ -84,9 +88,10 @@ export default async function searchRoutes(app: FastifyInstance) {
              JOIN categories cat ON cat.id = t.category_id
              WHERE cat.community_id = $2
                AND p.search_vector @@ plainto_tsquery('french', $1)
+               AND nx_can_view_thread(t.id, $5::uuid)
              ORDER BY ts_rank(p.search_vector, plainto_tsquery('french', $1)) DESC
              LIMIT $3 OFFSET $4`,
-            [q, communityId, limit, offset]
+            [q, communityId, limit, offset, viewerId]
           )
         : Promise.resolve({ rows: [] as any[] }),
     ])

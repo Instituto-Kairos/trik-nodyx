@@ -45,7 +45,8 @@ export async function searchLinks(q: string, kinds: LinkKind[], viewerId: string
     `SELECT t.id, t.slug, t.title, c.slug AS cat_slug, c.name AS cat_name
      FROM threads t LEFT JOIN categories c ON c.id = t.category_id
      WHERE t.title ILIKE $1
-     ORDER BY t.updated_at DESC NULLS LAST LIMIT ${PER_KIND}`, [contains],
+       AND nx_can_view_thread(t.id, $2::uuid) -- conteúdo privado (trik_025)
+     ORDER BY t.updated_at DESC NULLS LAST LIMIT ${PER_KIND}`, [contains, viewerId],
   ).then(r => r.rows.map(t => ({
     type: 'thread' as const, title: t.title, url: `/forum/${t.cat_slug ?? 'forum'}/${t.slug ?? t.id}`, subtitle: t.cat_name,
   }))))

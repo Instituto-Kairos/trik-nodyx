@@ -3,6 +3,17 @@ import Fastify from 'fastify'
 import jwt from 'jsonwebtoken'
 import { buildApp } from './helpers/buildApp'
 
+// Conteúdo privado por cargo (trik_025): a regra mora no banco (funções SQL,
+// testadas à parte); aqui tudo é visível, como antes, salvo onde um teste muda.
+vi.mock('../services/privateContent', async (orig) => ({
+  ...(await orig<typeof import('../services/privateContent')>()),
+  canViewThread:         vi.fn().mockResolvedValue(true),
+  canViewCategory:       vi.fn().mockResolvedValue(true),
+  usersWhoCanViewThread: vi.fn(async (_t: string, ids: string[]) => ids),
+  getThreadGrades:       vi.fn().mockResolvedValue([]),
+  setThreadGrades:       vi.fn().mockResolvedValue(undefined),
+}))
+
 // Droits réels de l'équipe (CDC SPECS/NODYX_MODERATION_CDC.md, E1).
 // D1 : un grade AJOUTE des droits, il n'en retire jamais.
 // D2 : le rôle modérateur est le socle (moderate_content + moderate_members).

@@ -77,6 +77,7 @@
 		views: number;
 		is_pinned: boolean;
 		is_locked: boolean;
+		is_private?: boolean;
 		is_featured: boolean;
 		tags?: Tag[];
 		posts?: Post[];
@@ -723,7 +724,7 @@
 					     « Nodyx Soundboard v2.7.0 : tes sons, ta queue... » à un moignon
 					     illisible. -->
 					<p class="text-base font-semibold text-[var(--nx-text)] group-hover:text-[var(--nx-header-accent)] transition-colors line-clamp-2 sm:line-clamp-1">
-						{thread.title}
+						{#if thread.is_private}<span title={tFn('private.thread_badge_tip')} aria-label={tFn('private.thread_badge_tip')}>🔒 </span>{/if}{thread.title}
 					</p>
 
 					<!-- Métadonnées -->

@@ -29,6 +29,7 @@ import { fileAutoReport } from '../services/octoguard/autoReport'
 import { announceThread } from '../services/webhooks/announce'
 import * as TrikModel from '../models/trik'
 import { processScenePost, revertScenePost, revertThreadScenes } from '../services/trik/xp'
+import { canViewThread, canViewCategory, usersWhoCanViewThread, getThreadGrades, setThreadGrades, validGradeIds, memberGradeId } from '../services/privateContent'
 
 // Un titre de fil est du texte brut, jamais du HTML : checkHtmlContent() ne fait
 // que SCANNER (mots interdits) sans jamais retirer de balises. Sans ce nettoyage,
@@ -172,6 +173,8 @@ const CreateThreadBody = z.object({
   title:       z.string().min(3).max(300),
   content:     z.string().min(1).max(500_000), // ~500 KB max
   tag_ids:     z.array(z.string().uuid()).max(5).optional(),
+  // Conteúdo privado (trik_025): cargos que podem ver o tópico (vazio = segue a categoria)
+  grade_ids:   z.array(z.string().uuid()).max(50).optional(),
 })
 
 const CreatePostBody = z.object({
@@ -188,7 +191,7 @@ const ReactionBody = z.object({
 export default async function forumRoutes(app: FastifyInstance) {
   // GET /api/v1/forums/:community
   app.get('/:community', {
-    preHandler: [rateLimit],
+    preHandler: [rateLimit, optionalAuth],
   }, async (request, reply) => {
     const { community } = request.params as { community: string }
 
@@ -197,8 +200,34 @@ export default async function forumRoutes(app: FastifyInstance) {
       return reply.code(404).send({ error: 'Community not found', code: 'NOT_FOUND' })
     }
 
-    const categories = await CommunityModel.getCategories(found.id)
+    const categories = await CommunityModel.getCategories(found.id, request.user?.userId ?? null)
     return reply.send({ categories })
+  })
+
+  // GET /api/v1/forums/grade-options?category_id= — cargos que QUEM PEDE pode pôr
+  // num tópico (trik_025). Equipe: todos os cargos da comunidade. Membro: só o
+  // próprio cargo (um tópico que nem o autor vê não faz sentido).
+  app.get('/grade-options', {
+    preHandler: [rateLimit, requireAuth],
+  }, async (request, reply) => {
+    const userId = request.user!.userId
+    const { category_id } = request.query as { category_id?: string }
+    let communityId: string | null = null
+    if (category_id) {
+      const { rows } = await db.query<{ community_id: string }>(
+        `SELECT community_id FROM categories WHERE id::text = $1 OR slug = $1 LIMIT 1`, [category_id])
+      communityId = rows[0]?.community_id ?? null
+    }
+    communityId ??= await getInstanceCommunityId()
+    if (!communityId) return reply.send({ grades: [], staff: false })
+    const staff = await can(communityId, userId, 'moderate_content')
+    const { rows } = await db.query<{ id: string; name: string; color: string }>(
+      staff
+        ? `SELECT id, name, color FROM community_grades WHERE community_id = $1 ORDER BY position, name`
+        : `SELECT g.id, g.name, g.color FROM community_members cm JOIN community_grades g ON g.id = cm.grade_id
+            WHERE cm.community_id = $1 AND cm.user_id = $2`,
+      staff ? [communityId] : [communityId, userId])
+    return reply.send({ grades: rows, staff })
   })
 
   // POST /api/v1/forums/categories
@@ -222,8 +251,9 @@ export default async function forumRoutes(app: FastifyInstance) {
 
 // GET /api/v1/forums/threads
 app.get('/threads', {
-  preHandler: [rateLimit, validate({ query: ThreadsQuery })],
+  preHandler: [rateLimit, optionalAuth, validate({ query: ThreadsQuery })],
 }, async (request, reply) => {
+  const viewerId = request.user?.userId ?? null
   const { category_id: rawCatId, limit, offset, tag } = request.query as z.infer<typeof ThreadsQuery>
 
   // Resolve slug → UUID if needed
@@ -237,6 +267,11 @@ app.get('/threads', {
     category_id = catRows[0].id
   }
 
+  // Conteúdo privado (trik_025): categoria fechada para quem pede = não existe
+  if (!(await canViewCategory(category_id, viewerId))) {
+    return reply.code(404).send({ error: 'Category not found', code: 'NOT_FOUND' })
+  }
+
   const { rows } = await db.query(`
     SELECT
       t.*,
@@ -245,11 +280,13 @@ app.get('/threads', {
       c.description as category_description,
       u.username as author_username,
       u.avatar as author_avatar,
-      (SELECT COUNT(*)::int FROM posts p WHERE p.thread_id = t.id) as post_count
+      (SELECT COUNT(*)::int FROM posts p WHERE p.thread_id = t.id) as post_count,
+      EXISTS (SELECT 1 FROM thread_grades tg WHERE tg.thread_id = t.id) as is_private
     FROM threads t
     LEFT JOIN categories c ON t.category_id = c.id
     LEFT JOIN users u ON t.author_id = u.id
     WHERE t.category_id = $1
+      AND nx_can_view_thread(t.id, $5::uuid)
       AND ($4::text IS NULL OR EXISTS (
         SELECT 1 FROM thread_tags tt JOIN tags g ON g.id = tt.tag_id
          WHERE tt.thread_id = t.id AND g.slug = $4))
@@ -260,7 +297,7 @@ app.get('/threads', {
         t.created_at
       ) DESC
     LIMIT $2 OFFSET $3
-  `, [category_id, limit || 50, offset || 0, tag ?? null])
+  `, [category_id, limit || 50, offset || 0, tag ?? null, viewerId])
 
   // Les tags portés par les sujets de CETTE catégorie, avec leur nombre :
   // la barre « Filtrer par tag » ne propose que ce qui donne un résultat.
@@ -270,9 +307,10 @@ app.get('/threads', {
       JOIN tags g ON g.id = tt.tag_id
       JOIN threads t ON t.id = tt.thread_id
      WHERE t.category_id = $1
+       AND nx_can_view_thread(t.id, $2::uuid)
      GROUP BY g.id, g.name, g.slug, g.color
      ORDER BY thread_count DESC, g.name ASC
-  `, [category_id])
+  `, [category_id, viewerId])
 
   const threadIds = rows.map(t => t.id)
   const tagsMap = await TagModel.getTagsForThreads(threadIds)
@@ -300,7 +338,7 @@ app.get('/threads', {
   app.post('/threads', {
     preHandler: [rateLimit, requireAuth, validate({ body: CreateThreadBody })],
   }, async (request, reply) => {
-    const { category_id: rawCatId, title: rawTitle, content, tag_ids } = request.body as z.infer<typeof CreateThreadBody>
+    const { category_id: rawCatId, title: rawTitle, content, tag_ids, grade_ids } = request.body as z.infer<typeof CreateThreadBody>
     const title = stripTitleTags(rawTitle)
     if (!title) {
       return reply.code(400).send({ error: 'Title cannot be empty once markup is removed', code: 'INVALID_TITLE' })
@@ -317,10 +355,31 @@ app.get('/threads', {
       category_id = slugRows[0].id
     }
 
+    // Conteúdo privado (trik_025): não se posta numa categoria que não se vê
+    if (!(await canViewCategory(category_id, request.user!.userId))) {
+      return reply.code(404).send({ error: 'Category not found', code: 'NOT_FOUND' })
+    }
+
     // Check if user is banned from this community
     const { rows: catRows } = await db.query<{ community_id: string; post_min_role: string }>(
       `SELECT community_id, post_min_role FROM categories WHERE id = $1 LIMIT 1`, [category_id]
     )
+
+    // Cargos do tópico (trik_025). Equipe escolhe qualquer cargo da comunidade;
+    // o autor só o PRÓPRIO cargo, senão criaria um tópico que nem ele vê.
+    let threadGradeIds: string[] = []
+    if (grade_ids?.length && catRows[0]) {
+      const valid = await validGradeIds(catRows[0].community_id, grade_ids)
+      if (!valid) return reply.code(400).send({ error: 'Unknown grade', code: 'THREAD_GRADES_INVALID' })
+      const staff = await can(catRows[0].community_id, request.user!.userId, 'moderate_content')
+      if (!staff) {
+        const own = await memberGradeId(catRows[0].community_id, request.user!.userId)
+        if (valid.some(g => g !== own)) {
+          return reply.code(403).send({ error: 'You can only restrict a thread to your own grade', code: 'THREAD_GRADES_FORBIDDEN' })
+        }
+      }
+      threadGradeIds = valid
+    }
     if (catRows[0]) {
       const { rows: banRows } = await db.query(
         `SELECT 1 FROM community_bans WHERE community_id = $1 AND user_id = $2 LIMIT 1`,
@@ -367,7 +426,7 @@ app.get('/threads', {
       if (!titleHeldCheck.ok) return reply.code(422).send({ error: titleHeldCheck.reason, code: 'CONTENT_BLOCKED' })
       const held = await holdContent({
         kind: 'thread', authorId: request.user!.userId, categoryId: category_id,
-        payload: { content: heldContent, title, tag_ids: tag_ids ?? [] }, rule: ogThread.hold,
+        payload: { content: heldContent, title, tag_ids: tag_ids ?? [], grade_ids: threadGradeIds }, rule: ogThread.hold,
       })
       return held.ok ? reply.code(202).send(heldBody(held.row)) : reply.code(422).send(holdRefusal(held.code))
     }
@@ -377,6 +436,8 @@ app.get('/threads', {
       author_id: request.user!.userId,
       title,
     })
+    // Cargos ANTES de qualquer aviso ou webhook: o tópico nasce já restrito
+    if (threadGradeIds.length) await setThreadGrades(thread.id, threadGradeIds)
 
     // Rehost les <img> externes (Imgur, CDN tiers...) AVANT sanitize, sinon
     // le sanitizer les strip silencieusement et l'auteur perd ses images.
@@ -465,7 +526,12 @@ app.get('/threads', {
     // Always use the resolved UUID — id may be a slug
     const threadId = thread.id
 
-    const [posts, tags, xpEnabled] = await Promise.all([
+    // Conteúdo privado (trik_025): sem acesso = o tópico não existe para quem pede
+    if (!(await canViewThread(threadId, viewerId))) {
+      return reply.code(404).send({ error: 'Thread not found', code: 'NOT_FOUND' })
+    }
+
+    const [posts, tags, xpEnabled, grades] = await Promise.all([
       PostModel.listByThread(threadId, {
         // Pas de plafond de messages par sujet : seule la TAILLE DE PAGE est bornée
         // (100 max) et les valeurs invalides retombent sur les défauts du model.
@@ -477,10 +543,11 @@ app.get('/threads', {
       // Módulo RPG (trik): o selo "XP ativo" é público — vai junto com o tópico em
       // vez de o frontend chamar uma rota admin (que devolvia 403 pra todo jogador).
       Promise.resolve().then(() => TrikModel.isXpThread(threadId)).catch(() => false),
+      getThreadGrades(threadId),
       ThreadModel.incrementViews(threadId),
     ])
 
-    return reply.send({ thread: { ...thread, tags }, posts, xp_enabled: xpEnabled })
+    return reply.send({ thread: { ...thread, tags, grades }, posts, xp_enabled: xpEnabled })
   })
 
   // POST /api/v1/forums/posts
@@ -500,6 +567,11 @@ app.get('/threads', {
 
     // Always use resolved UUID — thread_id may be a slug
     const resolvedThreadId = thread.id
+
+    // Conteúdo privado (trik_025): não se responde a um tópico que não se vê
+    if (!(await canViewThread(resolvedThreadId, userId))) {
+      return reply.code(404).send({ error: 'Thread not found', code: 'NOT_FOUND' })
+    }
 
     // Check if user is banned from this community
     const { rows: banRows } = await db.query(
@@ -571,7 +643,9 @@ app.get('/threads', {
         if (thread.author_id !== userId && thread.author_id !== continuado) {
           avisar.push({ user: thread.author_id, type: 'thread_reply' })
         }
-        for (const a of avisar) {
+        // Conteúdo privado (trik_025): só avisa quem pode ver o tópico
+        const podemVer = new Set(await usersWhoCanViewThread(thread.id, avisar.map(a => a.user)))
+        for (const a of avisar.filter(a => podemVer.has(a.user))) {
           await NotificationModel.create({
             user_id:   a.user,
             type:      a.type,
@@ -634,6 +708,10 @@ app.get('/threads', {
     }
 
     const userId = request.user!.userId
+    // Conteúdo privado (trik_025): sem acesso ao tópico, o post não existe
+    if (!(await canViewThread(existing.thread_id, userId))) {
+      return reply.code(404).send({ error: 'Post not found', code: 'NOT_FOUND' })
+    }
     const isAuthor = existing.author_id === userId
     const modAccess = !isAuthor && await canModerateThreadContent(userId, existing.thread_id, existing.author_id)
 
@@ -710,6 +788,10 @@ app.get('/threads', {
     }
 
     const userId = request.user!.userId
+    // Conteúdo privado (trik_025): sem acesso ao tópico, o post não existe
+    if (!(await canViewThread(existing.thread_id, userId))) {
+      return reply.code(404).send({ error: 'Post not found', code: 'NOT_FOUND' })
+    }
     const isAuthor = existing.author_id === userId
     const modAccess = !isAuthor && await canModerateThreadContent(userId, existing.thread_id, existing.author_id)
 
@@ -752,6 +834,7 @@ app.get('/threads', {
       tag_ids?:        string[]
       delete?:         boolean
       is_xp_enabled?:  boolean  // Módulo RPG (trik, Fase 2) — marca o tópico pra contagem de XP por cena
+      grade_ids?:      string[] // Conteúdo privado (trik_025): cargos que veem o tópico; [] = segue a categoria
     }
 
     const thread = await ThreadModel.findById(id)
@@ -763,6 +846,10 @@ app.get('/threads', {
     const threadId = thread.id
 
     const userId    = request.user!.userId
+    // Conteúdo privado (trik_025): sem acesso, o tópico não existe
+    if (!(await canViewThread(threadId, userId))) {
+      return reply.code(404).send({ error: 'Thread not found', code: 'NOT_FOUND' })
+    }
     const isAuthor  = thread.author_id === userId
     const modAccess = await canModerateThreadContent(userId, threadId, isAuthor ? null : thread.author_id)
 
@@ -779,6 +866,16 @@ app.get('/threads', {
       const updated = await ThreadModel.update(threadId, { title: cleanTitle })
       bumpThreadsCache()
       return reply.send({ thread: updated })
+    }
+
+    // Cargos que veem o tópico (trik_025): só a equipe muda, depois da criação.
+    // Validados AVANT qualquer escrita, como os tags.
+    let gradeIds: string[] | undefined
+    if (body.grade_ids !== undefined) {
+      const communityId = await communityOfThread(threadId)
+      const valid = communityId ? await validGradeIds(communityId, body.grade_ids) : null
+      if (!valid) return reply.code(400).send({ error: 'grade_ids must be a list of grade ids of this community', code: 'THREAD_GRADES_INVALID' })
+      gradeIds = valid
     }
 
     // Les tags d'un sujet, changés par l'équipe : vérifiés AVANT toute écriture.
@@ -844,6 +941,9 @@ app.get('/threads', {
     if (tagIds !== undefined) {
       await TagModel.setThreadTags(threadId, tagIds)
     }
+    if (gradeIds !== undefined) {
+      await setThreadGrades(threadId, gradeIds)
+    }
 
     const wasPinned = !!(thread as { is_pinned?: boolean }).is_pinned
     const updated = await ThreadModel.update(threadId, {
@@ -867,7 +967,7 @@ app.get('/threads', {
     const userId   = request.user!.userId
 
     const post = await PostModel.getAuthorAndThread(id)
-    if (!post) {
+    if (!post || !(await canViewThread(post.thread_id, request.user!.userId))) {
       return reply.code(404).send({ error: 'Post not found', code: 'NOT_FOUND' })
     }
 
@@ -877,7 +977,8 @@ app.get('/threads', {
     // (pas retirée), on diffuse un event socket pour que les utilisateurs
     // connectés voient l'emoji monter en temps réel sur leur écran. On
     // récupère le username pour étiqueter le float ; pas besoin de cacher.
-    if (result.added && io) {
+    // Tópico restrito (trik_025): a reação não sobe na tela de todo mundo
+    if (result.added && io && await canViewThread(post.thread_id, null)) {
       try {
         const { rows: [u] } = await db.query<{ username: string }>(
           `SELECT username FROM users WHERE id = $1`,
@@ -902,7 +1003,7 @@ app.get('/threads', {
     const userId = request.user!.userId
 
     const post = await PostModel.getAuthorAndThread(id)
-    if (!post) {
+    if (!post || !(await canViewThread(post.thread_id, request.user!.userId))) {
       return reply.code(404).send({ error: 'Post not found', code: 'NOT_FOUND' })
     }
 

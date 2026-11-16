@@ -5,6 +5,11 @@ import { apiFetch } from '$lib/api'
 
 type Fetch = typeof fetch
 
+// Lido SEMPRE como visitante, mesmo se quem abriu o sitemap estiver logado:
+// hooks.server.ts não anexa o token da sessão quando vê este cabeçalho, então um
+// tópico restrito a um cargo (trik_025) nunca entra num arquivo para robôs.
+const ANON: RequestInit = { headers: { 'x-nodyx-anonymous': '1' } }
+
 export interface SeoInstance { name: string; description: string; language: string }
 export interface SeoCategory { id: string; slug: string | null; name: string; description: string | null; updated_at: string | null; thread_count: number }
 export interface SeoThread { id: string; slug: string | null; title: string; category_slug: string | null; category_id: string; category_name: string | null; author_username: string | null; created_at: string; updated_at: string | null }
@@ -12,7 +17,7 @@ export interface SeoEvent { id: string; title: string; description: string | nul
 
 export async function seoInstance(fetch: Fetch): Promise<SeoInstance> {
 	try {
-		const r = await apiFetch(fetch, '/instance/info')
+		const r = await apiFetch(fetch, '/instance/info', ANON)
 		const j = r.ok ? await r.json() : {}
 		return { name: j.name || 'Nodyx', description: j.description || '', language: j.language || 'en' }
 	} catch {
@@ -26,7 +31,7 @@ function flatten(cats: any[]): any[] {
 
 export async function seoCategories(fetch: Fetch): Promise<SeoCategory[]> {
 	try {
-		const r = await apiFetch(fetch, '/instance/categories')
+		const r = await apiFetch(fetch, '/instance/categories', ANON)
 		if (!r.ok) return []
 		return flatten((await r.json()).categories ?? []).map((c: any) => ({
 			id: c.id, slug: c.slug ?? null, name: c.name, description: c.description ?? null,
@@ -45,7 +50,7 @@ export async function seoThreads(fetch: Fetch, cat: SeoCategory, max = 2000): Pr
 	const out: SeoThread[] = []
 	for (let offset = 0; offset < max; offset += 100) {
 		try {
-			const r = await apiFetch(fetch, `/forums/threads?category_id=${cat.id}&limit=100&offset=${offset}`)
+			const r = await apiFetch(fetch, `/forums/threads?category_id=${cat.id}&limit=100&offset=${offset}`, ANON)
 			if (!r.ok) break
 			const page = ((await r.json()).threads ?? []) as any[]
 			for (const t of page) out.push({
@@ -68,7 +73,7 @@ export async function seoAllThreads(fetch: Fetch, cats: SeoCategory[], max?: num
 /** Les événements publics à venir (10 au plus, ce que l'API publique expose). */
 export async function seoEvents(fetch: Fetch): Promise<SeoEvent[]> {
 	try {
-		const r = await apiFetch(fetch, '/instance/events-public?limit=10')
+		const r = await apiFetch(fetch, '/instance/events-public?limit=10', ANON)
 		if (!r.ok) return []
 		return ((await r.json()).events ?? []).map((e: any) => ({ id: e.id, title: e.title, description: e.description ?? null, starts_at: e.starts_at }))
 	} catch {
