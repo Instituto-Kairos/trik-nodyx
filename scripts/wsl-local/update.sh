@@ -10,8 +10,8 @@
 #   4. deploy.sh: copia, builda (pula `npm ci` se o package-lock não mudou), reinicia;
 #   5. espera o core subir e roda o verify.sh.
 #
-# Limitação: arquivo APAGADO no fork continua existindo em /opt/nodyx (o update só
-# copia/sobrescreve). Se apagar arquivos, rode full-reset.sh.
+# Arquivo APAGADO no fork (nodyx-core/ e nodyx-frontend/) também é removido de
+# /opt/nodyx, pois o deploy sozinho só copia/sobrescreve.
 # Precisa de root de verdade (senha interativa), como o deploy.sh:
 #   sudo bash scripts/wsl-local/update.sh
 # Ver README.md nesta pasta pro contexto completo.
@@ -56,15 +56,33 @@ fi
 export BASE="$OPT_HEAD"
 ok "base ${OPT_HEAD:0:7} é ancestral do fork"
 
-DELETED="$(git -c safe.directory='*' -C "$REPO" diff --diff-filter=D --name-only "$OPT_HEAD" HEAD -- nodyx-core nodyx-frontend)"
-if [[ -n "$DELETED" ]]; then
-  echo -e "${RED}⚠  arquivos apagados no fork desde ${OPT_HEAD:0:7} continuarão existindo em /opt (use full-reset.sh):${RESET}" >&2
-  echo "$DELETED" >&2
-fi
+# Sem "HEAD" no fim: compara a base instalada com a árvore de trabalho, então
+# pega tanto deleções commitadas quanto as ainda não commitadas.
+DELETED="$(git -c safe.directory='*' -C "$REPO" diff --diff-filter=D --name-only "$OPT_HEAD" -- nodyx-core nodyx-frontend)"
 
 STEP="2. staging"
 info "Preparando o staging (como $SUDO_USER)..."
 runuser -u "$SUDO_USER" -- env BASE="$BASE" bash "$HERE/stage.sh" | grep '^---'
+
+# O deploy só copia/sobrescreve, então arquivo apagado no fork sobraria em /opt
+# (ex.: um svelte.config.js que o SvelteKit novo recusa). Remove aqui, só o que o
+# git diz que foi apagado, só dentro de nodyx-core/ e nodyx-frontend/.
+STEP="2b. remover arquivos apagados no fork"
+if [[ -n "$DELETED" ]]; then
+  info "Removendo de $NODYX_DIR o que foi apagado no fork desde ${OPT_HEAD:0:7}..."
+  while IFS= read -r f; do
+    case "$f" in
+      nodyx-core/*|nodyx-frontend/*) ;;
+      *) continue ;;
+    esac
+    [[ "$f" == *..* ]] && continue
+    if [[ -f "$NODYX_DIR/$f" ]]; then
+      rm -f -- "$NODYX_DIR/$f"
+      echo "   removido: $f"
+    fi
+  done <<< "$DELETED"
+  ok "arquivos apagados propagados"
+fi
 
 STEP="3. ajustes de schema"
 info "Aplicando ajustes de schema (idempotentes)..."
