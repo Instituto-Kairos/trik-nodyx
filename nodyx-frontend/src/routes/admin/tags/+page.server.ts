@@ -43,7 +43,7 @@ export const actions: Actions = {
 		return { updated: tagId };
 	},
 
-	// Reordena uma tag uma posição para cima/baixo e grava a ordem completa.
+	// Recebe a ordem completa (arrastar e soltar) e a grava.
 	reorder: async ({ fetch, request, cookies }) => {
 		const token = cookies.get('token')!;
 		const form = await request.formData();
