@@ -30,7 +30,7 @@
 	import PollCard from '$lib/components/PollCard.svelte';
 	import PollCreator from '$lib/components/PollCreator.svelte';
 	import { t, locale } from '$lib/i18n';
-	import { tagBadgeStyle } from '$lib/tagStyle';
+	import { tagBadgeStyle, tagTextColor } from '$lib/tagStyle';
 	import Breadcrumb, { type Crumb } from '$lib/components/Breadcrumb.svelte';
 	import { apiFetch } from '$lib/api';
 	import { replyCount, isOne } from '$lib/forumCounts';
@@ -457,7 +457,7 @@
 							<div class="tags-panel-list" role="group" aria-labelledby="tags-panel-title">
 								{#each allTags as tag (tag.id)}
 									{@const on = tagsPick.includes(tag.id)}
-									<button type="button" class="tags-pick" style="--tc:{tag.color}" aria-pressed={on}
+									<button type="button" class="tags-pick" style="--tc:{tag.color}; --ink:{tagTextColor(tag.color)}" aria-pressed={on}
 										disabled={!on && tagsPick.length >= 5} onclick={() => togglePick(tag.id)}>
 										{#if on}<span aria-hidden="true">✓</span>{/if}{tag.name}
 									</button>
@@ -1155,8 +1155,9 @@
 	.tags-panel-head span { font-size: 0.75rem; color: var(--nx-text-muted); }
 	.tags-panel-list { display: flex; flex-wrap: wrap; gap: 0.375rem; }
 	.tags-pick { --tc: var(--nx-header-accent); display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.25rem 0.625rem; font-size: 0.75rem; font-weight: 600; color: var(--tc); border: 1px solid color-mix(in srgb, var(--tc) 40%, transparent); background: transparent; cursor: pointer; transition: background 0.15s; }
-	.tags-pick:hover:not(:disabled) { background: color-mix(in srgb, var(--tc) 10%, transparent); }
-	.tags-pick[aria-pressed='true'] { background: color-mix(in srgb, var(--tc) 20%, transparent); border-color: var(--tc); }
+	.tags-pick { background: var(--tc); border-color: var(--tc); color: var(--ink, #fff); box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.22); opacity: 0.6; }
+	.tags-pick:hover:not(:disabled) { opacity: 0.9; }
+	.tags-pick[aria-pressed='true'] { opacity: 1; outline: 2px solid var(--nx-text); outline-offset: 1px; }
 	.tags-pick:disabled { opacity: 0.4; cursor: not-allowed; }
 	.tags-panel-note { margin: 0; font-size: 0.75rem; color: var(--nx-text-muted); }
 	.tags-panel-note a { color: var(--nx-header-accent); font-weight: 600; }

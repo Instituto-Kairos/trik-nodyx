@@ -3,9 +3,8 @@
 	import { fly, fade } from 'svelte/transition';
 	import type { FlyParams, FadeParams } from 'svelte/transition';
 	import { page } from '$app/state';
-	import { inkOn } from '$lib/adminTheme';
 	import { t, locale } from '$lib/i18n';
-	import { tagBadgeStyle } from '$lib/tagStyle';
+	import { tagBadgeStyle, tagTextColor } from '$lib/tagStyle';
 	import { replyCount, isUnanswered, isOne } from '$lib/forumCounts';
 	import Breadcrumb, { type Crumb } from '$lib/components/Breadcrumb.svelte';
 
@@ -599,7 +598,7 @@
 		<span class="tag-bar-label">{tFn('forum.tags_filter')}</span>
 		<a href={page.url.pathname} class="tag-chip" aria-current={!activeTag ? 'true' : undefined} data-sveltekit-noscroll>{tFn('forum.tags_all')}</a>
 		{#each categoryTags as tag (tag.id)}
-			<a href="?tag={tag.slug}" class="tag-chip" style="--tc:{tag.color}; --ink:{inkOn(tag.color)}" aria-current={activeTag === tag.slug ? 'true' : undefined} data-sveltekit-noscroll>
+			<a href="?tag={tag.slug}" class="tag-chip" style="--tc:{tag.color}; --ink:{tagTextColor(tag.color)}" aria-current={activeTag === tag.slug ? 'true' : undefined} data-sveltekit-noscroll>
 				{tag.name}<span class="tag-chip-n">{tag.thread_count}</span>
 			</a>
 		{/each}
@@ -888,6 +887,10 @@
 	.tag-chip { --tc: var(--nx-header-accent); display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.2rem 0.625rem; font-size: 0.75rem; font-weight: 600; color: var(--tc); border: 1px solid color-mix(in srgb, var(--tc) 35%, transparent); background: color-mix(in srgb, var(--tc) 8%, transparent); text-decoration: none; transition: background 0.15s, border-color 0.15s; }
 	.tag-chip:hover { background: color-mix(in srgb, var(--tc) 16%, transparent); }
 	.tag-chip[aria-current='true'] { background: var(--tc); border-color: var(--tc); color: var(--ink, #fff); }
+	/* Tags coloridas: fundo sólido + texto contrastante (como os selos), senão tag escura some no tema escuro */
+	.tag-chip[style] { background: var(--tc); border-color: var(--tc); color: var(--ink, #fff); box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.22); opacity: 0.78; }
+	.tag-chip[style]:hover { background: var(--tc); opacity: 1; }
+	.tag-chip[style][aria-current='true'] { opacity: 1; outline: 2px solid var(--nx-text); outline-offset: 1px; }
 	.tag-chip:first-of-type:not([style]) { --tc: var(--nx-text-muted); }
 	.tag-chip:first-of-type[aria-current='true']:not([style]) { --tc: var(--nx-header-accent); color: #16120c; }
 	.tag-chip-n { font-weight: 500; opacity: 0.75; font-variant-numeric: tabular-nums; }

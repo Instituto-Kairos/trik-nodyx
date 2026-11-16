@@ -5,7 +5,7 @@
 	import { enhance } from '$app/forms';
 	import type { PageData, ActionData } from './$types';
 	import { t } from '$lib/i18n';
-	import { inkOn } from '$lib/adminTheme';
+	import { tagBadgeStyle } from '$lib/tagStyle';
 
 	const tFn = $derived($t);
 
@@ -185,7 +185,7 @@
 				<div class="adm-field">
 					<span class="adm-label">{tFn('atags.preview')}</span>
 					<div class="flex items-center min-h-9">
-						<span class="adm-swatch" style="background:{newColor}; color:{inkOn(newColor)}">{newName.trim() || tFn('atags.name_ph')}</span>
+						<span class="adm-swatch" style={tagBadgeStyle(newColor)}>{newName.trim() || tFn('atags.name_ph')}</span>
 					</div>
 				</div>
 			</div>
@@ -252,7 +252,7 @@
 										<div class="adm-field">
 											<span class="adm-label">{tFn('atags.preview')}</span>
 											<div class="flex items-center min-h-9">
-												<span class="adm-swatch" style="background:{editColor}; color:{inkOn(editColor)}">{editName.trim() || tag.name}</span>
+												<span class="adm-swatch" style={tagBadgeStyle(editColor)}>{editName.trim() || tag.name}</span>
 											</div>
 										</div>
 										<div class="tag-edit-actions">
@@ -265,7 +265,7 @@
 								</td>
 							{:else}
 							<td class="adm-cell-main">
-								<span class="adm-swatch" style="background:{tag.color}; color:{inkOn(tag.color)}">{tag.name}</span>
+								<span class="adm-swatch" style={tagBadgeStyle(tag.color)}>{tag.name}</span>
 							</td>
 							<td class="adm-muted" data-label={tFn('atags.col_slug')}><code>{tag.slug}</code></td>
 							<td class="adm-num" data-label={tFn('atags.col_threads')}>{#if tag.thread_count}{tag.thread_count}{:else}<span class="adm-muted" title={tFn('atags.unused_tip')}>{tFn('atags.unused')}</span>{/if}</td>
