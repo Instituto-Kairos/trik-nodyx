@@ -1,4 +1,5 @@
 <script lang="ts">
+	import GradePicker from '$lib/components/GradePicker.svelte';
 	import { enhance } from '$app/forms';
 	import { page } from '$app/state';
 	import type { ActionData, PageData } from './$types';
@@ -6,6 +7,11 @@
 	import PollCreator from '$lib/components/PollCreator.svelte';
 	import { t } from '$lib/i18n';
 	import { luminance } from '$lib/shellTheme';
+	import { octoguardMessage } from '$lib/octoguardMessages';
+	import HeldBlock from '$lib/components/octoguard/HeldBlock.svelte';
+	import NudgeBanner from '$lib/components/octoguard/NudgeBanner.svelte';
+	import ShieldBanner from '$lib/components/octoguard/ShieldBanner.svelte';
+	import { precheckMessage, type Nudge } from '$lib/octoguard/nudge';
 	import { untrack } from 'svelte';
 	import { findCategoryIdPath } from '$lib/forumTree';
 
@@ -15,7 +21,25 @@
 
 	const tags = $derived(data.tags ?? []);
 	let selectedTagIds = $state<string[]>([]);
+	// Conteúdo privado (trik_025): cargos que podem ver o tópico (nada = segue a categoria)
+	let selectedGradeIds = $state<string[]>([]);
 	let submitting = $state(false);
+
+	// « Tu es sûr ? » (OctoGuard, lot 5) : avant de publier, OctoGuard dit s'il
+	// retiendrait ou refuserait ce sujet. « Publier quand même » ne vaut que pour
+	// le texte annoncé : modifié, il est vérifié à nouveau.
+	let nudge = $state<{ n: Nudge; title: string; content: string } | null>(null);
+	let sendAnyway: { title: string; content: string } | null = null;
+	let formEl = $state<HTMLFormElement | null>(null);
+	function publishAnyway() {
+		if (!nudge || !formEl) return;
+		sendAnyway = { title: nudge.title, content: nudge.content };
+		formEl.requestSubmit();
+	}
+	function reformulate() {
+		nudge = null;
+		document.getElementById('title')?.focus();
+	}
 
 	// ── Sélecteur catégorie / sous-catégorie ──────────────────────────────
 	type CatNode = { id: string; slug?: string; name: string; post_min_role?: string; children: CatNode[] };
@@ -90,9 +114,17 @@
 	<a href="/forum/{finalCategoryId}" class="text-sm text-[var(--nx-text-muted)] hover:text-[var(--nx-text)]">{tFn('common.back')}</a>
 	<h1 class="mt-2 text-2xl font-bold text-[var(--nx-text)] mb-6">{tFn('forum.create_topic')}</h1>
 
+	{#if form && 'held' in form && form.held}
+		<div class="mb-6 flex flex-col gap-3">
+			<HeldBlock kind="thread" title={form.heldTitle} content={form.heldContent} />
+			{#if form.pollDropped}<p class="text-sm text-[var(--nx-text-muted)]">{tFn('ogmsg.held_poll_dropped')}</p>{/if}
+			<a href="/forum/{finalCategoryId}" class="self-start text-sm font-semibold text-[var(--nx-text)] hover:underline">{tFn('ogmsg.held_back')}</a>
+		</div>
+	{/if}
+
 	{#if form?.error}
 		<p class="mb-4 bg-[color-mix(in_srgb,var(--nx-bad)_15%,transparent)] border border-[color-mix(in_srgb,var(--nx-bad)_40%,transparent)] px-4 py-2 text-sm text-[var(--nx-bad)]">
-			{form.code === 'CATEGORY_RESTRICTED' ? tFn('forum.category_restricted') : form.error}
+			{form.code === 'CATEGORY_RESTRICTED' ? tFn('forum.category_restricted') : form.code === 'OCTOGUARD_BLOCKED' || form.code === 'OCTOGUARD_HELD_LIMIT' ? octoguardMessage(tFn, form.i18n_key) : form.code === 'MUTED' ? tFn('forum.err_muted') : form.code === 'CONTENT_BLOCKED' ? tFn('forum.err_forbidden_content') : form.error}
 		</p>
 	{/if}
 
@@ -103,7 +135,20 @@
 	{:else}
 	<form
 		method="POST"
-		use:enhance={() => {
+		bind:this={formEl}
+		use:enhance={async ({ formData, cancel }) => {
+			if (submitting) { cancel(); return; }
+			const title = String(formData.get('title') ?? '');
+			const content = String(formData.get('content') ?? '');
+			const forced = sendAnyway && sendAnyway.title === title && sendAnyway.content === content;
+			sendAnyway = null;
+			if (!forced) {
+				submitting = true;
+				const n = await precheckMessage(page.data.token as string | null, 'forum', content, title);
+				submitting = false;
+				if (n) { nudge = { n, title, content }; cancel(); return; }
+			}
+			nudge = null;
 			submitting = true;
 			return async ({ update }) => {
 				await update();
@@ -160,16 +205,17 @@
 		<!-- Tags multi-select -->
 		{#if tags.length > 0}
 			<div>
-				<span class="block text-sm text-[var(--nx-text-muted)] mb-2">
-					Tags <span class="text-[var(--nx-text-muted)] text-xs">(optionnel, max 5)</span>
+				<span id="tag-pick-label" class="block text-sm text-[var(--nx-text-muted)] mb-2">
+					{tFn('forum.tags_pick')} <span class="text-[var(--nx-text-muted)] text-xs">{tFn('forum.tags_pick_hint', { n: selectedTagIds.length })}</span>
 				</span>
-				<div class="flex flex-wrap gap-2">
+				<div class="flex flex-wrap gap-2" role="group" aria-labelledby="tag-pick-label">
 					{#each tags as tag}
 						<button
 							type="button"
 							onclick={() => toggleTag(tag.id)}
 							aria-pressed={selectedTagIds.includes(tag.id)}
-							class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium border transition-colors cursor-pointer {selectedTagIds.includes(tag.id) ? '' : 'text-gray-200 hover:bg-gray-800'}"
+							disabled={!selectedTagIds.includes(tag.id) && selectedTagIds.length >= 5}
+							class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium border transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed {selectedTagIds.includes(tag.id) ? '' : 'text-gray-200 hover:bg-gray-800'}"
 							style={selectedTagIds.includes(tag.id)
 								? `background-color: ${tag.color}; border-color: ${tag.color}; color: ${tagTextColor(tag.color)};`
 								: `border-color: ${tag.color};`}
@@ -184,6 +230,11 @@
 					<input type="hidden" name="tag_ids" value={tagId} />
 				{/each}
 			</div>
+		{/if}
+
+		<!-- Cargos que podem ver o tópico (trik_025) -->
+		{#if (data.gradeOptions ?? []).length > 0}
+			<GradePicker grades={data.gradeOptions} bind:selected={selectedGradeIds} label={tFn('private.thread_label')} />
 		{/if}
 
 		<!-- Sondage optionnel -->
@@ -234,6 +285,12 @@
 				{/if}
 			{/if}
 		</div>
+
+		<ShieldBanner token={data.token} surface="forum" />
+
+		{#if nudge}
+			<NudgeBanner nudge={nudge.n} busy={submitting} publish onReformulate={reformulate} onSendAnyway={publishAnyway} />
+		{/if}
 
 		<div class="flex items-center gap-3">
 			<button

@@ -4,13 +4,16 @@ import { apiFetch } from '$lib/api'
 
 export const load: PageServerLoad = async ({ fetch, parent }) => {
 	const { token } = await parent()
-	const [infoRes, catRes] = await Promise.all([
+	const [infoRes, catRes, gradesRes] = await Promise.all([
 		apiFetch(fetch, '/instance/info'),
 		apiFetch(fetch, '/instance/categories'),
+		// Cargos da comunidade, para a categoria privada (trik_025)
+		apiFetch(fetch, '/forums/grade-options', { headers: { Authorization: `Bearer ${token}` } }).catch(() => null),
 	])
 	const { slug, community_id } = await infoRes.json()
 	const { categories } = await catRes.json()
-	return { slug, community_id, categories }
+	const { grades } = gradesRes?.ok ? await gradesRes.json() : { grades: [] }
+	return { slug, community_id, categories, grades }
 }
 
 export const actions: Actions = {
@@ -41,11 +44,16 @@ export const actions: Actions = {
 		const body: Record<string, unknown> = {
 			name: form.get('name') as string,
 		}
-		const desc = form.get('description') as string
-		if (desc !== '') body.description = desc
+		// Toujours envoyée : un champ vidé efface la description (avant, impossible).
+		body.description = ((form.get('description') as string) ?? '').trim()
 		if (parent_id !== '__unchanged__') body.parent_id = parent_id === '' ? null : parent_id
 		const postMinRole = form.get('post_min_role') as string
 		if (postMinRole) body.post_min_role = postMinRole
+		// Cargos que veem a categoria (trik_025). O marcador garante que o
+		// formulário trouxe o seletor: desmarcar tudo também é uma escolha.
+		if (form.get('grades_present') === '1') {
+			body.grade_ids = (form.getAll('grade_ids') as string[]).filter(Boolean)
+		}
 
 		const res = await apiFetch(fetch, `/admin/categories/${id}`, {
 			method: 'PATCH',
@@ -53,6 +61,47 @@ export const actions: Actions = {
 			body: JSON.stringify(body),
 		})
 		if (!res.ok) return fail(400, { error: (await res.json()).error ?? 'Erreur modification' })
+	},
+
+	// Monter / descendre une catégorie parmi ses sœurs (même parent) : on
+	// renumérote toute la fratrie 0..n dans le nouvel ordre, puis on n'envoie
+	// que les positions qui changent.
+	move: async ({ fetch, request, cookies }) => {
+		const token = cookies.get('token')!
+		const form  = await request.formData()
+		const id    = form.get('id') as string
+		const dir   = form.get('dir') === 'up' ? -1 : 1
+
+		const treeRes = await apiFetch(fetch, '/instance/categories')
+		if (!treeRes.ok) return fail(400, { errorKey: 'acat.err_reorder' })
+		const { categories } = await treeRes.json()
+
+		type Node = { id: string; position: number; children?: Node[] }
+		const findSiblings = (nodes: Node[]): Node[] | null => {
+			if (nodes.some(n => n.id === id)) return nodes
+			for (const n of nodes) {
+				const found = findSiblings(n.children ?? [])
+				if (found) return found
+			}
+			return null
+		}
+		const siblings = findSiblings(categories)
+		if (!siblings) return
+		const order = [...siblings]
+		const from  = order.findIndex(n => n.id === id)
+		const to    = from + dir
+		if (to < 0 || to >= order.length) return
+		;[order[from], order[to]] = [order[to], order[from]]
+
+		for (const [position, n] of order.entries()) {
+			if (n.position === position) continue
+			const res = await apiFetch(fetch, `/admin/categories/${n.id}`, {
+				method: 'PATCH',
+				headers: { Authorization: `Bearer ${token}` },
+				body: JSON.stringify({ position }),
+			})
+			if (!res.ok) return fail(400, { errorKey: 'acat.err_reorder' })
+		}
 	},
 
 	delete: async ({ fetch, request, cookies }) => {

@@ -737,7 +737,7 @@ export interface TrikNpcc {
  * AU. No AU o nome só precisa COMEÇAR com "npcc" ("NPCCs AU"): lá ele quase
  * sempre leva sufixo, e a busca já está presa à subárvore AU.
  */
-export async function searchNpccThreads(communityId: string, q: string, limit = 8, au = false): Promise<TrikNpcc[]> {
+export async function searchNpccThreads(communityId: string, q: string, limit = 8, au = false, viewerId: string | null = null): Promise<TrikNpcc[]> {
   const termo = q.trim()
   const { rows } = await db.query<TrikNpcc>(
     `WITH RECURSIVE npcc(id) AS (
@@ -754,9 +754,10 @@ export async function searchNpccThreads(communityId: string, q: string, limit = 
       WHERE t.category_id IN (SELECT id FROM npcc)
         AND (t.category_id IN (SELECT id FROM au_tree)) = $5
         AND ($2 = '' OR t.title ILIKE $3)
+        AND nx_can_view_thread(t.id, $6::uuid) -- conteúdo privado (trik_025)
       ORDER BY t.title ASC
       LIMIT $4`,
-    [communityId, termo, `%${termo}%`, limit, au],
+    [communityId, termo, `%${termo}%`, limit, au, viewerId],
   )
   return rows
 }
@@ -1233,6 +1234,8 @@ export async function notifyCategoryPost(opts: {
        WHERE u.is_system = false
          AND cm.user_id <> $3
          AND NOT (cm.user_id = ANY($4::uuid[]))
+         -- conteúdo privado (trik_025): só quem pode ver o tópico
+         AND nx_can_view_thread($1::uuid, cm.user_id)
          AND NOT EXISTS (
            SELECT 1 FROM community_bans cb
            WHERE cb.community_id = cm.community_id AND cb.user_id = cm.user_id

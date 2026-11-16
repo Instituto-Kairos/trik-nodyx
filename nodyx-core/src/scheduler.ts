@@ -9,6 +9,7 @@ import { Server } from 'socket.io'
 import { NODYX_VERSION } from './utils/version'
 import * as NotificationModel from './models/notification'
 import { getInstanceCommunityId } from './middleware/adminOnly'
+import { countActiveMembers } from './models/memberCount'
 
 const PING_INTERVAL_MS         = 5  * 60 * 1000        // 5 minutes
 const ASSET_PUSH_INTERVAL_MS   = 60 * 60 * 1000        // 1 heure
@@ -24,8 +25,7 @@ async function pingDirectory(io: Server) {
   if (!token) return
 
   try {
-    const membersResult = await db.query('SELECT COUNT(*) AS count FROM users WHERE is_system = false AND id NOT IN (SELECT user_id FROM community_bans)')
-    const members = parseInt(membersResult.rows[0]?.count ?? '0', 10)
+    const { total: members } = await countActiveMembers()
     // Deduplicate by userId — same approach as instance.ts online_count
     const presenceSockets = await io.in('presence').fetchSockets()
     const seen = new Set<string>()
@@ -389,15 +389,19 @@ export async function pullBlocklist() {
 // ── Purge tokens de vérification email expirés ───────────────────────────────
 
 async function purgeExpiredEmailTokens() {
+  // Le jeton vit dans users (migration 049), pas dans une table à part : cette purge
+  // visait « email_verification_tokens », qui n'a jamais existé, et son erreur était
+  // avalée en silence. Un lien expiré est effacé ; le compte reste, à vérifier.
   try {
     const { rowCount } = await db.query(
-      `DELETE FROM email_verification_tokens WHERE expires_at < NOW()`
+      `UPDATE users SET email_verification_token = NULL, email_verification_expires_at = NULL
+        WHERE email_verification_token IS NOT NULL AND email_verification_expires_at < NOW()`
     )
     if (rowCount && rowCount > 0) {
-      console.log(`[Scheduler] Email tokens — ${rowCount} token(s) expiré(s) supprimé(s)`)
+      console.log(`[Scheduler] Email tokens : ${rowCount} lien(s) de vérification expiré(s) effacé(s)`)
     }
-  } catch {
-    // Table may not exist on older instances — silently ignore
+  } catch (err: any) {
+    console.warn('[Scheduler] Email tokens purge error:', err.message)
   }
 }
 

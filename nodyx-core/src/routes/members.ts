@@ -4,6 +4,7 @@ import { requireAuth, optionalAuth } from '../middleware/auth'
 import { db, redis }     from '../config/database'
 import { io }            from '../socket/io'
 import * as Notification from '../models/notification'
+import { countActiveMembers } from '../models/memberCount'
 
 interface AuthRequest {
   user?: { userId: string; username: string }
@@ -142,6 +143,7 @@ export default async function memberRoutes(app: FastifyInstance) {
        JOIN threads t   ON t.id = p.thread_id
        JOIN categories c ON c.id = t.category_id
        WHERE p.created_at > NOW() - INTERVAL '30 minutes'
+         AND nx_can_view_thread(t.id, NULL) -- título de tópico restrito a cargo não sai aqui (trik_025)
        ORDER BY p.author_id, p.created_at DESC`
     )
     const justPostedMap: Record<string, typeof justPostedRows[number]> = {}
@@ -270,8 +272,5 @@ export default async function memberRoutes(app: FastifyInstance) {
 }
 
 async function getTotalMembers(): Promise<number> {
-  const { rows } = await db.query<{ count: number }>(
-    `SELECT COUNT(*)::int AS count FROM users`
-  )
-  return rows[0]?.count ?? 0
+  return (await countActiveMembers()).total
 }

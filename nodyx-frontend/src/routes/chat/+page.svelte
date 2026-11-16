@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { onMount, onDestroy, tick, untrack } from 'svelte';
 	import { fade } from 'svelte/transition';
-	import { browser } from '$app/environment';
+	import { browser } from '$app/env';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import type { PageData } from './$types';
 	import { socket, getSocket } from '$lib/socket';
 	import { linkifyHtml } from '$lib/linkify';
 	import { renderSpoilers } from '$lib/spoiler';
-	import { searchMentionTargets, mentionInsertText, type MentionTarget } from '$lib/mentionTargets';
+	import { searchAliasTargets, mentionInsertText, type MentionTarget } from '$lib/mentionTargets';
 	import { apiFetch } from '$lib/api';
 	import NodyxEditor from '$lib/components/editor/NodyxEditor.svelte';
 	import EmojiPicker from '$lib/components/EmojiPicker.svelte';
@@ -16,6 +16,22 @@
 	import { bumpEmoji, emojiUsageStore, topEmojis } from '$lib/emojiUsage';
 	import ChannelSidebar from '$lib/components/ChannelSidebar.svelte';
 	import PollCard    from '$lib/components/PollCard.svelte';
+	import LinkCards   from '$lib/components/LinkCards.svelte';
+	import MentionList from '$lib/components/MentionList.svelte';
+	import CommandList from '$lib/components/CommandList.svelte';
+	import PlaceList from '$lib/components/PlaceList.svelte';
+	import { placeChips } from '$lib/actions/placeChips';
+	import { suggestPlaces, applyPickedPlaces, PLACE_TRIGGER, type Place } from '$lib/places';
+	import GameResult from '$lib/components/GameResult.svelte';
+	import CommandHelp from '$lib/components/CommandHelp.svelte';
+	import { slashMatches, exactSlash, isTeamRole, type CommandDef, type Trigger } from '$lib/commands';
+	import EventCommandPreview from '$lib/components/EventCommandPreview.svelte';
+	import { EVENT_COMMAND, parseEventDraft, draftUrl } from '$lib/eventCommand';
+	import { openHelpOverlay } from '$lib/helpOverlay';
+	import MentionWarnings from '$lib/components/MentionWarnings.svelte';
+	import { mentionChips } from '$lib/actions/mentionChips';
+	import { suggestMentions, applyPickedMentions, insertLabel, refOf, refsIn, MENTION_TRIGGER, type MentionSuggestion } from '$lib/mentions';
+	import { findInternalLinks, setCardOff, toInternalPath } from '$lib/linkCards';
 	import PollCreator from '$lib/components/PollCreator.svelte';
 	import VoiceRoom from '$lib/components/VoiceRoom.svelte';
 	import { joinVoice, leaveVoice, voiceStore, startPTT, stopPTT, voiceChannelMembersStore, voiceEventsStore } from '$lib/voice';
@@ -26,6 +42,13 @@
 	import { buildNameStyle, buildAnimClass, ensureFontLoaded } from '$lib/nameEffects';
 	// FloatingReactions : retiré, géré globalement dans +layout.svelte
 	import { t, locale } from '$lib/i18n';
+	import { can } from '$lib/permissions';
+	import { openReport } from '$lib/report';
+	import { blockedMessage, isContestable, type BlockedPayload } from '$lib/chatBlocked';
+	import { htmlToText as heldText } from '$lib/octoguard/text';
+	import NudgeBanner from '$lib/components/octoguard/NudgeBanner.svelte';
+	import ShieldBanner from '$lib/components/octoguard/ShieldBanner.svelte';
+	import { precheckMessage, type Nudge } from '$lib/octoguard/nudge';
 	import { isDarkTheme } from '$lib/theme';
 	import { messagesVisibles, marquerSupprime } from '$lib/chatFil';
 	import { unreadCountsStore, flashChannelIdStore } from '$lib/unreadStore';
@@ -63,6 +86,9 @@
 	const isAdmin   = $derived(
 		((data as any)?.user?.role === 'owner' || (data as any)?.user?.role === 'admin')
 	);
+	// Épingler et supprimer le message d'un autre : moderate_content (socle du
+	// modérateur + grade). Le serveur revérifie, rang compris.
+	const canModerateContent = $derived(can((data as any)?.user, 'moderate_content'));
 
 	// ── Types ─────────────────────────────────────────────────────────────────
 	type Channel = (typeof localChannels)[number];
@@ -88,6 +114,8 @@
 		reply_to_username?:   string | null;
 		reply_to_content?:    string | null;
 		poll_id?:             string | null;
+		/** Jeu tiré par le serveur (lot C2) : seul le cœur l'écrit. */
+		game?:                any;
 		poll?:                any;
 	};
 
@@ -153,6 +181,23 @@
 
 	// Content filter feedback
 	let blockedNotice = $state<string | null>(null);
+	// Lot 8 : une sourdine ou un avertissement se contestent depuis le message même
+	let blockedContest = $state(false);
+	// Mes messages retenus par OctoGuard (cran « Retenir ») dans ce salon : moi
+	// seul les vois, « en attente de validation », jusqu'à la décision.
+	type HeldMine = { id: string; channel_id: string | null; content: string; created_at: string };
+	let heldMine = $state<HeldMine[]>([]);
+	async function loadHeldMine(channelId: string) {
+		try {
+			const { PUBLIC_API_URL } = await import('$app/env/public');
+			const res = await fetch(`${PUBLIC_API_URL}/api/v1/reports/held/mine?channel_id=${encodeURIComponent(channelId)}`, {
+				headers: token ? { Authorization: `Bearer ${token}` } : {},
+			});
+			if (!res.ok) return;
+			const { held } = await res.json();
+			if (selectedChannel?.id === channelId) heldMine = held as HeldMine[];
+		} catch { /* rien à montrer */ }
+	}
 	let blockedTimer: ReturnType<typeof setTimeout> | null = null;
 
 	// Emoji picker
@@ -184,35 +229,164 @@
 
 	// @mention autocomplete
 	let mentionQuery       = $state('');
-	let mentionSuggestions = $state<MentionTarget[]>([]);
+	let mentionSuggestions = $state<MentionSuggestion[]>([]);
+	// Módulo RPG (trik): aliases de personagem (`@[Kaelen](rafael)`), listados
+	// depois das pessoas. Não viram marca: o alias já aponta o jogador.
+	let aliasSuggestions   = $state<MentionTarget[]>([]);
+	// Mentions choisies dans la liste : deviennent des marques liées à la personne à l'envoi (D49)
+	let pickedMentions     = $state<{ ref: string; label: string }[]>([]);
+
+	// « # » : montrer un endroit (lot C4). Mêmes règles que les mentions : la liste
+	// s'ouvre sur « # », un endroit CHOISI devient une marque à l'envoi.
+	let placeQuery       = $state('');
+	let placeSuggestions = $state<Place[]>([]);
+	let showPlaces       = $state(false);
+	let placeIndex       = $state(0);
+	let pickedPlaces     = $state<{ ref: string; url: string; label: string; private: boolean; kind: Place['kind'] }[]>([]);
+	let placeSeq = 0;
+	/** Le texte envoyé : mentions puis endroits choisis devenus des marques. */
+	const withMarks = (text: string) => applyPickedPlaces(applyPickedMentions(text, pickedMentions), pickedPlaces, k => tFn(`place.neutral_${k}`));
+
+	// ── Brouillon par salon ─────────────────────────────────────────────────────
+	// Ce qu'on écrit est gardé pour CE salon, le temps de l'onglet (sessionStorage) :
+	// quitter le chat par un lien puis revenir, ou changer de salon et revenir, ne
+	// fait plus perdre son message. Les mentions choisies suivent (liées à la
+	// personne). Effacé à l'envoi. Stockage indisponible (navigation privée
+	// stricte) : rien n'est gardé, rien ne casse.
+	const DRAFT_KEY = (id: string) => `nodyx:chat-draft:${id}`;
+	type PickedPlace = { ref: string; url: string; label: string; private: boolean; kind: Place['kind'] };
+	type Draft = { text: string; picked: { ref: string; label: string }[]; places?: PickedPlace[] };
+	// Un endroit relu du stockage : marque et adresse interne valides, sinon écarté
+	const okPlace = (p: any): p is PickedPlace => !!p && typeof p.ref === 'string' && /^(channel|event|thread|wiki|poll|board):[0-9a-f-]{36}$/.test(p.ref)
+		&& typeof p.url === 'string' && p.url.startsWith('/') && !p.url.startsWith('//') && typeof p.label === 'string';
+	function readDraft(id: string): Draft | null {
+		try {
+			const raw = sessionStorage.getItem(DRAFT_KEY(id));
+			if (!raw) return null;
+			const d = JSON.parse(raw) as Draft;
+			return typeof d?.text === 'string' ? {
+				text: d.text.slice(0, 2000),
+				picked: Array.isArray(d.picked) ? d.picked.slice(0, 20) : [],
+				places: Array.isArray(d.places) ? d.places.filter(okPlace).slice(0, 20) : [],
+			} : null;
+		} catch { return null; }
+	}
+	function writeDraft(id: string, text: string, picked: Draft['picked'], places: PickedPlace[]) {
+		try {
+			if (!text.trim()) sessionStorage.removeItem(DRAFT_KEY(id));
+			else sessionStorage.setItem(DRAFT_KEY(id), JSON.stringify({ text: text.slice(0, 2000), picked, places }));
+		} catch { /* stockage plein ou interdit : tant pis, rien ne casse */ }
+	}
+	let draftChannel: string | null = null;
+	// Le salon change : on range le brouillon du précédent, on reprend celui du nouveau
+	$effect(() => {
+		const id = selectedChannel?.id ?? null;
+		untrack(() => {
+			if (id === draftChannel) return;
+			if (draftChannel) writeDraft(draftChannel, inputText, pickedMentions, pickedPlaces);
+			draftChannel = id;
+			const d = id ? readDraft(id) : null;
+			inputText = d?.text ?? '';
+			pickedMentions = d?.picked ?? [];
+			pickedPlaces = d?.places ?? [];
+			void tick().then(() => ajusterHauteur(document.querySelector<HTMLTextAreaElement>('textarea#chat-input')));
+		});
+	});
+	// Chaque frappe : le brouillon du salon courant suit
+	$effect(() => {
+		const text = inputText, picked = pickedMentions, places = pickedPlaces;
+		const id = untrack(() => draftChannel);
+		if (id) writeDraft(id, text, picked, places);
+	});
+	let mentionSeq = 0;
+	// D51 : un grand groupe attend « Envoyer quand même » (le cœur refait ses contrôles)
+	let mentionGateBlocked = $state(false);
+	let richMentionBlocked = $state(false);
+	// Les mentions choisies encore présentes dans le texte
+	const liveMentionRefs = $derived([...new Set(pickedMentions.filter(p => inputText.includes('@' + p.label)).map(p => p.ref))]);
+
+	function removeMention(ref: string) {
+		const p = pickedMentions.find(x => x.ref === ref);
+		if (!p) return;
+		inputText = inputText.replace(new RegExp('@' + p.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ' ?'), '');
+		pickedMentions = pickedMentions.filter(x => x.ref !== ref);
+	}
+	function replaceMention(from: string, to: string, toLabel: string) {
+		const p = pickedMentions.find(x => x.ref === from);
+		if (!p) return;
+		inputText = inputText.replace('@' + p.label, '@' + toLabel);
+		pickedMentions = pickedMentions.map(x => x.ref === from ? { ref: to, label: toLabel } : x);
+	}
 	let showMentions       = $state(false);
 
 	/**
-	 * Les quatre commandes, listées quand l'utilisateur tape « / ».
+	 * La liste du « / » : la source unique `lib/commands.ts` (la même que la bulle
+	 * « ? » et la page /help). Elle n'apparaît que sur un « / » en tête, disparaît
+	 * dès qu'une commande complète est écrite (un espace), et Échap la referme
+	 * jusqu'à la prochaine frappe.
 	 *
-	 * Elles vivaient dans le placeholder du champ, ce qui posait deux problèmes.
-	 * Le premier, mesuré : « Message dans # {{channel}} · /roll /flip /8ball
-	 * /rps » fait 54 caractères et passe à DEUX lignes dès que le champ est en
-	 * dessous de 340px de large, ce qui déborde un textarea en `rows={1}` et
-	 * fait apparaître une barre de défilement parasite. Le second : on ne lit un
-	 * placeholder qu'avant d'écrire, or on cherche une commande au moment où on
-	 * la tape.
+	 * (Elles vivaient autrefois dans le placeholder : 54 caractères, deux lignes
+	 * sous 340px de large, et on ne lit un placeholder qu'avant d'écrire, alors
+	 * qu'on cherche une commande au moment où on la tape.)
 	 */
-	const COMMANDES = [
-		{ nom: 'roll',  args: '2d6',        cle: 'chat.cmd_help_roll' },
-		{ nom: 'flip',  args: '',           cle: 'chat.cmd_help_flip' },
-		{ nom: '8ball', args: '…',          cle: 'chat.cmd_help_8ball' },
-		{ nom: 'rps',   args: '🪨 📄 ✂️',   cle: 'chat.cmd_help_rps' },
-	];
+	const isTeam = $derived(isTeamRole((data as any)?.user?.role));
+	let cmdIndex     = $state(0);
+	let cmdDismissed = $state(false);
+	const slashTyped = $derived(inputText.startsWith('/') && !/\s/.test(inputText) ? inputText.slice(1) : null);
+	const suggestions = $derived(slashTyped === null ? [] : slashMatches(slashTyped, isTeam));
+	const showCommands = $derived(suggestions.length > 0 && !cmdDismissed);
 
-	// N'apparaît que sur un « / » en tête, et disparaît dès qu'une commande
-	// complète est écrite : la liste ne doit pas gêner la frappe.
-	const suggestions = $derived.by(() => {
-		const t = inputText;
-		if (!t.startsWith('/') || t.includes(' ')) return [];
-		const q = t.slice(1).toLowerCase();
-		return COMMANDES.filter(c => c.nom.startsWith(q));
-	});
+	// « /événement Pizza vendredi 20h » (lot C3) : un aperçu de ce qui est compris, dès
+	// qu'il y a une espace après la commande. Entrée ouvre le formulaire déjà rempli ;
+	// rien ne part dans le salon, rien n'est publié.
+	const eventMatch = $derived(EVENT_COMMAND.exec(inputText));
+	const eventDraft = $derived(eventMatch && /\s/.test(inputText) ? parseEventDraft(eventMatch[1]) : null);
+	function openEventForm() {
+		const url = draftUrl(parseEventDraft(EVENT_COMMAND.exec(inputText.trim())?.[1] ?? ''));
+		inputText = '';
+		cmdDismissed = false;
+		ajusterHauteur(document.querySelector<HTMLTextAreaElement>('textarea#chat-input'));
+		goto(url);
+	}
+	function cancelEventCommand() {
+		inputText = '';
+		const el = document.querySelector<HTMLTextAreaElement>('textarea#chat-input');
+		ajusterHauteur(el);
+		el?.focus();
+	}
+
+	/** /help ou /? : ouvre l'aide par-dessus, rien n'est envoyé, le champ se vide. */
+	function openHelpFromCommand() {
+		inputText = '';
+		cmdDismissed = false;
+		openHelpOverlay(undefined, document.querySelector<HTMLTextAreaElement>('textarea#chat-input'));
+	}
+
+	function pickCommand(c: CommandDef) {
+		if (c.local === 'help') { openHelpFromCommand(); return; }
+		inputText = `/${c.nameKey ? tFn(c.nameKey) : c.name} `;
+		cmdDismissed = false;
+		const el = document.querySelector<HTMLTextAreaElement>('textarea#chat-input');
+		el?.focus();
+		ajusterHauteur(el);
+	}
+
+	/** « Essayer » et les touches sous le champ : écrit la touche et ouvre sa liste. */
+	async function tryTrigger(k: Trigger) {
+		const el = document.querySelector<HTMLTextAreaElement>('textarea#chat-input');
+		if (k === '/') {
+			// Une commande s'écrit en tête : on ne touche jamais à un brouillon
+			if (inputText.trim()) { el?.focus(); return; }
+			inputText = '/';
+		} else {
+			// « @ » et « # » s'écrivent n'importe où : on ajoute à la suite, sans toucher au reste
+			inputText = inputText && !/\s$/.test(inputText) ? `${inputText} ${k}` : `${inputText}${k}`;
+		}
+		cmdDismissed = false; cmdIndex = 0;
+		await tick();
+		if (el) { el.focus(); el.setSelectionRange(inputText.length, inputText.length); }
+		void handleInput();
+	}
 	let mentionIndex       = $state(0);
 
 	// Reply/quote
@@ -225,6 +399,35 @@
 	// Link preview cache: url → preview data
 	type LinkPreview = { url: string; title: string | null; description: string | null; image: string | null; siteName: string | null };
 	let linkPreviews = $state(new Map<string, LinkPreview | false>());
+	// Cartes « Nodyx relié » : messages réduits à leur carte (D40), et cartes que l'auteur
+	// vient de retirer (D43, « Remettre la carte » reste proposé pendant la session).
+	const ORIGIN     = browser ? location.origin : null; // jamais `location` au rendu serveur
+	let soleIds      = $state(new Set<string>());
+	let cardsRemoved = $state(new Map<string, string[]>());
+
+	function setSole(id: string, sole: boolean) {
+		if (soleIds.has(id) === sole) return;
+		const next = new Set(soleIds);
+		if (sole) next.add(id); else next.delete(id);
+		soleIds = next;
+	}
+
+	function removeCards(msg: Message) {
+		if (!s || !msg.content) return;
+		const paths = findInternalLinks(msg.content, location.origin);
+		if (!paths.length) return;
+		const content = paths.reduce((h, p) => setCardOff(h, p, true, location.origin), msg.content);
+		s.emit('chat:edit', { messageId: msg.id, content });
+		cardsRemoved = new Map(cardsRemoved).set(msg.id, paths);
+	}
+
+	function restoreCards(msg: Message) {
+		const paths = cardsRemoved.get(msg.id);
+		if (!s || !msg.content || !paths) return;
+		const content = paths.reduce((h, p) => setCardOff(h, p, false, location.origin), msg.content);
+		s.emit('chat:edit', { messageId: msg.id, content });
+		const next = new Map(cardsRemoved); next.delete(msg.id); cardsRemoved = next;
+	}
 
 	// Módulo RPG (trik) — /registro, /plaquinha e /levelup abrem modal em vez
 	// de enviar mensagem (ver plans/fase-um.md, seção 3, e plans/fase-dois.md).
@@ -390,7 +593,7 @@
 		// onDestroy ne retirait pas ces handlers -> à chaque remontage ils s'accumulaient
 		// -> events (messages, notifs vocales join/leave…) déclenchés en double.
 		// On retire d'abord les handlers chat-exclusifs avant de rebrancher.
-		for (const ev of ['chat:history','chat:message','chat:typing','chat:message_edited','chat:message_deleted','chat:pinned','chat:reaction_update','chat:blocked','chat:rate_limited','voice:channel_update']) sock.off(ev);
+		for (const ev of ['chat:history','chat:message','chat:typing','chat:message_edited','chat:message_deleted','chat:pinned','chat:reaction_update','chat:blocked','chat:rate_limited','voice:channel_update','octoguard:held','octoguard:held_decided']) sock.off(ev);
 
 		// 'connect' est PARTAGÉ (voice, store socket) -> on ne retire QUE notre handler, par référence.
 		const sk = sock as unknown as { __chatOnConnect?: () => void };
@@ -402,7 +605,26 @@
 		sock.on('chat:history', ({ channelId, messages: hist }: { channelId: string; messages: Message[] }) => {
 			if (channelId !== selectedChannel?.id) return;
 			messages = hist.map(normalizeMsg);
+			heldMine = [];
+			void loadHeldMine(channelId);
 			scrollToBottom({ force: true });
+		});
+
+		sock.on('octoguard:held', (h: HeldMine) => {
+			if (h.channel_id !== selectedChannel?.id) return;
+			heldMine = [...heldMine.filter((x) => x.id !== h.id), h];
+			scrollToBottom({ force: true });
+		});
+
+		sock.on('octoguard:held_decided', ({ id, outcome }: { id: string; outcome: 'approved' | 'refused' | 'expired' }) => {
+			const was = heldMine.some((x) => x.id === id);
+			heldMine = heldMine.filter((x) => x.id !== id);
+			// Approuvé : le vrai message arrive par « chat:message ». Sinon on le dit.
+			if (was && outcome !== 'approved') {
+				blockedNotice = tFn(outcome === 'expired' ? 'ogmsg.held_expired' : 'ogmsg.held_refused');
+				if (blockedTimer) clearTimeout(blockedTimer);
+				blockedTimer = setTimeout(() => { blockedNotice = null; }, 8000);
+			}
 		});
 
 		sock.on('chat:message', (msg: Message) => {
@@ -455,10 +677,13 @@
 			showPinned = true;
 		});
 
-		sock.on('chat:blocked', ({ reason }: { reason: string }) => {
-			blockedNotice = reason ?? tFn('chat.message_refused');
+		sock.on('chat:blocked', (payload: BlockedPayload) => {
+			// Jamais la raison brute du cœur : une phrase traduite (cf. lib/chatBlocked.ts)
+			// La fin de sourdine dans la langue de l'écran (sans locale : celle du navigateur, « 6:48:17 AM »)
+			blockedNotice = blockedMessage(tFn, payload, (iso) => new Date(iso).toLocaleString($locale, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }));
+			blockedContest = isContestable(payload);
 			if (blockedTimer) clearTimeout(blockedTimer);
-			blockedTimer = setTimeout(() => { blockedNotice = null; }, 5000);
+			blockedTimer = setTimeout(() => { blockedNotice = null; blockedContest = false; }, blockedContest ? 10000 : 5000);
 		});
 
 		sock.on('chat:rate_limited', ({ retryAfter }: { retryAfter: number }) => {
@@ -531,7 +756,7 @@
 		if (linkPreviews.has(url)) return;
 		linkPreviews = new Map(linkPreviews).set(url, false); // mark as loading
 		try {
-			const { PUBLIC_API_URL } = await import('$env/static/public');
+			const { PUBLIC_API_URL } = await import('$app/env/public');
 			const res = await fetch(`${PUBLIC_API_URL}/api/v1/chat/unfurl?url=${encodeURIComponent(url)}`, {
 				headers: token ? { Authorization: `Bearer ${token}` } : {}
 			});
@@ -585,7 +810,9 @@
 		if (!content) return [];
 		// Strip HTML tags, find bare URLs
 		const text = content.replace(/<[^>]*>/g, ' ');
-		return [...new Set((text.match(URL_RE) ?? []).slice(0, 1))]; // max 1 preview per message
+		// Un lien vers un contenu de CETTE instance a sa carte Nodyx (LinkCards), pas d'aperçu externe
+		const external = (text.match(URL_RE) ?? []).filter(u => !toInternalPath(u, ORIGIN));
+		return [...new Set(external.slice(0, 1))]; // max 1 preview per message
 	}
 
 	// Fetch previews for new messages (only plain-text URL messages)
@@ -703,7 +930,7 @@
 		const prevTop    = messagesEl.scrollTop;
 
 		try {
-			const { PUBLIC_API_URL } = await import('$env/static/public');
+			const { PUBLIC_API_URL } = await import('$app/env/public');
 			const res = await fetch(
 				`${PUBLIC_API_URL}/api/v1/chat/channels/${selectedChannel?.id}/history?limit=50&before=${encodeURIComponent(before)}`,
 				{ headers: token ? { Authorization: `Bearer ${token}` } : {} }
@@ -754,51 +981,52 @@
 	}
 	let jumpNotFound = $state(false);
 
-	// ── Slash commands ────────────────────────────────────────────────────────
-	const EIGHT_BALL = $derived(Array.from({ length: 17 }, (_, i) => tFn(`chat.cmd.8ball_${i + 1}`)));
 
-	function parseSlashCommand(text: string): string | null {
-		if (!text.startsWith('/')) return null;
-		const parts = text.slice(1).split(' ');
-		const cmd   = parts[0].toLowerCase();
-		const args  = parts.slice(1);
-		const u     = `<strong>${currentUsername}</strong>`;
+	// ── Jeux du chat ──────────────────────────────────────────────────────────
+	// /roll, /flip, /8ball, /rps sont tirés par le SERVEUR (lot C2, D56) : on lui
+	// envoie le texte de la commande (chat:command), il tire et publie le résultat
+	// avec la marque « Lancé par Nodyx ». Avant, le navigateur tirait lui-même :
+	// n'importe qui pouvait écrire un faux résultat.
+	const GAME_COMMAND = /^\/(roll|flip|8ball|rps)(?:\s|$)/i;
 
-		switch (cmd) {
-			case 'roll': {
-				const match = (args[0] ?? '1d6').match(/^(\d{1,2})d(\d{1,4})$/i);
-				const n     = match ? Math.min(parseInt(match[1]), 10)    : 1;
-				const sides = match ? Math.min(parseInt(match[2]), 10000) : 6;
-				const rolls = Array.from({ length: n }, () => Math.floor(Math.random() * sides) + 1);
-				const total = rolls.reduce((a, b) => a + b, 0);
-				const detail = n > 1 ? ` <em>(${rolls.join(' + ')})</em>` : '';
-				return tFn('chat.cmd.roll', { user: u, dice: `${n}d${sides}`, detail, total });
-			}
-			case 'flip': {
-				const r = Math.random() < 0.5 ? tFn('chat.cmd.flip_heads') : tFn('chat.cmd.flip_tails');
-				return tFn('chat.cmd.flip', { user: u, result: r });
-			}
-			case '8ball': {
-				const q = args.length ? ` « ${args.join(' ')} »` : '';
-				const a = EIGHT_BALL[Math.floor(Math.random() * EIGHT_BALL.length)];
-				return tFn('chat.cmd.8ball', { user: u, q, answer: a });
-			}
-			case 'rps': {
-				const opts   = ['🪨', '📄', '✂️'];
-				const wins   = { '🪨': '✂️', '📄': '🪨', '✂️': '📄' };
-				const me     = opts.includes(args[0]) ? args[0] : opts[Math.floor(Math.random() * 3)];
-				const bot    = opts[Math.floor(Math.random() * 3)];
-				const result = me === bot ? tFn('chat.cmd.rps_tie') : wins[me as keyof typeof wins] === bot ? tFn('chat.cmd.rps_win', { user: u }) : tFn('chat.cmd.rps_lose');
-				return tFn('chat.cmd.rps', { user: u, me, bot, result });
-			}
-			default:
-				return null; // Commande inconnue → message normal
+	// ── Send ──────────────────────────────────────────────────────────────────
+	// « Tu es sûr ? » (OctoGuard, lot 5) : avant l'envoi, OctoGuard dit s'il
+	// retiendrait ou refuserait ce message. Le bandeau ne vaut que pour CE texte,
+	// dans CE salon : il disparaît dès qu'on le modifie ou qu'on change de salon.
+	let nudge = $state<{ n: Nudge; source: 'plain' | 'rich'; text: string; channelId: string } | null>(null);
+	let prechecking = $state(false);
+	const plainNudge = $derived(nudge && nudge.source === 'plain' && nudge.channelId === selectedChannel?.id && nudge.text === inputText.trim() ? nudge.n : null);
+	const richNudge = $derived(nudge && nudge.source === 'rich' && showRichModal && nudge.channelId === selectedChannel?.id && nudge.text === richContent.trim() ? nudge.n : null);
+
+	/** true : on peut envoyer. false : le bandeau est affiché (ou une vérification est en cours). */
+	async function passesPrecheck(source: 'plain' | 'rich', content: string, channelId: string): Promise<boolean> {
+		if (prechecking) return false;
+		prechecking = true;
+		try {
+			const n = await precheckMessage(token, 'chat', content);
+			if (!n) return true;
+			nudge = { n, source, text: content, channelId };
+			return false;
+		} finally {
+			prechecking = false;
 		}
 	}
 
-	// ── Send ──────────────────────────────────────────────────────────────────
-	function sendMessage() {
+	function reformulate() {
+		const source = nudge?.source;
+		nudge = null;
+		if (source === 'plain') document.querySelector<HTMLTextAreaElement>('textarea#chat-input')?.focus();
+	}
+
+	async function sendMessage(force = false, mentionsConfirmed = false) {
+		// Une commande locale (/help) agit dans la page : elle ne part jamais dans le salon
+		if (exactSlash(inputText)?.local === 'help') { openHelpFromCommand(); return; }
+		// /événement : n'est jamais envoyé, ouvre le formulaire déjà rempli
+		if (EVENT_COMMAND.test(inputText.trim())) { openEventForm(); return; }
 		if (!s || !selectedChannel || !inputText.trim()) return;
+		// D51 : un grand groupe demande une confirmation, donnée par le panneau d'avertissement
+		if (mentionGateBlocked && !mentionsConfirmed) return;
+		const channelId = selectedChannel.id;
 		// Módulo RPG (trik): /registro e /plaquinha abrem modal, não viram
 		// mensagem de chat — ver plans/fase-um.md, seção 3. Gate de canal
 		// (trik_channels.purpose) fica pra depois (ver plano, passo 10).
@@ -815,9 +1043,8 @@
 		}
 		if (trikCmd === 'teste') {
 			inputText = '';
-			const channelId = selectedChannel.id;
 			(async () => {
-				const { PUBLIC_API_URL } = await import('$env/static/public');
+				const { PUBLIC_API_URL } = await import('$app/env/public');
 				await fetch(`${PUBLIC_API_URL}/api/v1/trik/teste`, {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -826,19 +1053,45 @@
 			})();
 			return;
 		}
-		const cmdResult = parseSlashCommand(inputText.trim());
-		const content   = cmdResult ?? inputText.trim();
-		s.emit('chat:send', { channelId: selectedChannel.id, content, replyToId: replyTo?.id ?? null });
+		// Un jeu : le serveur tire (rien à pré-vérifier ici, le cœur juge la question de /8ball)
+		if (GAME_COMMAND.test(inputText.trim())) {
+			s.emit('chat:command', { channelId, text: inputText.trim(), replyToId: replyTo?.id ?? null });
+			inputText = '';
+			pickedMentions = [];
+			pickedPlaces = [];
+			showMentions = false;
+			showPlaces = false;
+			replyTo = null;
+			ajusterHauteur(document.querySelector<HTMLTextAreaElement>('textarea#chat-input'));
+			return;
+		}
+		const content   = withMarks(inputText.trim());
+		if (!force && !(await passesPrecheck('plain', content, channelId))) return;
+		// Pendant la vérification, on a pu changer de salon ou de texte : on ne part pas
+		if (selectedChannel?.id !== channelId || withMarks(inputText.trim()) !== content) return;
+		nudge = null;
+		s.emit('chat:send', { channelId, content, replyToId: replyTo?.id ?? null });
 		inputText = '';
+		pickedMentions = [];
+		pickedPlaces = [];
 		showMentions = false;
+		showPlaces = false;
 		replyTo = null;
 		// Le champ vient d'être vidé : sans ça il resterait à la hauteur du
 		// message qu'on vient d'envoyer.
 		ajusterHauteur(document.querySelector<HTMLTextAreaElement>('textarea#chat-input'));
 	}
 
-	function sendRich() {
+	async function sendRich(force = false, mentionsConfirmed = false) {
 		if (!s || !richContent.trim()) return;
+		if (richMentionBlocked && !mentionsConfirmed) return;
+		if (!editingRichId && selectedChannel && !force) {
+			const channelId = selectedChannel.id;
+			const html = richContent.trim();
+			if (!(await passesPrecheck('rich', html, channelId))) return;
+			if (selectedChannel?.id !== channelId || richContent.trim() !== html) return;
+		}
+		nudge = null;
 		if (editingRichId) {
 			// Réédition : on renvoie le HTML complet (table/colonnes/br préservés)
 			s.emit('chat:edit', { messageId: editingRichId, content: richContent });
@@ -873,14 +1126,37 @@
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
+		// Liste du « / » : flèches, Tab, Entrée, Échap. Entrée sur une commande déjà
+		// écrite en entier (« /flip ») l'envoie, au lieu de la réécrire.
+		if (showCommands) {
+			if (e.key === 'ArrowDown') { e.preventDefault(); cmdIndex = (cmdIndex + 1) % suggestions.length; return; }
+			if (e.key === 'ArrowUp')   { e.preventDefault(); cmdIndex = (cmdIndex - 1 + suggestions.length) % suggestions.length; return; }
+			if (e.key === 'Escape')    { e.preventDefault(); cmdDismissed = true; return; }
+			const exact = !!exactSlash(inputText);
+			if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && !exact)) {
+				e.preventDefault(); const c = suggestions[cmdIndex]; if (c) pickCommand(c); return;
+			}
+		}
+		// L'aperçu de /événement : Entrée ouvre le formulaire, Échap annule
+		if (eventDraft && !showCommands) {
+			if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); openEventForm(); return; }
+			if (e.key === 'Escape') { e.preventDefault(); cancelEventCommand(); return; }
+		}
+		// « # » : flèches, Entrée, Tab, Échap
+		if (showPlaces && placeSuggestions.length) {
+			if (e.key === 'ArrowDown') { e.preventDefault(); placeIndex = Math.min(placeIndex + 1, placeSuggestions.length - 1); return; }
+			if (e.key === 'ArrowUp')   { e.preventDefault(); placeIndex = Math.max(placeIndex - 1, 0); return; }
+			if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); const p = placeSuggestions[placeIndex]; if (p) selectPlace(p); return; }
+			if (e.key === 'Escape')    { e.preventDefault(); showPlaces = false; placeSeq++; return; }
+		}
 		// @mention navigation
 		if (showMentions) {
-			if (e.key === 'ArrowDown')  { e.preventDefault(); mentionIndex = Math.min(mentionIndex + 1, mentionSuggestions.length - 1); return; }
+			if (e.key === 'ArrowDown')  { e.preventDefault(); mentionIndex = Math.min(mentionIndex + 1, mentionSuggestions.length + aliasSuggestions.length - 1); return; }
 			if (e.key === 'ArrowUp')    { e.preventDefault(); mentionIndex = Math.max(mentionIndex - 1, 0); return; }
-			if (e.key === 'Enter')      { e.preventDefault(); if (mentionSuggestions[mentionIndex]) selectMention(mentionSuggestions[mentionIndex]); return; }
+			if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pickMentionAt(mentionIndex); return; }
 			if (e.key === 'Escape')     { showMentions = false; return; }
 		}
-		if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+		if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendMessage(); }
 		// Ctrl+Shift+E → open rich modal
 		if (e.key === 'E' && e.ctrlKey && e.shiftKey) { e.preventDefault(); openRichCompose(); }
 	}
@@ -908,6 +1184,7 @@
 
 	async function handleInput() {
 		ajusterHauteur(document.querySelector<HTMLTextAreaElement>('textarea#chat-input'))
+		cmdDismissed = false; cmdIndex = 0;
 
 		// Typing indicator (throttled) — server + P2P fast path
 		if (s && selectedChannel) {
@@ -923,33 +1200,88 @@
 		const textarea  = document.querySelector<HTMLTextAreaElement>('textarea#chat-input');
 		const cursor    = textarea?.selectionStart ?? inputText.length;
 		const textBefore = inputText.slice(0, cursor);
-		const match      = textBefore.match(/@([\w\-]{0,30})$/);
+		const match      = textBefore.match(MENTION_TRIGGER);
 
-		if (match && match[1].length >= 1) {
+		// Dès « @ » seul : ceux qui parlent ici et ceux que tu mentionnes souvent (D50)
+		if (match) {
+			placeSeq++; showPlaces = false;
 			mentionQuery = match[1];
-			try {
-				mentionSuggestions = await searchMentionTargets(
-					(path, init) => apiFetch(fetch, path, init),
-					mentionQuery,
-					token ?? undefined,
-				);
-				showMentions = mentionSuggestions.length > 0;
-				mentionIndex = 0;
-			} catch { showMentions = false; }
+			const seq = ++mentionSeq;
+			const [found, aliases] = await Promise.all([
+				suggestMentions(mentionQuery, token ?? null, { channelId: selectedChannel?.id }),
+				searchAliasTargets((path, init) => apiFetch(fetch, path, init), mentionQuery, token ?? undefined).catch(() => [] as MentionTarget[]),
+			]);
+			if (seq !== mentionSeq) return;          // une frappe plus récente a pris le relais
+			mentionSuggestions = found;
+			aliasSuggestions = aliases;
+			showMentions = found.length + aliases.length > 0;
+			mentionIndex = 0;
 		} else {
+			mentionSeq++;
 			showMentions = false;
+			// « # » : un endroit (lot C4), dès « # » seul
+			const pm = textBefore.match(PLACE_TRIGGER);
+			if (pm) {
+				placeQuery = pm[1] ?? '';
+				const seq = ++placeSeq;
+				const found = await suggestPlaces(placeQuery, token ?? null);
+				if (seq !== placeSeq) return;
+				placeSuggestions = found;
+				showPlaces = found.length > 0;
+				placeIndex = 0;
+			} else {
+				placeSeq++;
+				showPlaces = false;
+			}
 		}
 	}
 
-	function selectMention(target: MentionTarget) {
+	// Lista combinada do «@»: pessoas/grupos (upstream) e depois aliases (trik).
+	function pickMentionAt(i: number) {
+		if (i < mentionSuggestions.length) { if (mentionSuggestions[i]) selectMention(mentionSuggestions[i]); return; }
+		const a = aliasSuggestions[i - mentionSuggestions.length];
+		if (a) selectAlias(a);
+	}
+
+	/** Alias de personagem (trik): entra como `@[Nome](username)`, sem marca. */
+	function selectAlias(target: MentionTarget) {
 		const textarea    = document.querySelector<HTMLTextAreaElement>('textarea#chat-input');
 		const cursor      = textarea?.selectionStart ?? inputText.length;
 		const textBefore  = inputText.slice(0, cursor);
 		const textAfter   = inputText.slice(cursor);
-		const inserido    = mentionInsertText(target) + ' ';
-		const replaced    = textBefore.replace(/@[\w\-]{0,30}$/, inserido);
+		const replaced    = textBefore.replace(/@[\p{L}\p{N}_.\-]{0,30}$/u, mentionInsertText(target) + ' ');
 		inputText         = replaced + textAfter;
 		showMentions      = false;
+		mentionSeq++;
+		setTimeout(() => { textarea?.focus(); textarea?.setSelectionRange(replaced.length, replaced.length); }, 0);
+	}
+
+	/** Choisir un endroit : « #Soirée jeux » dans le champ, la marque se pose à l'envoi. */
+	function selectPlace(p: Place) {
+		const textarea   = document.querySelector<HTMLTextAreaElement>('textarea#chat-input');
+		const cursor     = textarea?.selectionStart ?? inputText.length;
+		const textBefore = inputText.slice(0, cursor);
+		const textAfter  = inputText.slice(cursor);
+		const replaced   = textBefore.replace(/#((?:[\p{L}\p{N}_.'’-]+ ?){0,3})$/u, `#${p.title} `);
+		inputText        = replaced + textAfter;
+		if (!pickedPlaces.some(x => x.ref === p.ref)) pickedPlaces = [...pickedPlaces, { ref: p.ref, url: p.url, label: p.title, private: p.private, kind: p.kind }];
+		showPlaces       = false;
+		placeSeq++;
+		setTimeout(() => { textarea?.focus(); textarea?.setSelectionRange(replaced.length, replaced.length); }, 0);
+	}
+
+	function selectMention(m: MentionSuggestion) {
+		const textarea    = document.querySelector<HTMLTextAreaElement>('textarea#chat-input');
+		const cursor      = textarea?.selectionStart ?? inputText.length;
+		const textBefore  = inputText.slice(0, cursor);
+		const textAfter   = inputText.slice(cursor);
+		const label       = insertLabel(m, tFn);
+		const replaced    = textBefore.replace(/@[\p{L}\p{N}_.\-]{0,30}$/u, `@${label} `);
+		inputText         = replaced + textAfter;
+		const ref         = refOf(m);
+		if (!pickedMentions.some(p => p.ref === ref && p.label === label)) pickedMentions = [...pickedMentions, { ref, label }];
+		showMentions      = false;
+		mentionSeq++;
 		// Re-focus textarea
 		setTimeout(() => { textarea?.focus(); textarea?.setSelectionRange(replaced.length, replaced.length); }, 0);
 	}
@@ -1207,7 +1539,7 @@
 					<span class="truncate flex-1" style="color: var(--nx-text-muted)">
 						<span class="font-semibold" style="color: var(--nx-text-muted)">{pinnedMessage.author_username} · </span>{pinnedMessage.content?.replace(/<[^>]*>/g, '').slice(0, 120) ?? ''}
 					</span>
-					{#if isAdmin}
+					{#if canModerateContent}
 						<button onclick={() => s?.emit('chat:pin', { channelId: selectedChannel?.id, messageId: null })}
 						        class="ml-auto shrink-0 transition-colors w-4 h-4 flex items-center justify-center text-sm leading-none" style="color: var(--nx-text-muted)" title={tFn('chat.unpin')}>×</button>
 					{:else}
@@ -1250,6 +1582,7 @@
 					<div
 						id="msg-{msg.id}"
 						class="group message-row relative flex items-start gap-3 px-4 transition-all {shouldGroup ? 'py-px' : 'pt-2.5 pb-px'} {flashMsgId === msg.id ? 'msg-flash' : ''}"
+						data-mention-scope
 						style="background: transparent"
 						role="listitem"
 						onmouseenter={(e) => (e.currentTarget as HTMLElement).style.background = 'color-mix(in srgb, var(--nx-text) 1.8%, transparent)'}
@@ -1331,13 +1664,24 @@
 							{:else if msg.poll_id}
 							<!-- ── Sondage intégré ── -->
 							<PollCard pollId={msg.poll_id} inline={true} {token} socket={s} />
+							{:else if msg.game}
+							<!-- ── Jeu tiré par le serveur ── -->
+							<GameResult game={msg.game} author={msg.author_username} />
 						{:else}
-								<div class="nodyx-prose text-sm leading-relaxed break-words" style="color: var(--nx-text)">
+								<div class="nodyx-prose text-sm leading-relaxed break-words" style="color: var(--nx-text)" hidden={soleIds.has(msg.id)} use:mentionChips={{ html: msg.content ?? '', token: token ?? null, me: userId }} use:placeChips={{ html: msg.content ?? '', token: token ?? null }}>
 									{@html renderCustomEmojis(linkifyHtml(renderSpoilers(msg.content ?? '')), customEmojis)}
 									{#if shouldGroup && msg.edited_at}
 										<span class="text-[9px] italic ml-2" style="color: var(--nx-text-muted)">{tFn('chat.edited')}</span>
 									{/if}
 								</div>
+								<!-- Cartes « Nodyx relié » : sujets, réponses, événements de cette instance -->
+								<LinkCards html={msg.content ?? ''} {token} onsole={(v) => setSole(msg.id, v)} />
+								{#if msg.author_id === userId && cardsRemoved.has(msg.id) && msg.content?.includes('data-card="off"')}
+									<p class="mt-1 text-[11.5px] flex gap-1.5 items-center" style="color: var(--nx-text-faint)">
+										{tFn('link_card.removed_note')}
+										<button type="button" class="underline" style="color: var(--nx-header-accent)" onclick={() => restoreCards(msg)}>{tFn('link_card.restore')}</button>
+									</p>
+								{/if}
 								<!-- Link preview card -->
 								{#each extractUrls(msg.content) as previewUrl (previewUrl)}
 									{@const preview = linkPreviews.get(previewUrl)}
@@ -1436,8 +1780,17 @@
 								        onmouseleave={(e) => (e.currentTarget as HTMLElement).style.color = 'var(--nx-text-muted)'}>
 									<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/></svg>
 								</button>
-								{#if msg.author_id === userId}
-									<!-- Modifier -->
+								{#if msg.author_id === userId && !msg.poll_id && findInternalLinks(msg.content ?? '', ORIGIN).length}
+									<!-- Retirer la carte (D43 : l'auteur seul ; le lien reste) -->
+									<button onclick={() => removeCards(msg)} title={tFn('link_card.remove')} aria-label={tFn('link_card.remove')}
+									        class="w-7 h-7 flex items-center justify-center transition-colors" style="color: var(--nx-text-muted)"
+									        onmouseenter={(e) => (e.currentTarget as HTMLElement).style.color = 'var(--nx-accent-2-soft)'}
+									        onmouseleave={(e) => (e.currentTarget as HTMLElement).style.color = 'var(--nx-text-muted)'}>
+										<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><line x1="9" y1="10" x2="15" y2="16"/><line x1="15" y1="10" x2="9" y2="16"/></svg>
+									</button>
+								{/if}
+								{#if msg.author_id === userId && !msg.game}
+									<!-- Modifier (un tirage du serveur ne se réécrit pas, il se supprime) -->
 									<button onclick={() => startEdit(msg)} title={tFn('common.edit')}
 									        class="w-7 h-7 flex items-center justify-center transition-colors" style="color: var(--nx-text-muted)"
 									        onmouseenter={(e) => (e.currentTarget as HTMLElement).style.color = 'var(--nx-accent-2-soft)'}
@@ -1445,7 +1798,7 @@
 										<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
 									</button>
 								{/if}
-								{#if isAdmin}
+								{#if canModerateContent}
 									<!-- Épingler -->
 									<button onclick={() => pinMessage(msg)} title={pinnedMessage?.id === msg.id ? tFn('common.unpin') : tFn('common.pin')}
 									        class="w-7 h-7 flex items-center justify-center transition-colors" style="color: {pinnedMessage?.id === msg.id ? 'var(--nx-accent-2-soft)' : 'var(--nx-text-muted)'}"
@@ -1454,13 +1807,23 @@
 										<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/></svg>
 									</button>
 								{/if}
-								{#if msg.author_id === userId || isAdmin}
+								{#if msg.author_id === userId || canModerateContent}
 									<!-- Supprimer -->
 									<button onclick={() => confirmDelete(msg.id)} title={tFn('common.delete')}
 									        class="w-7 h-7 flex items-center justify-center transition-colors" style="color: var(--nx-text-muted)"
 									        onmouseenter={(e) => (e.currentTarget as HTMLElement).style.color = '#ef4444'}
 									        onmouseleave={(e) => (e.currentTarget as HTMLElement).style.color = 'var(--nx-text-muted)'}>
 										<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+									</button>
+								{/if}
+								{#if msg.author_id !== userId}
+									<!-- Signaler (jamais son propre message) -->
+									<button onclick={() => openReport({ type: 'message', id: msg.id, label: tFn('report.label_message', { name: msg.author_username }) })}
+									        title={tFn('report.action')} aria-label={tFn('report.action')}
+									        class="w-7 h-7 flex items-center justify-center transition-colors" style="color: var(--nx-text-muted)"
+									        onmouseenter={(e) => (e.currentTarget as HTMLElement).style.color = 'var(--nx-bad)'}
+									        onmouseleave={(e) => (e.currentTarget as HTMLElement).style.color = 'var(--nx-text-muted)'}>
+										<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21V4m0 0h11l-1.5 4L15 12H4"/></svg>
 									</button>
 								{/if}
 								<!-- Copier -->
@@ -1476,7 +1839,25 @@
 					{/each}
 				{/each}
 
-				{#if messages.length === 0}
+				{#each heldMine as h (h.id)}
+					<div class="og-held-row" role="listitem">
+						<div class="og-held-av" aria-hidden="true">{currentUsername.charAt(0).toUpperCase() || '?'}</div>
+						<div class="min-w-0 flex-1">
+							<div class="flex flex-wrap items-baseline gap-2 mb-0.5">
+								<span class="text-sm font-black" style="color: var(--nx-text)">{currentUsername}</span>
+								<span class="og-held-pill">
+									<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+									{tFn('ogmsg.held_pill')}
+								</span>
+								<span class="text-[10px] tabular-nums" style="color: var(--nx-text-muted)">{formatTime(h.created_at)}</span>
+							</div>
+							<p class="og-held-text">{heldText(h.content)}</p>
+							<p class="og-held-help">{tFn('ogmsg.held_only_you')}</p>
+						</div>
+					</div>
+				{/each}
+
+				{#if messages.length === 0 && heldMine.length === 0}
 					<div class="flex flex-col items-center justify-center gap-3 mt-16 px-8">
 						<div class="w-12 h-12 flex items-center justify-center" style="background: rgb(var(--nx-accent-2-rgb) / .08); border: 1px solid rgb(var(--nx-accent-2-rgb) / .15)">
 							<svg class="w-6 h-6" fill="none" stroke="var(--nx-accent-2-strong)" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
@@ -1542,32 +1923,45 @@
 
 			<!-- Input area -->
 			<div class="px-4 shrink-0" style="padding-bottom: calc(var(--bottom-nav-h) + 1rem)">
+				<!-- D51 : ce que les mentions vont faire, avant l'envoi -->
+				<MentionWarnings refs={liveMentionRefs} token={token ?? null} onremove={removeMention} onreplace={replaceMention}
+					onconfirm={() => void sendMessage(false, true)} ongate={(b) => (mentionGateBlocked = b)} />
 				<!-- @mention dropdown -->
-				{#if showMentions && mentionSuggestions.length > 0}
+				{#if showMentions && (mentionSuggestions.length > 0 || aliasSuggestions.length > 0)}
 					<div class="relative">
-						<div class="absolute bottom-full left-0 mb-1 w-56 bg-[var(--nx-surface-raised)] border border-gray-600 rounded-lg shadow-xl overflow-hidden z-20">
-							{#each mentionSuggestions as m, i}
-								<button
-									onclick={() => selectMention(m)}
-									class="w-full text-left flex items-center gap-2 px-3 py-2 text-sm transition-colors
-									       {i === mentionIndex ? 'bg-indigo-700 text-white' : 'text-[var(--nx-text)] hover:bg-[var(--nx-border)]'}"
-								>
-									<span class="w-5 h-5 rounded-full bg-indigo-700 text-white flex items-center justify-center text-xs font-bold shrink-0">
-										{(m.alias ?? m.username).charAt(0).toUpperCase()}
-									</span>
-									{#if m.alias}
-										<!-- Validação combinada: quem escolhe vê o personagem E o jogador
-										     por trás. É o que resolve dois "Kaelen" de jogadores diferentes,
-										     sem o servidor ter de adivinhar. -->
-										<span class="min-w-0 truncate">
-											{m.alias}
-											<span class="opacity-60"> · {m.playerName ?? m.username}</span>
-										</span>
-									{:else}
-										@{m.username}
-									{/if}
-								</button>
-							{/each}
+						<div class="absolute bottom-full left-0 mb-1 z-30">
+							{#if mentionSuggestions.length > 0}
+								<MentionList items={mentionSuggestions} active={mentionIndex < mentionSuggestions.length ? mentionIndex : -1} query={mentionQuery} id="chat-mention-list" onpick={selectMention} />
+							{/if}
+							{#if aliasSuggestions.length > 0}
+								<!-- Aliases de personagem (trik): o personagem E o jogador por trás,
+								     o que resolve dois "Kaelen" de jogadores diferentes. -->
+								<div class="mt-1 w-56 bg-[var(--nx-surface-raised)] border border-gray-600 rounded-lg shadow-xl overflow-hidden">
+									{#each aliasSuggestions as m, i}
+										<button
+											onclick={() => selectAlias(m)}
+											class="w-full text-left flex items-center gap-2 px-3 py-2 text-sm transition-colors
+											       {i + mentionSuggestions.length === mentionIndex ? 'bg-indigo-700 text-white' : 'text-[var(--nx-text)] hover:bg-[var(--nx-border)]'}"
+										>
+											<span class="w-5 h-5 rounded-full bg-indigo-700 text-white flex items-center justify-center text-xs font-bold shrink-0">
+												{(m.alias ?? m.username).charAt(0).toUpperCase()}
+											</span>
+											<span class="min-w-0 truncate">
+												{m.alias}
+												<span class="opacity-60"> · {m.playerName ?? m.username}</span>
+											</span>
+										</button>
+									{/each}
+								</div>
+							{/if}
+						</div>
+					</div>
+				{/if}
+				<!-- « # » : la liste des endroits -->
+				{#if showPlaces && placeSuggestions.length > 0}
+					<div class="relative">
+						<div class="absolute bottom-full left-0 mb-1 z-30">
+							<PlaceList items={placeSuggestions} active={placeIndex} query={placeQuery} id="chat-place-list" onpick={selectPlace} />
 						</div>
 					</div>
 				{/if}
@@ -1583,10 +1977,17 @@
 					</div>
 				{/if}
 
+				<ShieldBanner {token} surface="chat" />
+
+				{#if plainNudge}
+					<NudgeBanner nudge={plainNudge} busy={prechecking} onReformulate={reformulate} onSendAnyway={() => sendMessage(true)} />
+				{/if}
+
 				{#if blockedNotice}
 					<div class="flex items-center gap-2 px-3 py-2 mb-1 bg-red-950/60 border border-red-600/60 rounded-lg text-xs text-red-300">
 						<span>⛔</span>
-						<span>{blockedNotice}</span>
+						<span class="flex-1">{blockedNotice}</span>
+						{#if blockedContest}<a href="/settings/sanctions" class="shrink-0 underline font-semibold text-red-200 hover:text-white" title={tFn('notifications.contest_hint')}>{tFn('chat.contest_link')}</a>{/if}
 					</div>
 				{/if}
 
@@ -1597,28 +1998,17 @@
 					</div>
 				{/if}
 
-				<!-- Aide aux commandes, à l'endroit et au moment où on la cherche :
-				     au-dessus du champ, dès qu'on tape « / ». Elle ne prend aucune
-				     place le reste du temps, contrairement au placeholder de 54
-				     caractères qu'elle remplace. -->
-				{#if suggestions.length > 0}
-					<div class="mb-1 flex flex-wrap gap-1.5 px-1">
-						{#each suggestions as c}
-							<button
-								type="button"
-								onclick={() => {
-									inputText = `/${c.nom} `;
-									const el = document.querySelector<HTMLTextAreaElement>('textarea#chat-input');
-									el?.focus();
-									ajusterHauteur(el);
-								}}
-								class="inline-flex items-center gap-1.5 px-2 py-1 border border-[color-mix(in_srgb,var(--nx-text)_8%,transparent)] bg-[color-mix(in_srgb,var(--nx-text)_3%,transparent)] hover:bg-[color-mix(in_srgb,var(--nx-text)_7%,transparent)] hover:border-[color-mix(in_srgb,var(--nx-accent)_50%,transparent)] transition-colors text-left"
-							>
-								<span class="text-xs font-semibold text-[var(--nx-accent-soft)]">/{c.nom}</span>
-								{#if c.args}<span class="text-[10px] text-[var(--nx-text-muted)]">{c.args}</span>{/if}
-								<span class="text-[11px] text-[var(--nx-text-muted)]">{tFn(c.cle)}</span>
-							</button>
-						{/each}
+				<!-- /événement : ce qui est compris, avant toute publication -->
+				{#if eventDraft && !showCommands}
+					<EventCommandPreview draft={eventDraft} empty={!eventMatch?.[1]?.trim()} onopen={openEventForm} oncancel={cancelEventCommand} />
+				{/if}
+
+				<!-- La liste du « / », au-dessus du champ, dès qu'on tape « / » en tête -->
+				{#if showCommands}
+					<div class="relative">
+						<div class="absolute bottom-full left-0 mb-1 z-30">
+							<CommandList items={suggestions} active={cmdIndex} typed={slashTyped ?? ''} id="chat-command-list" onpick={pickCommand} />
+						</div>
 					</div>
 				{/if}
 
@@ -1634,6 +2024,11 @@
 						bind:value={inputText}
 						onkeydown={handleKeydown}
 						oninput={handleInput}
+						role="combobox"
+						aria-autocomplete="list"
+						aria-expanded={(showMentions && mentionSuggestions.length > 0) || (showPlaces && placeSuggestions.length > 0) || showCommands}
+						aria-controls={showCommands ? 'chat-command-list' : showPlaces ? 'chat-place-list' : 'chat-mention-list'}
+						aria-activedescendant={showCommands ? `chat-command-list-${cmdIndex}` : showPlaces && placeSuggestions.length > 0 ? `chat-place-list-${placeIndex}` : showMentions && mentionSuggestions.length > 0 ? `chat-mention-list-${mentionIndex}` : undefined}
 						disabled={isRateLimited}
 					></textarea>
 					<!-- Toolbar -->
@@ -1676,7 +2071,7 @@
 						<!-- Divider -->
 						<span class="w-px h-4 mx-1" style="background: color-mix(in srgb, var(--nx-text) 7%, transparent)"></span>
 						<!-- Send -->
-						<button onclick={sendMessage} disabled={!inputText.trim() || isRateLimited}
+						<button onclick={() => sendMessage()} disabled={!inputText.trim() || isRateLimited || prechecking}
 						        class="w-7 h-7 flex items-center justify-center transition-all disabled:opacity-30 disabled:cursor-not-allowed"
 						        style="background: {isRateLimited ? 'rgba(239,68,68,.3)' : inputText.trim() ? 'linear-gradient(135deg, var(--nx-accent-2-strong), var(--nx-cyan-deep))' : 'color-mix(in srgb, var(--nx-text) 6%, transparent)'}; color: {inputText.trim() ? '#fff' : 'var(--nx-text-muted)'}"
 						        title={isRateLimited ? tFn('chat.antispam_loading') : tFn('chat.send')}>
@@ -1688,7 +2083,8 @@
 						</button>
 					</div>
 				</div>
-				<p class="text-[10px] mt-1" style="color: var(--nx-text-muted)">{tFn('chat.composer_hint')}</p>
+				<!-- Sous le champ : les touches (champ vide, D54) ou les raccourcis d'envoi, et le « ? » -->
+				<CommandHelp empty={!inputText.trim()} triggers={['@', '#', '/']} ontry={tryTrigger} hint={tFn('chat.composer_hint')} id="chat-cmd-help" />
 			</div>
 
 			{/if}<!-- end voice/text branch -->
@@ -1787,13 +2183,20 @@
 					/>
 				{/key}
 			</div>
+			{#if richNudge}
+				<div class="px-6 pt-3"><NudgeBanner nudge={richNudge} busy={prechecking} onReformulate={reformulate} onSendAnyway={() => sendRich(true)} /></div>
+			{/if}
+			{#if refsIn(richContent).length}
+				<div class="px-6 pt-3"><MentionWarnings refs={refsIn(richContent)} token={token ?? null}
+					onconfirm={() => void sendRich(false, true)} ongate={(b) => (richMentionBlocked = b)} /></div>
+			{/if}
 			<div class="px-6 py-4 border-t border-gray-800 flex justify-end gap-3">
 				<button onclick={closeRichModal} class="px-4 py-2 rounded bg-[var(--nx-border)] hover:bg-[var(--nx-border-soft)] text-sm text-[var(--nx-text)] transition-colors">
 					{tFn('common.cancel')}
 				</button>
 				<button
-					onclick={sendRich}
-					disabled={!richContent.trim()}
+					onclick={() => sendRich()}
+					disabled={!richContent.trim() || prechecking}
 					class="px-4 py-2 rounded bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-sm text-white font-medium transition-colors"
 				>
 					{editingRichId ? tFn('common.save') : tFn('chat.send')}
@@ -1822,6 +2225,16 @@
 		0%, 30% { background: rgba(124, 58, 237, .18); box-shadow: inset 3px 0 0 #7c3aed; }
 		100%    { background: transparent;              box-shadow: inset 3px 0 0 transparent; }
 	}
+	/* Message retenu par OctoGuard : seul son auteur le voit, en attente de validation */
+	.og-held-row { display: flex; align-items: flex-start; gap: 0.75rem; margin: 0.375rem 0.5rem; padding: 0.625rem 0.75rem; border-radius: 10px;
+		background: color-mix(in srgb, var(--nx-hold) 7%, transparent); box-shadow: inset 2px 0 0 var(--nx-hold); }
+	.og-held-av { width: 2.25rem; height: 2.25rem; flex: none; display: grid; place-items: center; font-weight: 900; font-size: 11px; color: #fff;
+		background: linear-gradient(135deg, var(--nx-accent-2-strong), var(--nx-cyan-deep)); opacity: 0.75; }
+	.og-held-pill { display: inline-flex; align-items: center; gap: 0.3rem; padding: 1px 8px; border-radius: 99px; font-size: 11px; font-weight: 600;
+		color: var(--nx-hold); border: 1px solid color-mix(in srgb, var(--nx-hold) 35%, transparent); background: color-mix(in srgb, var(--nx-hold) 10%, transparent); }
+	.og-held-pill svg { width: 12px; height: 12px; }
+	.og-held-text { margin: 0; font-size: 0.875rem; color: var(--nx-text); opacity: 0.85; white-space: pre-wrap; overflow-wrap: anywhere; }
+	.og-held-help { margin: 0.25rem 0 0; font-size: 0.75rem; color: var(--nx-text-muted); }
 	/* Le chat se pose en `fixed` au lieu de vivre dans <main> : il reprend la
 	   géométrie du contenant flottant (--shell-left / --shell-members, calculées
 	   dans +layout.svelte) au lieu des 276px/220px codés en dur d'avant, qui ne

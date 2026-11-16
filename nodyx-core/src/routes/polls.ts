@@ -13,12 +13,15 @@
  * POST   /:id/close      — fermer manuellement (créateur ou admin)
  */
 
+import { moderateText, blockedBody } from '../services/octoguard/moderate'
 import { FastifyInstance } from 'fastify'
 import { db } from '../config/database'
 import { requireAuth } from '../middleware/auth'
 import { rateLimit } from '../middleware/rateLimit'
 import { io } from '../socket/io'
 import * as ChannelModel from '../models/channel'
+import { announcePoll } from '../services/webhooks/announce'
+import { canViewThread } from '../services/privateContent'
 
 // ── Community helper (same pattern as chat.ts) ────────────────────────────────
 
@@ -175,6 +178,8 @@ export default async function pollRoutes(app: FastifyInstance) {
       where += ` AND (p.closed_at IS NOT NULL OR (p.closes_at IS NOT NULL AND p.closes_at <= NOW()))`
     }
 
+    // Conteúdo privado (trik_025): enquete de tópico que não se vê não aparece
+    where += ` AND (p.thread_id IS NULL OR nx_can_view_thread(p.thread_id, $${idx}::uuid))`
     const { rows: polls } = await db.query(`
       SELECT p.*,
              u.username AS creator_username,
@@ -246,6 +251,12 @@ export default async function pollRoutes(app: FastifyInstance) {
       }
     }
 
+    // OctoGuard (sondages) : titre, description, libellés des options. Le cran
+    // « signaler » n'ouvre pas de dossier ici (un sondage n'est pas une cible
+    // de signalement) : il reste visible au journal d'OctoGuard.
+    const ogPoll = await moderateText(userId, 'poll', [title, description, ...options.map(o => o.label), ...options.map(o => o.description)])
+    if (ogPoll.blocked) return reply.code(422).send(blockedBody(ogPoll))
+
     // Créer le sondage dans une transaction
     const client = await (db as any).connect()
     try {
@@ -310,6 +321,7 @@ export default async function pollRoutes(app: FastifyInstance) {
 
       await client.query('COMMIT')
 
+      announcePoll(poll.id, userId)
       return reply.code(201).send({ poll: { ...poll, is_open: true } })
     } catch (err) {
       await client.query('ROLLBACK')
@@ -338,7 +350,9 @@ export default async function pollRoutes(app: FastifyInstance) {
         WHERE p.id = $1
       `, [id])
 
-      if (!poll) return reply.code(404).send({ error: 'Poll not found' })
+      if (!poll || (poll.thread_id && !(await canViewThread(poll.thread_id, userId)))) {
+        return reply.code(404).send({ error: 'Poll not found' })
+      }
 
       const open = isOpen(poll)
 
@@ -417,8 +431,10 @@ export default async function pollRoutes(app: FastifyInstance) {
     }
 
     // Validation préliminaire sans lock (fail-fast)
-    const { rows: [pollPre] } = await db.query(`SELECT id, type, multiple, max_choices FROM polls WHERE id = $1`, [id])
-    if (!pollPre) return reply.code(404).send({ error: 'Poll not found' })
+    const { rows: [pollPre] } = await db.query(`SELECT id, type, multiple, max_choices, thread_id FROM polls WHERE id = $1`, [id])
+    if (!pollPre || (pollPre.thread_id && !(await canViewThread(pollPre.thread_id, userId)))) {
+      return reply.code(404).send({ error: 'Poll not found' })
+    }
 
     // Validation des votes selon le type
     if (pollPre.type === 'choice') {

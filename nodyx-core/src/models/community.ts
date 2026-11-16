@@ -215,14 +215,19 @@ export async function removeMember(communityId: string, userId: string): Promise
 
 // ── Category queries ─────────────────────────────────────────
 
-export async function getCategories(communityId: string): Promise<Category[]> {
+// `viewerId`: conteúdo privado por cargo (trik_025) — só as categorias e os
+// tópicos que essa pessoa pode ver entram (null = visitante sem conta).
+export async function getCategories(communityId: string, viewerId: string | null = null): Promise<Category[]> {
   const { rows } = await db.query<Category>(
     `SELECT c.*,
-            (SELECT COUNT(*)::int FROM threads t WHERE t.category_id = c.id) AS thread_count
+            (SELECT COUNT(*)::int FROM threads t
+              WHERE t.category_id = c.id AND nx_can_view_thread(t.id, $2::uuid)) AS thread_count,
+            EXISTS (SELECT 1 FROM category_grades cg WHERE cg.category_id = c.id) AS is_private
      FROM categories c
      WHERE community_id = $1
+       AND nx_can_view_category(c.id, $2::uuid)
      ORDER BY position ASC, created_at ASC`,
-    [communityId]
+    [communityId, viewerId]
   )
   return rows
 }
@@ -238,25 +243,30 @@ export async function getCategories(communityId: string): Promise<Category[]> {
 // données coûteuses sont jointes UNE SEULE FOIS à la fin, pas à chaque niveau de
 // récursion. Le dernier message passe par un LEFT JOIN LATERAL (un LIMIT 1 par
 // catégorie), ce qui reste linéaire même quand le forum grossit.
-export async function getCategoryTree(communityId: string): Promise<CategoryNode[]> {
+export async function getCategoryTree(communityId: string, viewerId: string | null = null): Promise<CategoryNode[]> {
   const { rows } = await db.query<CategoryRow>(
     `WITH RECURSIVE cat_tree AS (
        SELECT c.id, c.parent_id, 0 AS depth
        FROM categories c
        WHERE c.community_id = $1 AND c.parent_id IS NULL
+         AND nx_can_view_category(c.id, $2::uuid)
 
        UNION ALL
 
        SELECT c.id, c.parent_id, ct.depth + 1
        FROM categories c
        JOIN cat_tree ct ON c.parent_id = ct.id
+       WHERE nx_can_view_category(c.id, $2::uuid)
      )
      SELECT c.*,
             ct.depth,
-            (SELECT COUNT(*)::int FROM threads t WHERE t.category_id = c.id) AS thread_count,
+            (SELECT COUNT(*)::int FROM threads t
+              WHERE t.category_id = c.id AND nx_can_view_thread(t.id, $2::uuid)) AS thread_count,
             (SELECT COUNT(*)::int
                FROM posts p JOIN threads t ON t.id = p.thread_id
-              WHERE t.category_id = c.id) AS post_count,
+              WHERE t.category_id = c.id AND nx_can_view_thread(t.id, $2::uuid)) AS post_count,
+            EXISTS (SELECT 1 FROM category_grades cg WHERE cg.category_id = c.id) AS is_private,
+            (SELECT COALESCE(json_agg(cg.grade_id), '[]'::json) FROM category_grades cg WHERE cg.category_id = c.id) AS grade_ids,
             lp.thread_id    AS last_thread_id,
             lp.thread_slug  AS last_thread_slug,
             lp.thread_title AS last_thread_title,
@@ -272,11 +282,12 @@ export async function getCategoryTree(communityId: string): Promise<CategoryNode
            JOIN threads t ON t.id = p.thread_id
            JOIN users   u ON u.id = p.author_id
           WHERE t.category_id = c.id
+            AND nx_can_view_thread(t.id, $2::uuid)
           ORDER BY p.created_at DESC
           LIMIT 1
        ) lp ON true
       ORDER BY ct.depth, c.position, c.name`,
-    [communityId]
+    [communityId, viewerId]
   )
 
   // Build tree from flat ordered list

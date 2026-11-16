@@ -1,6 +1,7 @@
 import { redirect, fail, error } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { apiFetch } from '$lib/api';
+import { isoFromForm, eventErrorKey } from '$lib/eventTime';
 
 export const load: PageServerLoad = async ({ fetch, params, cookies }) => {
 	const token = cookies.get('token');
@@ -12,7 +13,7 @@ export const load: PageServerLoad = async ({ fetch, params, cookies }) => {
 	const json = await res.json();
 
 	if (!res.ok) error(res.status, json.error ?? 'Événement introuvable');
-	if (!json.event.can_manage) error(403, "Vous n'êtes pas autorisé à modifier cet événement");
+	if (!json.event.can_manage) error(403, "Tu n'es pas autorisé à modifier cet événement");
 
 	return { event: json.event, token };
 };
@@ -27,20 +28,9 @@ export const actions: Actions = {
 		const title        = (form.get('title')       as string).trim();
 		const description  = (form.get('description') as string | null) ?? '';
 		const location     = (form.get('location')    as string | null)?.trim() || null;
-		// O navegador já manda ISO completo, com o fuso de quem digitou (ver
-		// `valueToIso` em $lib/dateMask). Aqui só sobra normalizar. Antes a
-		// conversão acontecia aqui, e esta action roda no SERVIDOR (UTC na AWS):
-		// `new Date('2026-10-06T00:00:00')` virava meia-noite UTC e o evento de
-		// dia inteiro aparecia no dia 5 no Brasil.
-		const toISO = (v: string | null) => {
-			if (!v) return null;
-			// Data pura (dia inteiro): meia-noite UTC, nunca o fuso do servidor.
-			if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return `${v}T00:00:00.000Z`;
-			const d = new Date(v);
-			return Number.isNaN(d.getTime()) ? null : d.toISOString();
-		};
-		const starts_at = toISO(form.get('starts_at') as string) as string;
-		const ends_at   = toISO(form.get('ends_at')   as string | null);
+		// L'instant calculé par le NAVIGATEUR (lib/eventTime) : le serveur, en UTC, ne devine plus le fuseau
+		const starts_at = isoFromForm(form, 'starts_at') as string;
+		const ends_at   = isoFromForm(form, 'ends_at');
 		const is_all_day   = form.get('is_all_day')   === 'true';
 		const is_public    = form.get('is_public')    !== 'false';
 		const rsvp_enabled = form.get('rsvp_enabled') === 'true';
@@ -80,7 +70,11 @@ export const actions: Actions = {
 		});
 
 		const json = await res.json();
-		if (!res.ok) return fail(res.status, { error: json.error });
+		if (!res.ok) {
+			const errorKey = eventErrorKey(json);
+			if (errorKey) return fail(res.status, { errorKey });
+			return fail(res.status, { error: json.error });
+		}
 
 		redirect(303, `/calendar/${params.id}`);
 	},

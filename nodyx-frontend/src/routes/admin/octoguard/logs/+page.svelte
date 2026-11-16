@@ -1,82 +1,181 @@
 <script lang="ts">
-	import { enhance } from '$app/forms'
-	import { t } from '$lib/i18n'
-	import type { PageData, ActionData } from './$types'
-	let { data, form }: { data: PageData; form: ActionData } = $props()
-	const tFn = $derived($t)
+	// Le journal d'OctoGuard : chaque action racontée en phrase, avec « Annuler »
+	// quand le moteur sait le faire (avertissement, sourdine), une seule fois ;
+	// « Faux positif » sur une action d'OctoGuard et « C'était normal » sur une
+	// observation (lot 10, D25), qui nourrissent le chiffre « Justesse ».
+	import { page } from '$app/state'
+	import { untrack } from 'svelte'
+	import { t, locale } from '$lib/i18n'
+	import Icon from '$lib/components/octoguard/Icon.svelte'
+	import { og } from '$lib/octoguard/api'
+	import { eventOf, eventVars, KIND_ICON, type OgLog, type EventSource } from '$lib/octoguard/events'
+	import type { PageData } from './$types'
 
-	const totalPages = $derived(Math.ceil(data.total / data.limit))
+	let { data }: { data: PageData } = $props()
+	const tFn = $derived($t)
+	const token = $derived(((page.data as any).token as string | null) ?? null)
+
+	let logs = $state<OgLog[]>(untrack(() => data.logs as OgLog[]))
+	$effect(() => { const l = data.logs as OgLog[]; untrack(() => { logs = l }) })
+	let filter = $state<'all' | EventSource>('all')
+	const shown = $derived(filter === 'all' ? logs : logs.filter((l) => eventOf(l).source === filter))
+	const pages = $derived(Math.max(1, Math.ceil((data.total ?? 0) / (data.limit ?? 50))))
+
+	let busy = $state<string | null>(null)
+	let msg = $state<Record<string, { ok: boolean; text: string }>>({})
+	async function undo(l: OgLog) {
+		busy = l.id
+		try {
+			await og(token, `/logs/${l.id}/undo`, 'POST')
+			logs = logs.map((x) => (x.id === l.id ? { ...x, undone: true } : x))
+			msg = { ...msg, [l.id]: { ok: true, text: tFn('og2.undo_done') } }
+		} catch (e: any) {
+			const key = e?.code === 'ALREADY_UNDONE' ? 'og2.undo_err_already' : e?.code === 'NOTHING_TO_UNDO' ? 'og2.undo_err_nothing' : 'og2.undo_err'
+			if (e?.code === 'ALREADY_UNDONE') logs = logs.map((x) => (x.id === l.id ? { ...x, undone: true } : x))
+			msg = { ...msg, [l.id]: { ok: false, text: tFn(key) } }
+		} finally { busy = null }
+	}
+	// Lot 10 (D25) : « Faux positif » montre d'abord ce qui va se passer, puis
+	// l'admin valide. Le mot n'est appris que dans le cas sûr, et décoché par défaut.
+	const ENGINE_ACTIONS = new Set(['delete_message', 'warn_user', 'mute_user', 'ban_temp_user', 'report_filed', 'notify', 'message_held'].map((a) => 'octoguard' + '.' + a))
+	const isEngineAction = (l: OgLog) => ENGINE_ACTIONS.has(l.action) && l.metadata?.actor === 'octoguard:auto'
+	const isObservation = (l: OgLog) => l.action.startsWith('octoguard' + '.would_')
+	type Plan = { learn: true; token: string; pattern: string } | { learn: false; reason: string }
+	type Preview = { already: boolean; will_undo: boolean; rule: { id: string; name: string } | null; plan: Plan }
+	let fpOpen = $state<string | null>(null)
+	let fpPreview = $state<Preview | null>(null)
+	let fpLearn = $state(false)
+	async function openFalsePositive(l: OgLog) {
+		fpOpen = l.id; fpPreview = null; fpLearn = false
+		try { fpPreview = await og<Preview>(token, `/logs/${l.id}/false-positive`) }
+		catch { msg = { ...msg, [l.id]: { ok: false, text: tFn('og2.fp_err') } }; fpOpen = null }
+	}
+	async function confirmFalsePositive(l: OgLog) {
+		busy = l.id
+		try {
+			const r = await og<{ undone: boolean; learned: string | null }>(token, `/logs/${l.id}/false-positive`, 'POST', { learn: fpLearn })
+			logs = logs.map((x) => (x.id === l.id ? { ...x, false_positive: true, undone: x.undone || r.undone } : x))
+			msg = { ...msg, [l.id]: { ok: true, text: r.learned ? tFn('og2.fp_done_learned', { word: r.learned }) : tFn('og2.fp_done') } }
+			fpOpen = null
+		} catch (e: any) {
+			if (e?.code === 'ALREADY_MARKED') logs = logs.map((x) => (x.id === l.id ? { ...x, false_positive: true } : x))
+			msg = { ...msg, [l.id]: { ok: false, text: tFn(e?.code === 'ALREADY_MARKED' ? 'og2.fp_err_already' : 'og2.fp_err') } }
+			fpOpen = null
+		} finally { busy = null }
+	}
+	async function markNormal(l: OgLog) {
+		busy = l.id
+		try {
+			await og(token, `/logs/${l.id}/normal`, 'POST')
+			logs = logs.map((x) => (x.id === l.id ? { ...x, normal: true } : x))
+			msg = { ...msg, [l.id]: { ok: true, text: tFn('og2.normal_done') } }
+		} catch (e: any) {
+			if (e?.code === 'ALREADY_MARKED') logs = logs.map((x) => (x.id === l.id ? { ...x, normal: true } : x))
+			msg = { ...msg, [l.id]: { ok: false, text: tFn(e?.code === 'ALREADY_MARKED' ? 'og2.fp_err_already' : 'og2.fp_err') } }
+		} finally { busy = null }
+	}
+	const when = (iso: string) => {
+		const d = new Date(iso)
+		return isNaN(d.getTime()) ? '' : d.toLocaleString(String($locale ?? 'fr'), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+	}
+	const FILTERS: Array<'all' | EventSource> = ['all', 'octoguard', 'team', 'observed']
 </script>
 
-<svelte:head><title>{tFn('octoguard.logs_title')} · OctoGuard</title></svelte:head>
+<svelte:head><title>{tFn('og2.nav_log')} · OctoGuard</title></svelte:head>
 
-<header class="og-h">
-	<h2>{tFn('octoguard.logs_h2')}</h2>
-	<p>{tFn('octoguard.logs_desc')} <code>admin_audit_log</code>.</p>
-</header>
-
-{#if form?.error}<div class="og-err">⚠ {form.error}</div>{/if}
-
-{#if data.logs.length === 0}
-	<div class="og-empty">{tFn('octoguard.logs_empty')}</div>
-{:else}
-	<table class="tableau-cartes og-table md:min-w-[620px]">
-		<thead>
-			<tr>
-				<th>{tFn('octoguard.col_date')}</th><th>{tFn('octoguard.col_actor')}</th><th>{tFn('octoguard.col_action')}</th><th>{tFn('octoguard.col_target')}</th><th>{tFn('octoguard.col_details')}</th><th></th>
-			</tr>
-		</thead>
-		<tbody>
-			{#each data.logs as l (l.id)}
-				<tr>
-					<td class="og-date" data-label={tFn('octoguard.col_date')}>{new Date(l.created_at).toLocaleString()}</td>
-					<td data-label={tFn('octoguard.col_actor')}>{l.actor_username}</td>
-					<td class="og-action">{l.action.replace('octoguard.', '')}</td>
-					<td data-label={tFn('octoguard.col_target')}>{l.target_type ?? '·'}{l.target_id ? ` ${l.target_id.slice(0,8)}` : ''}</td>
-					<td class="og-label" data-label={tFn('octoguard.col_details')}>{l.target_label ?? '·'}</td>
-					<td>
-						{#if l.metadata?.undoable}
-							<form method="POST" action="?/undo" use:enhance>
-								<input type="hidden" name="id" value={l.id} />
-								<button type="submit" class="og-btn-link">{tFn('octoguard.logs_undo')}</button>
-							</form>
-						{/if}
-					</td>
-				</tr>
-			{/each}
-		</tbody>
-	</table>
-
-	{#if totalPages > 1}
-		<div class="og-pager">
-			<span>{tFn('octoguard.logs_page', { page: data.page, total_pages: totalPages, total: data.total })}</span>
+<div class="adm-page og-page">
+	<header class="adm-head">
+		<div class="og-head-l">
+			<span class="og-mark"><Icon d="M9 6h11 M9 12h11 M9 18h11 M4.5 6h.01 M4.5 12h.01 M4.5 18h.01" /></span>
 			<div>
-				{#if data.page > 1}
-					<a href={`?page=${data.page - 1}${data.action ? '&action=' + data.action : ''}`}>{tFn('octoguard.prev')}</a>
-				{/if}
-				{#if data.page < totalPages}
-					<a href={`?page=${data.page + 1}${data.action ? '&action=' + data.action : ''}`}>{tFn('octoguard.next')}</a>
-				{/if}
+				<h1 class="adm-title">{tFn('og2.nav_log')}</h1>
+				<p class="adm-desc">{tFn('og2.log_desc')}</p>
 			</div>
 		</div>
-	{/if}
-{/if}
+		<div class="adm-chips" role="group" aria-label={tFn('og2.log_filters')}>
+			{#each FILTERS as f (f)}
+				<button type="button" class="adm-chip" aria-pressed={filter === f} onclick={() => (filter = f)}>{tFn(`og2.log_f_${f}`)}</button>
+			{/each}
+		</div>
+	</header>
 
-<style>
-	.og-h h2 { font-size: 16px; font-weight: 600; color: #f1f5f9; margin: 0; }
-	.og-h p { font-size: 12px; color: #94a3b8; margin: 4px 0 16px; }
-	.og-h code { background: rgba(255,255,255,0.05); padding: 1px 4px; border-radius: 2px; font-size: 11px; font-family: ui-monospace, monospace; }
-	.og-err { padding: 10px 14px; background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); color: #fca5a5; border-radius: 4px; font-size: 13px; margin-bottom: 12px; }
-	.og-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-	.og-table th, .og-table td { padding: 6px 10px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.04); }
-	.og-table th { color: #64748b; font-weight: 500; text-transform: uppercase; font-size: 10px; letter-spacing: 0.05em; font-family: ui-monospace, monospace; }
-	.og-table td { color: #cbd5e1; font-family: ui-monospace, monospace; font-size: 11px; }
-	.og-date { color: #64748b; white-space: nowrap; }
-	.og-action { color: #a5b4fc; font-weight: 600; }
-	.og-label { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	.og-btn-link { background: transparent; border: 1px solid #374151; color: #94a3b8; font-size: 10px; padding: 2px 6px; border-radius: 2px; cursor: pointer; }
-	.og-btn-link:hover { color: #e2e8f0; }
-	.og-pager { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; font-size: 12px; color: #94a3b8; font-family: ui-monospace, monospace; }
-	.og-pager a { color: #a5b4fc; text-decoration: none; margin-left: 8px; }
-	.og-empty { padding: 24px; text-align: center; color: #64748b; font-size: 13px; border: 1px dashed rgba(255,255,255,0.08); border-radius: 4px; }
-</style>
+	<section class="adm-card">
+		{#if data.failed}
+			<p class="og-error" role="alert">{tFn('og2.err_load')}</p>
+		{:else if shown.length === 0}
+			<p class="og-empty">{tFn(logs.length ? 'og2.log_none_filter' : 'og2.log_empty')}</p>
+		{:else}
+			<div class="og-rows">
+				{#each shown as l (l.id)}
+					{@const ev = eventOf(l)}
+					<div class="og-row">
+						<span class="og-ic og-k-{ev.kind}"><Icon d={KIND_ICON[ev.kind]} /></span>
+						<div class="og-row-body">
+							<div>{tFn(`og2.${ev.key}`, eventVars(l, tFn))}</div>
+							{#if l.target_label && !l.target_label.startsWith('octoguard' + '.') && !ev.key.startsWith('ev_ladder')}<p class="og-quote">{l.target_label}</p>{/if}
+							<div class="og-meta">
+								{when(l.created_at)}{#if ev.source === 'team' && l.actor_username && !ev.key.startsWith('ev_ladder')}{' · '}{l.actor_username}{/if}{#if ev.source === 'observed'}{' · '}{tFn('og2.log_observed_note')}{/if}{#if l.metadata?.report_category}{' · '}{tFn('og2.lad_log_report', { cat: tFn(`report.cat_${l.metadata.report_category}`) })}{/if}
+							</div>
+							{#if fpOpen === l.id}
+								<div class="og-fp" role="group" aria-label={tFn('og2.fp_title')}>
+									{#if !fpPreview}
+										<p class="og-help">{tFn('og2.fp_loading')}</p>
+									{:else}
+										<b class="og-fp-t">{tFn('og2.fp_title')}</b>
+										<ul class="og-fp-list">
+											{#if fpPreview.will_undo}<li>{tFn('og2.fp_will_undo')}</li>{/if}
+											<li>{tFn('og2.fp_will_count')}</li>
+										</ul>
+										{#if fpPreview.plan.learn}
+											<label class="og-fp-learn">
+												<input type="checkbox" bind:checked={fpLearn} />
+												<span>{tFn('og2.fp_learn', { word: fpPreview.plan.token, rule: fpPreview.rule?.name ?? '', pattern: fpPreview.plan.pattern })}</span>
+											</label>
+											<p class="og-help">{tFn('og2.fp_learn_help', { word: fpPreview.plan.token })}</p>
+										{:else}
+											<p class="og-help">{tFn(`og2.fp_nolearn_${fpPreview.plan.reason}`)}{#if fpPreview.rule && fpPreview.plan.reason !== 'rule_gone'} <a class="og-linkbtn" href="/admin/octoguard/rules#rule-{fpPreview.rule.id}">{tFn('og2.fp_open_rule')}</a>{/if}</p>
+										{/if}
+										<div class="adm-actions">
+											<button type="button" class="adm-btn adm-btn--sm" onclick={() => (fpOpen = null)}>{tFn('common.close')}</button>
+											<button type="button" class="adm-btn adm-btn--sm adm-btn--primary" disabled={busy === l.id} onclick={() => confirmFalsePositive(l)}>{tFn('og2.fp_confirm')}</button>
+										</div>
+									{/if}
+								</div>
+							{/if}
+							{#if msg[l.id]}<p class={msg[l.id].ok ? 'og-okmsg' : 'og-error'} role="status">{msg[l.id].text}</p>{/if}
+						</div>
+						<div class="og-log-acts">
+							{#if l.undone}
+								<span class="adm-pill adm-pill--ok">{tFn('og2.undone')}</span>
+							{:else if l.metadata?.undoable && !l.false_positive}
+								<button type="button" class="adm-btn adm-btn--sm" disabled={busy === l.id} onclick={() => undo(l)}>
+									<Icon d={KIND_ICON.ok} />{tFn('og2.undo')}
+								</button>
+							{/if}
+							{#if l.false_positive}
+								<span class="adm-pill og-tone og-k-warn">{tFn('og2.fp_pill')}</span>
+							{:else if isEngineAction(l) && fpOpen !== l.id}
+								<button type="button" class="adm-btn adm-btn--sm" disabled={busy === l.id} onclick={() => openFalsePositive(l)}>{tFn('og2.fp_btn')}</button>
+							{/if}
+							{#if l.normal}
+								<span class="adm-pill og-tone og-k-observe">{tFn('og2.normal_pill')}</span>
+							{:else if isObservation(l)}
+								<button type="button" class="adm-btn adm-btn--sm" disabled={busy === l.id} onclick={() => markNormal(l)}>{tFn('og2.normal_btn')}</button>
+							{/if}
+						</div>
+					</div>
+				{/each}
+			</div>
+		{/if}
+	</section>
+
+	{#if pages > 1}
+		<nav class="adm-actions" style="justify-content:space-between" aria-label={tFn('og2.pagination')}>
+			<span class="og-help">{tFn('og2.page_of', { p: data.page, n: pages, total: data.total })}</span>
+			<span class="adm-actions">
+				{#if data.page > 1}<a class="adm-btn adm-btn--sm" href="?page={data.page - 1}">{tFn('og2.prev')}</a>{/if}
+				{#if data.page < pages}<a class="adm-btn adm-btn--sm" href="?page={data.page + 1}">{tFn('og2.next')}</a>{/if}
+			</span>
+		</nav>
+	{/if}
+</div>

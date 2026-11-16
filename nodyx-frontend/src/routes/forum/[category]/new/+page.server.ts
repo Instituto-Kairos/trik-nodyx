@@ -9,14 +9,19 @@ export const load: PageServerLoad = async ({ fetch, cookies, params }) => {
 	}
 
 	// Charger les tags et l'arbre des catégories
-	const [tagsRes, catsRes] = await Promise.all([
+	const [tagsRes, catsRes, gradesRes] = await Promise.all([
 		apiFetch(fetch, '/instance/tags'),
 		apiFetch(fetch, '/instance/categories'),
+		// Cargos que esta pessoa pode pôr no tópico (trik_025): equipe = todos, membro = o seu
+		apiFetch(fetch, `/forums/grade-options?category_id=${encodeURIComponent(params.category)}`, {
+			headers: { Authorization: `Bearer ${token}` },
+		}).catch(() => null),
 	]);
 	const { tags }       = tagsRes.ok ? await tagsRes.json() : { tags: [] };
 	const { categories } = catsRes.ok ? await catsRes.json() : { categories: [] };
+	const { grades: gradeOptions } = gradesRes?.ok ? await gradesRes.json() : { grades: [] };
 
-	return { tags, categories, currentCategoryId: params.category, token };
+	return { tags, categories, currentCategoryId: params.category, token, gradeOptions };
 };
 
 export const actions: Actions = {
@@ -30,6 +35,7 @@ export const actions: Actions = {
 		const title   = (form.get('title')   as string).trim();
 		const content = (form.get('content') as string).trim();
 		const tagIds  = form.getAll('tag_ids') as string[];
+		const gradeIds = (form.getAll('grade_ids') as string[]).filter(Boolean);
 
 		if (!title || !content) {
 			return fail(400, { error: 'Le titre et le contenu sont obligatoires.' });
@@ -48,6 +54,7 @@ export const actions: Actions = {
 				title,
 				content,
 				tag_ids: tagIds.filter(Boolean),
+				...(gradeIds.length ? { grade_ids: gradeIds } : {}),
 			})
 		});
 		const json = await res.json();
@@ -56,7 +63,14 @@ export const actions: Actions = {
 			return fail(res.status, {
 				error: json.error,
 				code: json.code ?? null,
+				i18n_key: json.i18n_key ?? null,
 			});
+		}
+
+		// 202 : le fil est retenu pour relecture (OctoGuard, cran « Retenir »). Il
+		// n'existe pas encore : on reste sur la page et on le montre en attente.
+		if (res.status === 202) {
+			return { held: true, heldTitle: title, heldContent: content, pollDropped: !!pollJson };
 		}
 
 		// Si un sondage est joint, le créer avec le thread_id

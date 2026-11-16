@@ -1,4 +1,5 @@
 <script lang="ts">
+	import GradePicker from '$lib/components/GradePicker.svelte'
 	import { scramble } from '$lib/actions/scramble'
 	import { renderSpoilers } from '$lib/spoiler'
 	import { loadCustomEmojis, renderCustomEmojis, customEmojisStore } from '$lib/customEmojis'
@@ -11,21 +12,8 @@
 		return origin + url
 	}
 
-	// JSON.stringify() n'échappe pas < > & : une valeur comme le titre du fil
-	// contenant la séquence de fermeture d'un tag script romprait le JSON-LD
-	// injecté plus bas et ferait exécuter ce qui suit comme du HTML/JS. On
-	// échappe ces trois caractères en séquences unicode après coup, seule
-	// façon fiable d'embarquer du JSON dans un tag script sans risque (voir
-	// aussi le nettoyage posé côté API sur POST/PATCH /forums/threads).
-	// Note : le "<\/script>" ci-dessous a son slash échappé exprès, sinon le
-	// parseur Svelte lirait ce fichier .svelte comme fermant CE bloc script.
-	function jsonLdScript(data: unknown): string {
-		const json = JSON.stringify(data)
-			.replace(/</g, '\\u003c')
-			.replace(/>/g, '\\u003e')
-			.replace(/&/g, '\\u0026')
-		return `<script type="application/ld+json">${json}<\/script>`
-	}
+	// JSON-LD sûr (texte de membre échappé) : $lib/jsonLd, partagé avec l'accueil et les événements.
+	import { jsonLdScript, plainText } from '$lib/jsonLd'
 
 	import { enhance, applyAction } from '$app/forms';
 	import { untrack } from 'svelte';
@@ -41,10 +29,29 @@
 	import CollapsiblePost from '$lib/components/CollapsiblePost.svelte';
 	import PollCard from '$lib/components/PollCard.svelte';
 	import PollCreator from '$lib/components/PollCreator.svelte';
-	import { t } from '$lib/i18n';
+	import { t, locale } from '$lib/i18n';
 	import { tagBadgeStyle } from '$lib/tagStyle';
-	import { replyCount } from '$lib/forumCounts';
 	import Breadcrumb, { type Crumb } from '$lib/components/Breadcrumb.svelte';
+	import { apiFetch } from '$lib/api';
+	import { replyCount, isOne } from '$lib/forumCounts';
+	import { can, isAdminRole } from '$lib/permissions';
+	import { openReport } from '$lib/report';
+	import { octoguardMessage } from '$lib/octoguardMessages';
+	import HeldBlock from '$lib/components/octoguard/HeldBlock.svelte';
+	import NudgeBanner from '$lib/components/octoguard/NudgeBanner.svelte';
+	import ShieldBanner from '$lib/components/octoguard/ShieldBanner.svelte';
+	import { precheckMessage, type Nudge } from '$lib/octoguard/nudge';
+	import LinkCards from '$lib/components/LinkCards.svelte'
+	import { mentionChips } from '$lib/actions/mentionChips'
+	import { placeChips } from '$lib/actions/placeChips'
+	// D40 : réponses réduites à leur carte (le message n'est QUE le lien)
+	let soleIds = $state(new Set<string>())
+	function setSole(id: string, sole: boolean) {
+		if (soleIds.has(id) === sole) return
+		const next = new Set(soleIds)
+		if (sole) next.add(id); else next.delete(id)
+		soleIds = next
+	}
 
 	const tFn = $derived($t)
 
@@ -75,12 +82,50 @@
 	// post_count compte le message d'ouverture : ce n'est PAS un nombre de
 	// réponses. Voir $lib/forumCounts.
 	const replies = $derived(replyCount(thread.post_count));
+
+	// ── Référencement (revu le 14/11) ──
+	// La description : le début du VRAI message, pas « Discussion par X · 0 réponses ».
+	const opening = $derived(posts?.[0] ?? null);
+	const seoDescription = $derived(
+		plainText(opening?.content, 160)
+		|| tFn('seo.desc_thread_fallback', { author: thread.author_username ?? '', name: page.data.communityName ?? 'Nodyx', title: thread.title })
+	);
+	// Une seule adresse par sujet : sans ?highlight= ni autre paramètre.
+	const canonicalUrl = $derived(page.url.origin + page.url.pathname);
+	const profileUrl = (u: string | null | undefined) => (u ? `${page.url.origin}/users/${encodeURIComponent(u)}` : undefined);
+	// schema.org DiscussionForumPosting : Google EXIGE le texte (`text`), et lit les
+	// réponses (`comment`). Avant, ni l'un ni l'autre, et un isPartOf mal typé.
+	const seoPosting = $derived({
+		'@context': 'https://schema.org',
+		'@type': 'DiscussionForumPosting',
+		headline: thread.title,
+		text: plainText(opening?.content, 5000),
+		url: canonicalUrl,
+		mainEntityOfPage: canonicalUrl,
+		author: { '@type': 'Person', name: thread.author_username, ...(profileUrl(thread.author_username) ? { url: profileUrl(thread.author_username) } : {}) },
+		datePublished: thread.created_at,
+		dateModified: thread.updated_at ?? thread.created_at,
+		...(shareImage ? { image: shareImage } : {}),
+		commentCount: replies,
+		interactionStatistic: [
+			{ '@type': 'InteractionCounter', interactionType: 'https://schema.org/ViewAction', userInteractionCount: thread.views ?? 0 },
+			{ '@type': 'InteractionCounter', interactionType: 'https://schema.org/CommentAction', userInteractionCount: replies },
+		],
+		comment: (posts ?? []).slice(1, 51).map((p: any) => ({
+			'@type': 'Comment',
+			text: plainText(p.content, 2000),
+			datePublished: p.created_at,
+			author: { '@type': 'Person', name: p.author_username, ...(profileUrl(p.author_username) ? { url: profileUrl(p.author_username) } : {}) },
+		})),
+		isPartOf: { '@type': 'WebSite', name: page.data.communityName ?? 'Nodyx', url: page.url.origin + '/' },
+	});
 	const user   = $derived(data.user);
-	const isMod   = $derived(user?.role === 'owner' || user?.role === 'admin' || user?.role === 'moderator');
-	// Épingler / verrouiller / mettre en avant : réservé owner + admin côté back
-	// (routes/forums.ts). Les modérateurs voient le reste du panneau, pas ça.
-	// Módulo RPG (trik) : o toggle de XP por tópico usa o mesmo guard.
-	const canAdmin = $derived(user?.role === 'owner' || user?.role === 'admin');
+	// Modérer le contenu (modifier, supprimer, épingler, verrouiller) : permission
+	// moderate_content, socle du modérateur + grade (lib/permissions.ts). Mettre
+	// en avant sur la vitrine reste réservé aux admins de l'instance.
+	const isMod   = $derived(can(user, 'moderate_content'));
+	const canAdmin = $derived(isAdminRole(user));
+	// Módulo RPG (trik): o toggle de XP por tópico continua só para admin/owner.
 
 	// ── État local ────────────────────────────────────────────────────────
 	let replyKey      = $state(0);
@@ -90,6 +135,11 @@
 	let editingTitle  = $state(false);
 	let titleInput    = $state('');
 	let submitting    = $state(false);
+	// « Tu es sûr ? » (OctoGuard, lot 5) avant de publier une réponse. « Publier
+	// quand même » ne vaut que pour le texte annoncé : modifié, il est revérifié.
+	let replyNudge = $state<{ n: Nudge; content: string } | null>(null)
+	let replyAnyway: string | null = null
+	let replyForm = $state<HTMLFormElement | null>(null)
 
 	// ── Sondage du thread ─────────────────────────────────────────────────
 	let threadPoll     = $state(untrack(() => data.poll ?? null));
@@ -199,6 +249,49 @@
 	// une ligne de 375 px reproduiraient l'encombrement qu'on vient d'enlever.
 	let showModActions = $state(false);
 
+	// L'équipe change les tags d'un sujet sur place (l'auteur, lui, ne change que le titre)
+	// La liste des tags n'est chargée qu'à l'ouverture du panneau : un lecteur
+	// ordinaire (la quasi-totalité des vues) ne paie pas cette requête.
+	let allTags     = $state<Array<{ id: string; name: string; slug: string; color: string }> | null>(null);
+	let tagsEditing = $state(false);
+	let tagsPick    = $state<string[]>([]);
+	let tagsBusy    = $state(false);
+	let tagsError   = $state<string | null>(null);
+	async function openTags() {
+		tagsPick = (thread.tags ?? []).map((t: { id: string }) => t.id);
+		tagsError = null; tagsEditing = true;
+		if (allTags) return;
+		try {
+			const res = await apiFetch(fetch, '/instance/tags');
+			allTags = res.ok ? ((await res.json()).tags ?? []) : [];
+			if (!res.ok) tagsError = tFn('forum.tags_err_load');
+		} catch { allTags = []; tagsError = tFn('forum.tags_err_load'); }
+	}
+	// Cargos que veem o tópico (trik_025): a equipe muda aqui. As opções só são
+	// buscadas ao abrir o painel, como os tags.
+	let gradeOptions  = $state<Array<{ id: string; name: string; color: string }> | null>(null);
+	let gradesEditing = $state(false);
+	let gradesPick    = $state<string[]>([]);
+	let gradesBusy    = $state(false);
+	let gradesError   = $state<string | null>(null);
+	async function openGrades() {
+		gradesPick = (thread.grades ?? []).map((g: { id: string }) => g.id);
+		gradesError = null; gradesEditing = true;
+		if (gradeOptions) return;
+		try {
+			const res = await apiFetch(fetch, `/forums/grade-options?category_id=${thread.category_id}`, {
+				headers: data.token ? { Authorization: `Bearer ${data.token}` } : {},
+			});
+			gradeOptions = res.ok ? ((await res.json()).grades ?? []) : [];
+			if (!res.ok) gradesError = tFn('private.err_load');
+		} catch { gradeOptions = []; gradesError = tFn('private.err_load'); }
+	}
+
+	function togglePick(id: string) {
+		if (tagsPick.includes(id)) tagsPick = tagsPick.filter((x) => x !== id);
+		else if (tagsPick.length < 5) tagsPick = [...tagsPick, id];
+	}
+
 	function startEditTitle() {
 		titleInput   = thread.title;
 		editingTitle = true;
@@ -214,6 +307,10 @@
 	const canEditTitle = $derived(user && (user.id === thread.author_id || isMod));
 	function canEdit(post: any)   { return user && (user.id === post.author_id || isMod); }
 	function canDelete(post: any) { return user && (user.id === post.author_id || isMod); }
+	// Signaler : tout membre connecté, sauf son propre message (le serveur refuse aussi)
+	function canReport(post: any) { return !!user && user.id !== post.author_id; }
+	let editFailure = $state<string | null>(null)
+	let replyFailure = $state<string | null>(null);
 	
 	// ── Dernier posteur ───────────────────────────────────────────────────
 	// Dernier message du SUJET : n'est connu que sur la dernière page.
@@ -235,39 +332,20 @@
 
 <svelte:head>
 	<title>{thread.title} · {page.data.communityName ?? 'Nodyx'}</title>
-	<meta name="description" content="Discussion : {thread.title} par {thread.author_username}" />
-	<link rel="canonical" href={page.url.href} />
+	<meta name="description" content={seoDescription} />
+	<link rel="canonical" href={canonicalUrl} />
 	<meta property="og:title"       content="{thread.title} · {page.data.communityName ?? 'Nodyx'}" />
-	<meta property="og:description" content="Discussion par {thread.author_username} · {replies} {tFn('forum.replies_label')} · {thread.views} {tFn('forum.views')}" />
+	<meta property="og:description" content={seoDescription} />
 	<meta property="og:type"        content="article" />
-	<meta property="og:url"         content={page.url.href} />
+	<meta property="og:url"         content={canonicalUrl} />
+	<meta property="article:published_time" content={thread.created_at} />
 	<!-- Pas de og:image:width/height ici : l'image de tête d'un article a des
 	     dimensions variables (le pipeline d'upload re-encode/redimensionne).
 	     Déclarer une taille fixe fausserait l'aperçu. Les scrapers lisent la
 	     vraie taille de l'image. -->
 	<meta property="og:image"        content={shareImage} />
 	<meta name="twitter:image"       content={shareImage} />
-	<meta property="og:site_name"   content={page.data.communityName ?? 'Nodyx'} />
-	{@html jsonLdScript({
-		"@context": "https://schema.org",
-		"@type": "DiscussionForumPosting",
-		"headline": thread.title,
-		"url": page.url.href,
-		"author": { "@type": "Person", "name": thread.author_username },
-		"datePublished": thread.created_at,
-		"dateModified": thread.updated_at ?? thread.created_at,
-		"commentCount": replies,
-		"interactionStatistic": {
-			"@type": "InteractionCounter",
-			"interactionType": "https://schema.org/ViewAction",
-			"userInteractionCount": thread.views
-		},
-		"isPartOf": {
-			"@type": "DiscussionForumPosting",
-			"name": page.data.communityName ?? 'Nodyx',
-			"url": page.url.origin + '/forum'
-		}
-	})}
+	{@html jsonLdScript(seoPosting)}
 </svelte:head>
 
 <div id="thread-top"></div>
@@ -330,13 +408,94 @@
 							⚔️ XP ativo
 						</span>
 					{/if}
-					{#each (thread.tags ?? []) as tag}
-						<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium"
+					{#each (thread.tags ?? []) as tag (tag.id)}
+						<!-- Un tag mène aux autres sujets qui le portent, dans cette catégorie -->
+						<a href="/forum/{thread.category_slug ?? thread.category_id}?tag={tag.slug}"
+							title={tFn('forum.tag_see_all', { name: tag.name })}
+							class="inline-flex items-center px-2 py-0.5 text-xs font-medium no-underline hover:brightness-110 transition"
 							style={tagBadgeStyle(tag.color)}>
 							{tag.name}
-						</span>
+						</a>
 					{/each}
+					{#if (thread.grades ?? []).length}
+						<!-- Tópico restrito a cargos (trik_025) -->
+						<span class="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 border border-[var(--nx-border)] text-[var(--nx-text-muted)]"
+							title={tFn('private.thread_badge_tip')}>
+							🔒 {(thread.grades ?? []).map((g: { name: string }) => g.name).join(', ')}
+						</span>
+					{/if}
+					{#if isMod && !gradesEditing}
+						<button type="button" onclick={openGrades} class="tags-edit-btn" title={tFn('private.thread_edit_tip')}>
+							🔒 {tFn('private.thread_edit')}
+						</button>
+					{/if}
+					{#if isMod && !tagsEditing}
+						<button type="button" onclick={openTags} class="tags-edit-btn" title={tFn('forum.tags_edit_tip')}>
+							<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4" /></svg>
+							{(thread.tags ?? []).length ? tFn('forum.tags_edit') : tFn('forum.tags_add')}
+						</button>
+					{/if}
 				</div>
+
+				{#if isMod && tagsEditing}
+					<form method="POST" action="?/setTags" class="tags-panel"
+						use:enhance={() => { tagsBusy = true; tagsError = null; return async ({ result, update }) => {
+							tagsBusy = false;
+							if (result.type === 'failure') { tagsError = tFn(String(result.data?.tagsErrorKey ?? 'forum.tags_err_save')); return; }
+							await update({ reset: false });
+							if (result.type === 'success') tagsEditing = false;
+						} }}>
+						<div class="tags-panel-head">
+							<b id="tags-panel-title">{tFn('forum.tags_panel_title')}</b>
+							<span>{tFn('forum.tags_pick_hint', { n: tagsPick.length })}</span>
+						</div>
+						{#if allTags === null}
+							<p class="tags-panel-note" aria-live="polite">{tFn('common.loading')}</p>
+						{:else if allTags.length === 0 && !tagsError}
+							<p class="tags-panel-note">{tFn('forum.tags_none_yet')}{#if canAdmin} <a href="/admin/tags">{tFn('forum.tags_none_admin')}</a>{/if}</p>
+						{:else}
+							<div class="tags-panel-list" role="group" aria-labelledby="tags-panel-title">
+								{#each allTags as tag (tag.id)}
+									{@const on = tagsPick.includes(tag.id)}
+									<button type="button" class="tags-pick" style="--tc:{tag.color}" aria-pressed={on}
+										disabled={!on && tagsPick.length >= 5} onclick={() => togglePick(tag.id)}>
+										{#if on}<span aria-hidden="true">✓</span>{/if}{tag.name}
+									</button>
+								{/each}
+							</div>
+						{/if}
+						{#each tagsPick as id (id)}<input type="hidden" name="tag_ids" value={id} />{/each}
+						<p class="tags-panel-note">{tFn('forum.tags_panel_note')}</p>
+						{#if tagsError}<p class="tags-panel-err" role="alert">{tagsError}</p>{/if}
+						<div class="tags-panel-actions">
+							<button type="button" class="tags-btn" onclick={() => (tagsEditing = false)}>{tFn('common.cancel')}</button>
+							<button type="submit" class="tags-btn tags-btn--primary" disabled={tagsBusy || !allTags || allTags.length === 0}>{tFn('common.save')}</button>
+						</div>
+					</form>
+				{/if}
+
+				{#if isMod && gradesEditing}
+					<form method="POST" action="?/setGrades" class="tags-panel"
+						use:enhance={() => { gradesBusy = true; gradesError = null; return async ({ result, update }) => {
+							gradesBusy = false;
+							if (result.type === 'failure') { gradesError = tFn(String(result.data?.gradesErrorKey ?? 'private.err_save')); return; }
+							await update({ reset: false });
+							if (result.type === 'success') gradesEditing = false;
+						} }}>
+						{#if gradeOptions === null}
+							<p class="tags-panel-note" aria-live="polite">{tFn('common.loading')}</p>
+						{:else if gradeOptions.length === 0 && !gradesError}
+							<p class="tags-panel-note">{tFn('private.no_grades')}{#if canAdmin} <a href="/admin/grades">{tFn('private.no_grades_admin')}</a>{/if}</p>
+						{:else}
+							<GradePicker grades={gradeOptions} bind:selected={gradesPick} label={tFn('private.thread_label')} id="thread-grades" />
+						{/if}
+						{#if gradesError}<p class="tags-panel-err" role="alert">{gradesError}</p>{/if}
+						<div class="tags-panel-actions">
+							<button type="button" class="tags-btn" onclick={() => (gradesEditing = false)}>{tFn('common.cancel')}</button>
+							<button type="submit" class="tags-btn tags-btn--primary" disabled={gradesBusy || !gradeOptions}>{tFn('common.save')}</button>
+						</div>
+					</form>
+				{/if}
 
 				<!-- Titre avec édition -->
 				{#if editingTitle}
@@ -410,7 +569,7 @@
 								<path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
 							</svg>
 							<span class="font-medium text-[var(--nx-text)]">{thread.views}</span>
-							<span class="text-[var(--nx-text-muted)] text-xs">{tFn('forum.views')}</span>
+							<span class="text-[var(--nx-text-muted)] text-xs">{tFn(isOne(thread.views ?? 0, $locale) ? 'forum.views_one' : 'forum.views')}</span>
 						</div>
 
 						<!-- Réponses -->
@@ -419,7 +578,7 @@
 								<path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
 							</svg>
 							<span class="font-medium text-[var(--nx-text)]">{replies}</span>
-							<span class="text-[var(--nx-text-muted)] text-xs">{tFn('forum.replies_label')}</span>
+							<span class="text-[var(--nx-text-muted)] text-xs">{tFn(isOne(replies, $locale) ? 'forum.replies_one' : 'forum.replies_label')}</span>
 						</div>
 
 						<!-- Dernier posteur (si existe) -->
@@ -503,6 +662,7 @@
 						class="px-3 py-1.5 border border-gray-700 text-xs font-medium text-gray-400 hover:text-indigo-400 hover:border-indigo-700 transition-colors">
 						✎ Editar
 					</a>
+					{/if}
 
 					<!-- Épingler/Désépingler -->
 					<form method="POST" action="?/pinThread" use:enhance={() => {
@@ -532,7 +692,8 @@
 						</button>
 					</form>
 
-					<!-- Promouvoir / rétrograder -->
+					<!-- Promouvoir / rétrograder : vitrine publique, admins seulement -->
+					{#if canAdmin}
 					<form method="POST" action="?/featureThread" use:enhance={() => {
 						return async ({ update }) => { await update({ reset: false }) }
 					}}>
@@ -658,7 +819,7 @@
 			</div>
 		{/if}
 
-		<article id="post-{post.id}" class="scroll-mt-4 flex flex-col sm:flex-row gap-4 border border-[color-mix(in_srgb,var(--nx-text)_6%,transparent)] bg-[var(--nx-surface)]/60 p-4 hover:border-indigo-900/50 transition-colors duration-200">
+		<article id="post-{post.id}" data-mention-scope class="scroll-mt-4 flex flex-col sm:flex-row gap-4 border border-[color-mix(in_srgb,var(--nx-text)_6%,transparent)] bg-[var(--nx-surface)]/60 p-4 hover:border-indigo-900/50 transition-colors duration-200">
 			<!-- Profil auteur -->
 			<ProfileCard
 				username={post.author_username}
@@ -735,6 +896,17 @@
 							🔗 <span>{tFn('forum.copy_post_link')}</span>
 						</button>
 
+						<!-- Signaler (upstream) -->
+						{#if canReport(post)}
+							<button type="button"
+								onclick={() => openReport({ type: 'post', id: post.id, label: tFn('report.label_post', { name: post.author_username ?? '' }) })}
+								class="inline-flex items-center gap-1 px-2.5 py-1.5 sm:px-2 sm:py-1 bg-gray-800/40 sm:bg-transparent text-xs text-[var(--nx-text-muted)] hover:text-[var(--nx-bad)] hover:bg-[color-mix(in_srgb,var(--nx-bad)_10%,transparent)] transition-colors"
+								title={tFn('report.action')}>
+								<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21V4m0 0h11l-1.5 4L15 12H4"/></svg>
+								<span class="max-sm:sr-only">{tFn('report.action')}</span>
+							</button>
+						{/if}
+
 					<!-- Boutons Edit / Delete (auteur ou mod) -->
 					{#if canEdit(post) || canDelete(post)}
 							{#if canEdit(post) && editingPostId !== post.id}
@@ -782,7 +954,20 @@
 				{#if editingPostId === post.id}
 					<form method="POST" action="?/editPost"
 						use:enhance={() => {
-							return async ({ update }) => {
+							editFailure = null
+							return async ({ result, update }) => {
+								// Refus (OctoGuard, sourdine, contenu interdit) : l'éditeur reste
+								// ouvert avec le texte, et on dit pourquoi. Avant, il se fermait
+								// sans un mot et la modification était perdue.
+								if (result.type === 'failure') {
+									const d = (result.data ?? {}) as { editCode?: string | null; ogKey?: string | null }
+									editFailure = d.editCode === 'OCTOGUARD_BLOCKED' || d.editCode === 'OCTOGUARD_HELD_LIMIT'
+										? `${octoguardMessage(tFn, d.ogKey)} ${tFn('forum.text_kept')}`
+										: d.editCode === 'MUTED' ? tFn('forum.err_muted')
+										: d.editCode === 'CONTENT_BLOCKED' ? `${tFn('forum.err_forbidden_content')} ${tFn('forum.text_kept')}`
+										: tFn('forum.err_reply')
+									return
+								}
 								editingPostId = null
 								await update()
 							}
@@ -801,18 +986,21 @@
 								{tFn('common.save')}
 							</button>
 							<button type="button"
-								onclick={() => editingPostId = null}
+								onclick={() => { editingPostId = null; editFailure = null }}
 								class="px-3 py-1.5 bg-[var(--nx-border)] hover:bg-[var(--nx-border)] text-xs text-[var(--nx-text)] transition-colors">
 								{tFn('common.cancel')}
 							</button>
 						</div>
+						{#if editFailure}<p class="text-sm text-[var(--nx-bad)]" role="alert">{editFailure}</p>{/if}
 					</form>
 				{:else}
 					<!-- Contenu HTML rendu -->
 					<CollapsiblePost>
-						<div class="nodyx-prose" use:scramble={{ content: post.content, canReveal: user?.role === 'owner' }}>
+						<div class="nodyx-prose" hidden={soleIds.has(post.id)} use:scramble={{ content: post.content, canReveal: user?.role === 'owner' }} use:mentionChips={{ html: post.content ?? '', token: data.token ?? null, me: user?.id ?? null }} use:placeChips={{ html: post.content ?? '', token: data.token ?? null }}>
 							{@html renderCustomEmojis(renderAliasMentions(renderSpoilers(post.content)), $customEmojisStore)}
 						</div>
+						<!-- Cartes « Nodyx relié » : sujets, réponses, événements de cette instance -->
+						<LinkCards html={post.content ?? ''} token={data.token} onsole={(v) => setSole(post.id, v)} />
 					</CollapsiblePost>
 					<!-- Réactions + Merci -->
 					<PostReactions
@@ -838,6 +1026,9 @@
 			</div>
 		</article>
 	{/each}
+	{#each (data.heldMine ?? []) as h (h.id)}
+		<HeldBlock kind={h.kind} content={h.content} />
+	{/each}
 </div>
 
 <div class="mt-4">
@@ -854,17 +1045,38 @@
 				</svg>
 				{tFn('forum.reply_to')}
 			</h2>
-			<form method="POST" action="?/reply"
-				use:enhance={() => {
+			<form method="POST" action="?/reply" bind:this={replyForm}
+				use:enhance={async ({ formData, cancel }) => {
+					if (submitting) { cancel(); return }
+					const content = String(formData.get('content') ?? '')
+					const forced = replyAnyway !== null && replyAnyway === content
+					replyAnyway = null
+					if (!forced) {
+						submitting = true
+						const n = await precheckMessage(data.token as string | null, 'forum', content)
+						submitting = false
+						if (n) { replyNudge = { n, content }; cancel(); return }
+					}
+					replyNudge = null
 					submitting = true
+					replyFailure = null
 					return async ({ result, update }) => {
 						submitting = false
-						// Só limpa em caso de sucesso : numa falha (vínculo recusado,
-						// conteúdo bloqueado) o texto escrito e a cena armada ficam.
-						if (result.type === 'redirect' || result.type === 'success') {
-							replyKey++    // Vide l'éditeur en le remontant
-							replyTo = null
+						if (result.type === 'failure') {
+							// Refus : on GARDE le texte (avant, l'éditeur était vidé et
+							// aucune erreur ne s'affichait) et on dit pourquoi.
+							const d = (result.data ?? {}) as { replyCode?: string | null; mutedUntil?: string | null; ogKey?: string | null }
+							replyFailure = d.replyCode === 'MUTED'
+								? (d.mutedUntil ? tFn('forum.err_muted_until', { date: new Date(d.mutedUntil).toLocaleString() }) : tFn('forum.err_muted'))
+								: d.replyCode === 'OCTOGUARD_BLOCKED' || d.replyCode === 'OCTOGUARD_HELD_LIMIT' ? `${octoguardMessage(tFn, d.ogKey)} ${tFn('forum.text_kept')}`
+								: d.replyCode === 'CONTENT_BLOCKED' ? `${tFn('forum.err_forbidden_content')} ${tFn('forum.text_kept')}`
+								: d.replyCode === 'BANNED' ? tFn('forum.err_banned')
+								: d.replyCode === 'THREAD_LOCKED' ? tFn('forum.err_locked')
+								: tFn('forum.err_reply')
+							return
 						}
+						replyKey++    // Vide l'éditeur en le remontant
+						replyTo = null // fio de cena (trik): a cena armada se fecha com o envio
 						await update({ reset: false })
 					}
 				}}
@@ -898,6 +1110,12 @@
 						compact={true}
 					/>
 				{/key}
+				<ShieldBanner token={data.token} surface="forum" space="0.5rem 0 0" />
+				{#if replyNudge}
+					<NudgeBanner nudge={replyNudge.n} busy={submitting} publish
+						onReformulate={() => { replyNudge = null; replyForm?.querySelector<HTMLElement>('[contenteditable="true"]')?.focus() }}
+						onSendAnyway={() => { if (replyNudge) { replyAnyway = replyNudge.content; replyForm?.requestSubmit() } }} />
+				{/if}
 				<button
 					type="submit"
 					disabled={submitting}
@@ -905,6 +1123,9 @@
 				>
 					{submitting ? tFn('common.publishing') : tFn('forum.publish_reply')}
 				</button>
+				{#if replyFailure}
+					<p class="text-sm text-[var(--nx-bad)]" role="alert">{replyFailure}</p>
+				{/if}
 			</form>
 		</div>
 	{:else}
@@ -924,3 +1145,24 @@
 	</p>
 {/if}
 <div id="thread-end"></div>
+
+<style>
+	.tags-edit-btn { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.125rem 0.5rem; font-size: 0.75rem; font-weight: 600; color: var(--nx-text-muted); border: 1px dashed var(--nx-border); background: none; cursor: pointer; transition: color 0.15s, border-color 0.15s; }
+	.tags-edit-btn:hover { color: var(--nx-header-accent); border-color: var(--nx-header-accent); }
+	.tags-edit-btn svg { width: 0.8rem; height: 0.8rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+	.tags-panel { margin: 0.25rem 0 0.875rem; padding: 0.875rem; border: 1px solid var(--nx-border); border-left: 3px solid var(--nx-header-accent); background: color-mix(in srgb, var(--nx-header-accent) 4%, var(--nx-surface)); display: flex; flex-direction: column; gap: 0.625rem; }
+	.tags-panel-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.625rem; font-size: 0.85rem; }
+	.tags-panel-head span { font-size: 0.75rem; color: var(--nx-text-muted); }
+	.tags-panel-list { display: flex; flex-wrap: wrap; gap: 0.375rem; }
+	.tags-pick { --tc: var(--nx-header-accent); display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.25rem 0.625rem; font-size: 0.75rem; font-weight: 600; color: var(--tc); border: 1px solid color-mix(in srgb, var(--tc) 40%, transparent); background: transparent; cursor: pointer; transition: background 0.15s; }
+	.tags-pick:hover:not(:disabled) { background: color-mix(in srgb, var(--tc) 10%, transparent); }
+	.tags-pick[aria-pressed='true'] { background: color-mix(in srgb, var(--tc) 20%, transparent); border-color: var(--tc); }
+	.tags-pick:disabled { opacity: 0.4; cursor: not-allowed; }
+	.tags-panel-note { margin: 0; font-size: 0.75rem; color: var(--nx-text-muted); }
+	.tags-panel-note a { color: var(--nx-header-accent); font-weight: 600; }
+	.tags-panel-err { margin: 0; font-size: 0.8rem; color: var(--nx-bad); }
+	.tags-panel-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
+	.tags-btn { padding: 0.375rem 0.875rem; font-size: 0.8rem; font-weight: 600; border: 1px solid var(--nx-border); background: var(--nx-surface); color: var(--nx-text); cursor: pointer; }
+	.tags-btn--primary { background: var(--nx-header-accent); border-color: var(--nx-header-accent); color: #16120c; }
+	.tags-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+</style>

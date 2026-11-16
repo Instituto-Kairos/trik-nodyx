@@ -52,6 +52,8 @@ export interface ThreadSummary extends Thread {
   author_username: string
   author_avatar:   string | null
   post_count:      number
+  /** Renvoyé par findById (jointure categories) ; absent des listes. */
+  category_slug?:  string | null
 }
 
 // ── Queries ──────────────────────────────────────────────────
@@ -199,6 +201,7 @@ export async function getFeatured(limit: number, communityId: string, categoryId
        WHERE (c.id::text = $2 OR c.slug = $2)
          AND c.community_id = $3
          AND t.showcased_at IS NOT NULL
+         AND nx_can_view_thread(t.id, NULL) -- vitrine pública: nada restrito a cargo (trik_025)
        ORDER BY t.showcased_at DESC
        LIMIT $1`,
       [limit, categoryId, communityId]
@@ -221,6 +224,7 @@ export async function getFeatured(limit: number, communityId: string, categoryId
      JOIN users u      ON u.id = t.author_id
      WHERE t.is_featured = true
        AND c.community_id = $2
+       AND nx_can_view_thread(t.id, NULL) -- vitrine pública: nada restrito a cargo (trik_025)
      ORDER BY COALESCE(t.showcased_at, t.created_at) DESC
      LIMIT $1`,
     [limit, communityId]

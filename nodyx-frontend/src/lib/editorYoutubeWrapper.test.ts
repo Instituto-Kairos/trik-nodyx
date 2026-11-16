@@ -16,7 +16,7 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
-const COMPOSANT = fileURLToPath(new URL('./components/editor/NodyxEditor.svelte', import.meta.url))
+const COMPOSANT = fileURLToPath(new URL('./components/editor/NodyxEditorCore.svelte', import.meta.url))
 const src = readFileSync(COMPOSANT, 'utf-8')
 
 const CSS = fileURLToPath(new URL('../app.css', import.meta.url))

@@ -2,7 +2,7 @@
 	import type { PageData } from './$types'
 	import { goto } from '$app/navigation'
 	import { page } from '$app/state'
-	import { PUBLIC_API_URL } from '$env/static/public'
+	import { PUBLIC_API_URL } from '$app/env/public'
 	import { t } from '$lib/i18n'
 
 	let { data }: { data: PageData } = $props()
@@ -55,7 +55,7 @@
 			typeError = (await res.json().catch(() => ({}))).error ?? tFn('library.err.change_type')
 			return
 		}
-		goto(page.url.toString(), { invalidateAll: true, noScroll: true })
+		goto(page.url.toString(), { refreshAll: true, reset: false })
 	}
 
 	let searchInput = $state('')
@@ -84,14 +84,14 @@
 	}
 
 	function switchTab(tab: 'local' | 'community') {
-		const u = new URL(page.url)
+		const u = new URL(page.url.href)
 		u.searchParams.set('tab', tab)
 		u.searchParams.delete('offset')
 		goto(u.toString())
 	}
 
 	function applyFilter(type: string) {
-		const u = new URL(page.url)
+		const u = new URL(page.url.href)
 		if (type) u.searchParams.set('type', type)
 		else u.searchParams.delete('type')
 		u.searchParams.delete('offset')
@@ -100,7 +100,7 @@
 
 	function submitSearch(e: Event) {
 		e.preventDefault()
-		const u = new URL(page.url)
+		const u = new URL(page.url.href)
 		if (searchInput.trim()) u.searchParams.set('q', searchInput.trim())
 		else u.searchParams.delete('q')
 		u.searchParams.delete('offset')
@@ -323,7 +323,7 @@
 			<p class="lib-empty-main">{isCommunityTab ? tFn('library.empty.federated') : tFn('library.empty.local')}</p>
 			<p class="lib-empty-sub">
 				{#if isCommunityTab}
-					Les assets apparaissent ici quand d'autres instances les partagent.
+					{tFn('library.empty.federated_sub')}
 				{:else}
 					{tFn('library.empty.cta')}
 				{/if}
@@ -410,9 +410,9 @@
 	position: sticky;
 	top: 0;
 	z-index: 20;
-	background: rgba(9, 9, 15, 0.92);
+	background: color-mix(in srgb, var(--nx-surface) 92%, transparent);
 	backdrop-filter: blur(16px);
-	border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+	border-bottom: 1px solid color-mix(in srgb, var(--nx-text) 6%, transparent);
 	padding: 20px 28px 0;
 }
 
@@ -431,14 +431,14 @@
 .lib-title {
 	font-size: 1.125rem;
 	font-weight: 700;
-	color: #fff;
+	color: var(--nx-text);
 	margin: 0 0 2px;
 	letter-spacing: -0.01em;
 }
 
 .lib-subtitle {
 	font-size: 0.75rem;
-	color: rgba(255, 255, 255, 0.35);
+	color: var(--nx-text-muted);
 	margin: 0;
 }
 
@@ -455,11 +455,11 @@
 }
 
 .lib-search-input {
-	background: rgba(255, 255, 255, 0.04);
-	border: 1px solid rgba(255, 255, 255, 0.08);
+	background: color-mix(in srgb, var(--nx-text) 4%, transparent);
+	border: 1px solid color-mix(in srgb, var(--nx-text) 8%, transparent);
 	border-right: none;
 	padding: 7px 14px;
-	color: #fff;
+	color: var(--nx-text);
 	font-size: 0.8125rem;
 	outline: none;
 	width: 240px;
@@ -467,7 +467,7 @@
 }
 
 .lib-search-input::placeholder {
-	color: rgba(255, 255, 255, 0.25);
+	color: var(--nx-text-muted);
 }
 
 .lib-search-input:focus {
@@ -479,16 +479,16 @@
 	align-items: center;
 	justify-content: center;
 	padding: 7px 12px;
-	background: rgba(255, 255, 255, 0.06);
-	border: 1px solid rgba(255, 255, 255, 0.08);
-	color: rgba(255, 255, 255, 0.5);
+	background: color-mix(in srgb, var(--nx-text) 6%, transparent);
+	border: 1px solid color-mix(in srgb, var(--nx-text) 8%, transparent);
+	color: var(--nx-text-muted);
 	cursor: pointer;
 	transition: background 0.15s, color 0.15s;
 }
 
 .lib-search-btn:hover {
-	background: rgba(255, 255, 255, 0.1);
-	color: #fff;
+	background: color-mix(in srgb, var(--nx-text) 10%, transparent);
+	color: var(--nx-text);
 }
 
 .lib-upload-btn {
@@ -517,7 +517,7 @@
 	padding: 9px 18px;
 	font-size: 0.75rem;
 	font-weight: 500;
-	color: rgba(255, 255, 255, 0.35);
+	color: var(--nx-text-muted);
 	background: none;
 	border: none;
 	border-bottom: 2px solid transparent;
@@ -527,12 +527,12 @@
 }
 
 .lib-tab:hover {
-	color: rgba(255, 255, 255, 0.7);
+	color: var(--nx-text-muted);
 }
 
 .lib-tab--active {
-	color: #a5b4fc;
-	border-bottom-color: #a5b4fc;
+	color: var(--nx-header-accent);
+	border-bottom-color: var(--nx-header-accent);
 }
 
 /* ── Filter strip ───────────────────────────────────────────────────────────── */
@@ -542,51 +542,51 @@
 	gap: 4px;
 	flex-wrap: wrap;
 	padding: 12px 28px;
-	border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+	border-bottom: 1px solid color-mix(in srgb, var(--nx-text) 4%, transparent);
 }
 
 .lib-filter-btn {
 	padding: 5px 12px;
 	font-size: 0.75rem;
 	font-weight: 500;
-	background: rgba(255, 255, 255, 0.03);
-	border: 1px solid rgba(255, 255, 255, 0.07);
-	color: rgba(255, 255, 255, 0.35);
+	background: color-mix(in srgb, var(--nx-text) 3%, transparent);
+	border: 1px solid color-mix(in srgb, var(--nx-text) 7%, transparent);
+	color: var(--nx-text-muted);
 	cursor: pointer;
 	transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 
 .lib-filter-btn:hover {
-	background: rgba(255, 255, 255, 0.07);
-	color: rgba(255, 255, 255, 0.75);
+	background: color-mix(in srgb, var(--nx-text) 7%, transparent);
+	color: var(--nx-text-muted);
 }
 
 .lib-filter-btn--active {
 	background: rgb(var(--nx-accent-rgb) / 0.15);
 	border-color: rgb(var(--nx-accent-rgb) / 0.35);
-	color: #a5b4fc;
+	color: var(--nx-header-accent);
 }
 
 /* ── Upload panel ───────────────────────────────────────────────────────────── */
 .lib-upload-panel {
 	margin: 0;
 	padding: 24px 28px;
-	border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-	background: rgba(255, 255, 255, 0.015);
+	border-bottom: 1px solid color-mix(in srgb, var(--nx-text) 6%, transparent);
+	background: color-mix(in srgb, var(--nx-text) 1.5%, transparent);
 }
 
 .lib-upload-title {
 	font-size: 0.9375rem;
 	font-weight: 600;
-	color: #fff;
+	color: var(--nx-text);
 	margin: 0 0 16px;
 }
 
 .lib-upload-error {
 	font-size: 0.8125rem;
-	color: #fca5a5;
-	background: rgba(239, 68, 68, 0.08);
-	border: 1px solid rgba(239, 68, 68, 0.2);
+	color: var(--nx-bad);
+	background: color-mix(in srgb, var(--nx-bad) 8%, transparent);
+	border: 1px solid color-mix(in srgb, var(--nx-bad) 25%, transparent);
 	padding: 8px 12px;
 	margin-bottom: 14px;
 }
@@ -630,16 +630,16 @@
 	font-weight: 600;
 	text-transform: uppercase;
 	letter-spacing: 0.05em;
-	color: rgba(255, 255, 255, 0.35);
+	color: var(--nx-text-muted);
 }
 
 .lib-input,
 .lib-select,
 .lib-textarea {
-	background: rgba(255, 255, 255, 0.04);
-	border: 1px solid rgba(255, 255, 255, 0.08);
+	background: color-mix(in srgb, var(--nx-text) 4%, transparent);
+	border: 1px solid color-mix(in srgb, var(--nx-text) 8%, transparent);
 	padding: 8px 12px;
-	color: #fff;
+	color: var(--nx-text);
 	font-size: 0.8125rem;
 	outline: none;
 	transition: border-color 0.15s;
@@ -653,7 +653,7 @@
 
 .lib-input::placeholder,
 .lib-textarea::placeholder {
-	color: rgba(255, 255, 255, 0.2);
+	color: var(--nx-text-muted);
 }
 
 .lib-input:focus,
@@ -705,18 +705,18 @@
 }
 .lib-file-name {
 	font-size: 0.82rem;
-	color: rgba(255, 255, 255, 0.85);
+	color: var(--nx-text);
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
-.lib-file-name--empty { color: rgba(255, 255, 255, 0.4); }
+.lib-file-name--empty { color: var(--nx-text-muted); }
 
 .lib-preview-thumb {
 	width: 72px;
 	height: 72px;
 	object-fit: cover;
-	border: 1px solid rgba(255, 255, 255, 0.08);
+	border: 1px solid color-mix(in srgb, var(--nx-text) 8%, transparent);
 	flex-shrink: 0;
 }
 
@@ -727,7 +727,7 @@
 	background: rgb(var(--nx-accent-rgb) / 0.06);
 	border: 1px solid rgb(var(--nx-accent-rgb) / 0.15);
 	font-size: 0.75rem;
-	color: #a5b4fc;
+	color: var(--nx-header-accent);
 }
 
 .lib-tip-icon {
@@ -742,13 +742,13 @@
 
 .lib-tip-title {
 	font-weight: 600;
-	color: #c7d2fe;
+	color: var(--nx-header-accent);
 }
 
 .lib-tip-size {
 	display: block;
 	margin-top: 4px;
-	color: rgba(165, 180, 252, 0.6);
+	color: var(--nx-text-muted);
 }
 
 .lib-upload-actions {
@@ -777,17 +777,17 @@
 
 .lib-cancel-btn {
 	padding: 8px 18px;
-	background: rgba(255, 255, 255, 0.05);
-	border: 1px solid rgba(255, 255, 255, 0.08);
-	color: rgba(255, 255, 255, 0.5);
+	background: color-mix(in srgb, var(--nx-text) 5%, transparent);
+	border: 1px solid color-mix(in srgb, var(--nx-text) 8%, transparent);
+	color: var(--nx-text-muted);
 	font-size: 0.8125rem;
 	cursor: pointer;
 	transition: background 0.15s, color 0.15s;
 }
 
 .lib-cancel-btn:hover {
-	background: rgba(255, 255, 255, 0.09);
-	color: rgba(255, 255, 255, 0.8);
+	background: color-mix(in srgb, var(--nx-text) 9%, transparent);
+	color: var(--nx-text-muted);
 }
 
 /* ── Body ───────────────────────────────────────────────────────────────────── */
@@ -804,7 +804,7 @@
 	display: grid;
 	grid-template-columns: repeat(auto-fill, minmax(calc(50% - 0.5px), 1fr));
 	gap: 1px;
-	background: rgba(255, 255, 255, 0.04);
+	background: color-mix(in srgb, var(--nx-text) 4%, transparent);
 }
 @media (min-width: 480px)  { .lib-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); } }
 @media (min-width: 768px)  { .lib-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); } }
@@ -813,14 +813,14 @@
 
 .lib-card {
 	display: block;
-	background: rgba(9, 9, 15, 1);
+	background: var(--nx-surface);
 	text-decoration: none;
 	transition: background 0.15s;
 	overflow: hidden;
 }
 
 .lib-card:hover {
-	background: rgba(255, 255, 255, 0.03);
+	background: color-mix(in srgb, var(--nx-text) 3%, transparent);
 }
 
 .lib-card-link {
@@ -855,7 +855,7 @@
 .lib-card-thumb {
 	aspect-ratio: 1;
 	overflow: hidden;
-	background: rgba(255, 255, 255, 0.03);
+	background: color-mix(in srgb, var(--nx-text) 3%, transparent);
 }
 
 .lib-card-thumb--icon {
@@ -879,7 +879,7 @@
 .lib-card-name {
 	font-size: 0.75rem;
 	font-weight: 500;
-	color: rgba(255, 255, 255, 0.8);
+	color: var(--nx-text-muted);
 	margin: 0 0 3px;
 	white-space: nowrap;
 	overflow: hidden;
@@ -888,12 +888,12 @@
 
 .lib-card-meta {
 	font-size: 0.6875rem;
-	color: rgba(255, 255, 255, 0.25);
+	color: var(--nx-text-muted);
 	margin: 0;
 }
 
 .lib-card-instance {
-	color: #a5b4fc;
+	color: var(--nx-header-accent);
 }
 
 /* ── Pagination ─────────────────────────────────────────────────────────────── */
@@ -905,17 +905,17 @@
 
 .lib-next-btn {
 	padding: 9px 22px;
-	border: 1px solid rgba(255, 255, 255, 0.1);
-	background: rgba(255, 255, 255, 0.03);
-	color: rgba(255, 255, 255, 0.6);
+	border: 1px solid color-mix(in srgb, var(--nx-text) 10%, transparent);
+	background: color-mix(in srgb, var(--nx-text) 3%, transparent);
+	color: var(--nx-text-muted);
 	font-size: 0.8125rem;
 	text-decoration: none;
 	transition: background 0.15s, color 0.15s;
 }
 
 .lib-next-btn:hover {
-	background: rgba(255, 255, 255, 0.06);
-	color: #fff;
+	background: color-mix(in srgb, var(--nx-text) 6%, transparent);
+	color: var(--nx-text);
 }
 
 /* ── Empty state ────────────────────────────────────────────────────────────── */
@@ -937,13 +937,13 @@
 .lib-empty-main {
 	font-size: 0.875rem;
 	font-weight: 500;
-	color: rgba(255, 255, 255, 0.4);
+	color: var(--nx-text-muted);
 	margin: 0 0 6px;
 }
 
 .lib-empty-sub {
 	font-size: 0.75rem;
-	color: rgba(255, 255, 255, 0.2);
+	color: var(--nx-text-muted);
 	margin: 0;
 }
 

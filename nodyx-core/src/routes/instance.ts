@@ -14,12 +14,17 @@ import { NODYX_VERSION } from '../utils/version'
 import { db, redis } from '../config/database'
 import { parseStoredShellTheme } from '../utils/shellTheme'
 import { rateLimit } from '../middleware/rateLimit'
-import { requireAuth } from '../middleware/auth'
+import { requireAuth, optionalAuth } from '../middleware/auth'
 import * as CommunityModel from '../models/community'
 import * as ThreadModel from '../models/thread'
 import * as TagModel from '../models/tag'
+
+const TAG_COLOR_RE = /^#[0-9a-f]{6}$/i
+const TAG_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const isUniqueViolation = (err: unknown) => (err as { code?: string } | null)?.code === '23505'
 import { io } from '../socket/io'
 import { buildIceServers } from '../socket/voice'
+import { countActiveMembers } from '../models/memberCount'
 
 // ── ESY Key (lazy-loaded once from disk) ─────────────────────────────────────
 
@@ -95,7 +100,7 @@ export default async function instanceRoutes(app: FastifyInstance) {
     const communityId = await getCommunityId()
 
     const [memberRes, threadRes, postRes, presenceSockets, brandingRes, themeRes] = await Promise.all([
-      db.query(`SELECT COUNT(*)::int AS count FROM users WHERE is_system = false`),
+      countActiveMembers(),
       db.query(`SELECT COUNT(*)::int AS count FROM threads`),
       db.query(`SELECT COUNT(*)::int AS count FROM posts`),
       io ? io.in('presence').fetchSockets() : Promise.resolve([]),
@@ -125,7 +130,7 @@ export default async function instanceRoutes(app: FastifyInstance) {
       slug:        process.env.NODYX_COMMUNITY_SLUG        || '',
       version:     NODYX_VERSION,
       community_id: communityId,
-      member_count: memberRes.rows[0].count,
+      member_count: memberRes.total,
       online_count: seen.size,
       thread_count: threadRes.rows[0].count,
       post_count:   postRes.rows[0].count,
@@ -227,13 +232,14 @@ export default async function instanceRoutes(app: FastifyInstance) {
 
   // GET /api/v1/instance/categories
   // Returns the full category tree (recursive, with thread counts)
-  app.get('/categories', { preHandler: [rateLimit] }, async (_request, reply) => {
+  // Conteúdo privado (trik_025): só as categorias que QUEM PEDE pode ver.
+  app.get('/categories', { preHandler: [rateLimit, optionalAuth] }, async (request, reply) => {
     const communityId = await getCommunityId()
     if (!communityId) {
       return reply.send({ categories: [] })
     }
 
-    const categories = await CommunityModel.getCategoryTree(communityId)
+    const categories = await CommunityModel.getCategoryTree(communityId, request.user?.userId ?? null)
     return reply.send({ categories })
   })
 
@@ -243,7 +249,7 @@ export default async function instanceRoutes(app: FastifyInstance) {
   // sous-catégories incluses). Le filtre DOIT se faire ici : filtré côté client
   // après un LIMIT 10 global, une catégorie absente des 10 derniers fils
   // renvoyait une liste vide.
-  app.get('/threads/recent', { preHandler: [rateLimit] }, async (request, reply) => {
+  app.get('/threads/recent', { preHandler: [rateLimit, optionalAuth] }, async (request, reply) => {
     const communityId = await getCommunityId()
     if (!communityId) {
       return reply.send({ threads: [] })
@@ -253,14 +259,14 @@ export default async function instanceRoutes(app: FastifyInstance) {
     const limit       = Math.min(10, Math.max(1, parseInt(query.limit ?? '10', 10) || 10))
     const categoryRaw = (query.category ?? '').trim()
 
-    const params: unknown[] = [communityId, limit]
+    const params: unknown[] = [communityId, limit, request.user?.userId ?? null]
     let categoryFilter = ''
     if (categoryRaw) {
       params.push(categoryRaw)
       categoryFilter = `AND c.id IN (
          WITH RECURSIVE sub(id) AS (
            SELECT id FROM categories
-           WHERE community_id = $1 AND (id::text = $3 OR slug = $3)
+           WHERE community_id = $1 AND (id::text = $4 OR slug = $4)
            UNION
            SELECT ch.id FROM categories ch JOIN sub ON ch.parent_id = sub.id
          )
@@ -290,6 +296,8 @@ export default async function instanceRoutes(app: FastifyInstance) {
          -- public que s'il a été explicitement mis en avant : un brouillon
          -- d'annonce ne doit pas fuiter avant publication.
          AND (c.post_min_role = 'member' OR t.is_featured = true)
+         -- Conteúdo privado por cargo (trik_025)
+         AND nx_can_view_thread(t.id, $3::uuid)
          ${categoryFilter}
        ORDER BY COALESCE(
          (SELECT MAX(p3.created_at) FROM posts p3 WHERE p3.thread_id = t.id),
@@ -339,7 +347,8 @@ export default async function instanceRoutes(app: FastifyInstance) {
       return reply.send(JSON.parse(cached))
     }
 
-    const conditions: string[] = ['c.community_id = $1', 't.showcased_at IS NOT NULL']
+    // Vitrine pública e em cache: só tópico sem restrição de cargo (trik_025)
+    const conditions: string[] = ['c.community_id = $1', 't.showcased_at IS NOT NULL', 'nx_can_view_thread(t.id, NULL)']
     const params: unknown[] = [communityId]
 
     if (categoryRaw) {
@@ -450,17 +459,59 @@ export default async function instanceRoutes(app: FastifyInstance) {
     if (!name?.trim()) {
       return reply.code(400).send({ error: 'Name required', code: 'BAD_REQUEST' })
     }
+    if (name.trim().length > 50) return reply.code(400).send({ error: 'Name too long', code: 'TAG_NAME_TOO_LONG' })
+    if (color !== undefined && (typeof color !== 'string' || !TAG_COLOR_RE.test(color))) {
+      return reply.code(400).send({ error: 'Invalid color', code: 'TAG_BAD_COLOR' })
+    }
 
-    const tag = await TagModel.create({
-      community_id: communityId,
-      name:         name.trim(),
-      color:        color ?? '#6366f1',
-    })
-    return reply.code(201).send({ tag })
+    try {
+      const tag = await TagModel.create({
+        community_id: communityId,
+        name:         name.trim(),
+        color:        color ?? '#6366f1',
+      })
+      return reply.code(201).send({ tag })
+    } catch (err) {
+      if (isUniqueViolation(err)) return reply.code(409).send({ error: 'A tag with this name already exists', code: 'TAG_NAME_TAKEN' })
+      throw err
+    }
+  })
+
+  // PATCH /api/v1/instance/tags/:id (admin) : renommer, recolorer.
+  // Les sujets gardent leur tag : seuls le nom, le slug et la couleur changent.
+  app.patch('/tags/:id', { preHandler: [rateLimit, requireAuth] }, async (request, reply) => {
+    const communityId = await getCommunityId()
+    if (!communityId) return reply.code(404).send({ error: 'Community not found', code: 'NOT_FOUND' })
+
+    const member = await CommunityModel.getMember(communityId, request.user!.userId)
+    if (!member || member.role === 'member') {
+      return reply.code(403).send({ error: 'Forbidden', code: 'FORBIDDEN' })
+    }
+
+    const { id } = request.params as { id: string }
+    if (!TAG_ID_RE.test(id)) return reply.code(400).send({ error: 'Invalid id', code: 'INVALID_REQUEST' })
+    const { name, color } = (request.body ?? {}) as { name?: unknown; color?: unknown }
+    if (name === undefined && color === undefined) return reply.code(400).send({ error: 'Nothing to update', code: 'INVALID_REQUEST' })
+    if (name !== undefined && (typeof name !== 'string' || !name.trim())) return reply.code(400).send({ error: 'Name required', code: 'BAD_REQUEST' })
+    if (typeof name === 'string' && name.trim().length > 50) return reply.code(400).send({ error: 'Name too long', code: 'TAG_NAME_TOO_LONG' })
+    if (color !== undefined && (typeof color !== 'string' || !TAG_COLOR_RE.test(color))) {
+      return reply.code(400).send({ error: 'Invalid color', code: 'TAG_BAD_COLOR' })
+    }
+
+    try {
+      const tag = await TagModel.update(id, communityId, {
+        ...(typeof name === 'string' ? { name: name.trim() } : {}),
+        ...(typeof color === 'string' ? { color } : {}),
+      })
+      if (!tag) return reply.code(404).send({ error: 'Tag not found', code: 'NOT_FOUND' })
+      return reply.send({ tag })
+    } catch (err) {
+      if (isUniqueViolation(err)) return reply.code(409).send({ error: 'A tag with this name already exists', code: 'TAG_NAME_TAKEN' })
+      throw err
+    }
   })
 
   // PUT /api/v1/instance/tags/order — admin only. Body: { ids: string[] } na ordem desejada.
-  // Registrada antes de /tags/:id para não ser engolida pelo parâmetro.
   app.put('/tags/order', { preHandler: [rateLimit, requireAuth] }, async (request, reply) => {
     const communityId = await getCommunityId()
     if (!communityId) return reply.code(404).send({ error: 'Community not found', code: 'NOT_FOUND' })
@@ -479,37 +530,6 @@ export default async function instanceRoutes(app: FastifyInstance) {
     await TagModel.reorder(communityId, ids as string[])
     const tags = await TagModel.listByCommunity(communityId)
     return reply.send({ tags })
-  })
-
-  // PATCH /api/v1/instance/tags/:id — admin only (nome e/ou cor)
-  app.patch('/tags/:id', { preHandler: [rateLimit, requireAuth] }, async (request, reply) => {
-    const communityId = await getCommunityId()
-    if (!communityId) return reply.code(404).send({ error: 'Community not found', code: 'NOT_FOUND' })
-
-    const member = await CommunityModel.getMember(communityId, request.user!.userId)
-    if (!member || member.role === 'member') {
-      return reply.code(403).send({ error: 'Forbidden', code: 'FORBIDDEN' })
-    }
-
-    const { id } = request.params as { id: string }
-    const { name, color } = request.body as { name?: string; color?: string }
-    const nome = name?.trim()
-    if (name !== undefined && (!nome || nome.length > 50)) {
-      return reply.code(400).send({ error: 'Name required (max 50)', code: 'BAD_REQUEST' })
-    }
-    if (color !== undefined && !/^#[0-9a-f]{6}$/i.test(color)) {
-      return reply.code(400).send({ error: 'Invalid color', code: 'BAD_REQUEST' })
-    }
-
-    try {
-      const tag = await TagModel.update(id, communityId, { name: nome, color })
-      return tag ? reply.send({ tag }) : reply.code(404).send({ error: 'Tag not found', code: 'NOT_FOUND' })
-    } catch (err) {
-      if ((err as { code?: string }).code === '23505') {
-        return reply.code(409).send({ error: 'A tag with this name already exists', code: 'CONFLICT' })
-      }
-      throw err
-    }
   })
 
   // DELETE /api/v1/instance/tags/:id — admin only
@@ -640,7 +660,7 @@ export default async function instanceRoutes(app: FastifyInstance) {
     const lim = Math.min(Math.max(1, Number(limit) || 4), 10)
     const communityId = await getCommunityId()
     const { rows } = await db.query(`
-      SELECT id, title, description, location, starts_at, ends_at, is_all_day,
+      SELECT id, title, description, location, starts_at, ends_at, is_all_day, timezone,
              cover_url, tags, rsvp_enabled,
              (SELECT COUNT(*) FROM event_rsvps WHERE event_id = e.id) AS rsvp_count
       FROM   events e

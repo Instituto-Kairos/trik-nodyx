@@ -45,7 +45,8 @@
 </script>
 
 <svelte:head>
-	<title>Forum</title>
+	<title>{tFn('nav.forum')} · {page.data.communityName ?? 'Nodyx'}</title>
+	<meta property="og:title" content="{tFn('nav.forum')} · {page.data.communityName ?? 'Nodyx'}" />
 </svelte:head>
 
 <div>
@@ -90,7 +91,7 @@
 					<!-- Infos -->
 					<div class="flex-1 min-w-0">
 						<h2 class="text-sm font-bold text-[var(--nx-text)] group-hover:text-[var(--nx-text)] transition-colors">
-							{cat.name?.replace(/^\p{Emoji}\s*/u, '') || cat.name}
+							{#if cat.is_private}<span title={tFn('private.category_badge_tip')} aria-label={tFn('private.category_badge_tip')}>🔒 </span>{/if}{cat.name?.replace(/^\p{Emoji}\s*/u, '') || cat.name}
 						</h2>
 						{#if cat.description}
 							<p class="text-xs text-[var(--nx-text-muted)] mt-0.5 line-clamp-1">{cat.description}</p>
@@ -160,7 +161,7 @@
 							</div>
 							<div class="flex-1 min-w-0">
 								<p class="text-xs font-semibold text-[var(--nx-text-muted)] group-hover:text-[var(--nx-text)] transition-colors">
-									{sub.name?.replace(/^\p{Emoji}\s*/u, '') || sub.name}
+									{#if sub.is_private}<span title={tFn('private.category_badge_tip')} aria-label={tFn('private.category_badge_tip')}>🔒 </span>{/if}{sub.name?.replace(/^\p{Emoji}\s*/u, '') || sub.name}
 								</p>
 								{#if sub.description}
 									<p class="text-[11px] text-[var(--nx-text-muted)] mt-0.5 line-clamp-1">{sub.description}</p>

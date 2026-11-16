@@ -7,6 +7,427 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versio
 
 ## [Unreleased]
 
+Depuis la 2.13.0, on s'est surtout occupés de ce qui se passe quand une communauté grandit et que
+tout ne se passe pas bien : qui a le droit de faire quoi dans l'équipe, comment un membre signale
+un problème, et comment Nodyx peut aider à garder le calme sans jamais décider à la place des
+humains. Le reste, c'est de l'administration refaite et des pages qui suivent enfin le thème.
+
+### Mentions : appeler quelqu'un, sans jamais tomber à côté
+
+- **Taper @ propose les bonnes personnes.** D'abord celles qui parlent dans ce salon ou ce
+  sujet, puis celles que tu mentionnes souvent, puis les autres membres, chacune avec la raison
+  (« a parlé ici il y a 2 minutes »). Les accents, les majuscules et une petite faute ne
+  comptent pas : « lea » trouve Léa. Au clavier comme à la souris, dans le chat comme dans
+  l'éditeur du forum et du wiki.
+- **Une mention suit la personne, pas son pseudo.** Elle s'affiche en puce avec son avatar et
+  son nom à jour : si Léa change de nom, ses anciennes mentions suivent. Au survol, sa carte
+  (en ligne, dans un salon vocal), avec « Profil » et « Écrire ». Un message qui te mentionne
+  est surligné. Une personne partie de la communauté devient « ancien membre ». Les anciennes
+  mentions écrites « @pseudo » continuent de prévenir.
+- **Appeler un groupe, sans abus.** `@ici` (les membres en ligne), `@équipe`, `@modération` et
+  chaque grade sont proposés à tous ; `@tous` (toute la communauté) seulement à l'équipe, et le
+  serveur le refuse même si l'interface est contournée. Avant l'envoi, tu sais ce que tes
+  mentions vont faire : une personne hors de la communauté ne sera pas prévenue, et un groupe de
+  plus de 10 personnes demande une confirmation, avec « Seulement l'équipe » ou « Retirer la
+  mention » à côté. Le seuil se règle par instance.
+- **Deux oublis réparés au passage.** Une mention dans le premier message d'un nouveau sujet du
+  forum ne prévenait personne, seules les réponses le faisaient. Et la notification sur le
+  téléphone d'une mention dans le chat affichait le message en HTML brut au lieu du texte.
+- **Celui qu'on mentionne garde la main.** Dans Réglages › Notifications : qui peut te
+  mentionner (tout le monde, les membres que tu suis, ou seulement l'équipe), tes heures calmes
+  (les mentions attendent dans la cloche, sans son ni téléphone), et les personnes dont tu ne
+  veux plus les mentions, qu'on ajoute depuis leur carte et qui n'en savent rien. L'équipe peut
+  toujours te joindre. Avant l'envoi, l'auteur voit seulement « ne recevra pas de notification »
+  ou « est en pause », jamais la raison.
+- **Les grades en couleur.** Un grade mentionné prend sa couleur, suit son nom s'il change, et
+  sa carte dit qui est dedans. `@ici` devient `@enligne` : les membres connectés.
+- **Le fantôme démasqué.** Si quelqu'un te mentionne puis efface lui-même son message dans les
+  10 minutes, tu es quand même prévenu (« … puis a supprimé son message ») et tu peux le
+  signaler à l'équipe. L'admin choisit si le texte effacé est gardé, et combien de temps (7, 30
+  ou 90 jours, ou pas du tout par défaut) ; chaque membre en est informé dans ses réglages. Une
+  suppression faite par l'équipe n'est jamais un fantôme.
+- **Les rafales regroupées.** Plusieurs mentions de la même personne au même endroit en 10
+  minutes deviennent une seule notification qui compte (« t'a mentionné 3 fois »), avec « Ne
+  plus recevoir ses mentions » à côté. Chacun peut désactiver le regroupement.
+- **Des notifications de mention claires.** Elles disent où (« dans #général »), par quel groupe,
+  si elles sont arrivées pendant les heures calmes, et « Voir » mène enfin au bon salon. Ouvrir
+  une notification la marque bien comme lue (elle restait non lue côté serveur).
+- **Administration › Mentions.** Le seuil de confirmation des groupes, le texte des mentions
+  effacées et l'affichage de l'heure de fin d'une pause, chacun expliqué par un exemple.
+- **Un « ? » sous la zone de saisie du chat.** Champ vide, une petite ligne rappelle `@` (appeler
+  quelqu'un) et `/` (faire une action) : cliquer l'écrit dans le champ. Le « ? » ouvre une aide avec
+  un exemple par touche, un bouton « Essayer » et les raccourcis clavier (en panneau du bas sur
+  téléphone). Pendant la frappe, la ligne montre les raccourcis d'envoi, comme avant.
+- **L'aide s'ouvre par-dessus, sans quitter le chat.** « Tout voir » ouvre l'aide complète en
+  fenêtre : la croix, Échap ou un clic à côté la ferment, et on retrouve son salon et son message
+  intacts. La page `/help` ouverte directement a un bouton « Retour ». Et le message en cours est
+  gardé par salon : quitter le chat puis revenir, ou changer de salon et revenir, ne le fait plus
+  perdre (il s'efface à l'envoi).
+- **Taper « / » montre une vraie liste.** Les commandes avec leur explication, au clavier (flèches,
+  Tab, Entrée, Échap), comme la liste des mentions.
+- **Taper « # » montre un endroit de la communauté.** Un salon, un événement, un sujet du forum,
+  une page du wiki, un sondage ou un tableau : la liste les propose dans cet ordre, sans tenir
+  compte des accents (« soiree » trouve « Soirée »). Dans le message, c'est une puce cliquable avec
+  l'icône de l'endroit, et la carte de l'événement ou du sujet s'affiche dessous. Le nom suit si
+  l'endroit est renommé ; un endroit supprimé, ou que le lecteur n'a pas le droit de voir, devient
+  « endroit privé », sans jamais montrer son nom. Le nom d'un événement privé n'est même pas écrit
+  dans le message : seuls ceux qui peuvent le voir le lisent.
+- **`/help` ouvre l'aide.** En tête de la liste du « / », sous « Aide », avant les jeux. Le choisir,
+  ou taper `/help` (ou `/?`) puis Entrée, ouvre l'aide par-dessus le chat : rien n'est envoyé dans
+  le salon.
+- **Des dés honnêtes.** `/roll`, `/flip`, `/8ball` et `/rps` sont maintenant tirés par le serveur
+  de la communauté, plus par le navigateur. Le résultat porte la marque « Lancé par Nodyx » :
+  impossible à imiter, un « 12 au dé » écrit à la main ne l'a pas. Chacun le lit dans sa langue,
+  et un lancer ne se modifie pas (il se supprime). Les anciens lancers restent tels quels.
+- **Une page d'aide : « Tout ce que tu peux taper ».** Toutes les mentions et commandes avec un
+  exemple, une recherche (« dé » trouve `/roll`), un filtre par touche et les raccourcis clavier. Ce
+  qui est réservé à l'équipe n'apparaît qu'à l'équipe.
+- **OctoGuard compte les vraies mentions.** La règle « Spam de mentions » ne voyait pas `@équipe`
+  (à cause du « é ») et comptait un groupe pour une seule personne. Elle compte maintenant ce que
+  le message fait vraiment : une personne vaut 1, un groupe le nombre de personnes qu'il prévient
+  (`@équipe` à 12 personnes vaut 12), et les noms accentués sont lus. Partout où OctoGuard juge :
+  chat, forum (titre compris), wiki, « Tu es sûr ? » avant l'envoi et rejeu d'une règle sur 30 jours.
+
+### Calendrier : un socle sain
+
+- **Les heures sont justes.** Un événement tapé à 20 h par un membre en France s'enregistrait 20 h
+  à l'heure du serveur, donc s'affichait 21 h l'hiver et 22 h l'été ; « demain 18 h » proposé par
+  défaut s'affichait 17 h ; le formulaire de modification ne disait pas la même heure que la page.
+  C'est maintenant le navigateur, qui connaît ton fuseau, qui donne l'heure ; une journée entière
+  reste la même date pour tout le monde.
+- **Un billet gratuit affiche « Gratuit »** (et plus « 0,00 € »), **les avatars des participants
+  s'affichent**, et « Participants » ne compte plus ceux qui ont répondu « Je ne peux pas ».
+- **La dernière place ne part qu'une fois** : deux inscriptions en même temps sur la dernière place
+  n'en font plus passer deux. Un événement annulé ou passé n'accepte plus d'inscription.
+- **Supprimer et annuler demandent une confirmation** (un clic suffisait).
+- **Les bonnes personnes gèrent un événement** : la même règle que le reste de la modération (rôle,
+  grade et garde-fou de rang), et un auteur qui a quitté la communauté ou qui a été banni n'a plus
+  la main dessus.
+- **Chacun voit l'heure dans son fuseau.** Un événement prévu à 20 h à Paris s'affiche 19 h à
+  Abidjan, 14 h à Montréal, 4 h du matin le lendemain à Tokyo, et Nodyx le dit en clair : « Chez
+  toi (heure moyenne de Greenwich) · soit 20:00 pour l'organisateur (heure d'Europe centrale) ».
+  Indispensable pour un événement en ligne (réunion, stream, raid) où tout le monde arrive au même
+  instant depuis partout. Sur la page, la liste, l'accueil, Découvrir et les cartes dans le chat.
+  Avant le chargement de la page, l'heure affichée est celle de l'organisateur, et dite comme telle.
+- **Les annonces d'événement (webhooks) ne sont plus à l'heure de Paris pour tout le monde** :
+  Discord et Slack affichent l'heure dans le fuseau de chaque lecteur, Matrix et ntfy disent celle
+  de l'organisateur avec son fuseau.
+- **« Trouver sur la carte ».** Plus besoin de chercher latitude et longitude ailleurs : tu écris
+  le lieu, tu cliques, tu choisis le bon résultat, et la carte se place toute seule. C'est le
+  serveur de la communauté qui demande à OpenStreetMap (ton navigateur ne lui parle jamais), une
+  fois par lieu (cache) et une requête par seconde au plus, selon les règles du service. Les
+  coordonnées à la main restent possibles, repliées sous « Réglage précis ». L'admin peut couper
+  la recherche avec `NODYX_GEOCODER=off`.
+- Le serveur refuse un lien d'achat qui n'est pas une adresse `https://`, des coordonnées hors du
+  globe, et une fin avant le début ; chaque refus s'affiche en une phrase claire.
+
+### Modération : une équipe, des droits, une file
+
+- **Les grades donnent enfin de vrais droits.** Les permissions d'un grade étaient enregistrées
+  mais aucune route ne les vérifiait : un grade « Modérer » ne donnait rien. Les droits d'un
+  membre sont maintenant le socle de son rôle plus ce qu'ajoutent ses grades, et un grade n'en
+  retire jamais (#935). Attribuer un grade plantait à chaque fois, c'est réparé (#928).
+- **Un bouton « Signaler »** sur les messages du forum, du chat et sur les profils. Le serveur
+  savait recevoir un signalement depuis longtemps, mais il n'y avait aucun bouton pour le faire.
+  On choisit un motif, on peut préciser, et la personne signalée ne sait pas qui l'a signalée
+  (#936).
+- **La fiche d'un membre**, pour l'équipe : qui il est, où il en est (sourdine, avertissements,
+  bannissement, signalements en attente), et les gestes possibles selon ses droits et son rang
+  (#937). On l'ouvre de partout : la liste des membres, la carte de profil, le profil public
+  (#938). Au passage, la sourdine posée par l'équipe ne faisait plus rien depuis août, elle
+  s'applique de nouveau.
+
+### OctoGuard 2 : un gardien qu'on comprend
+
+OctoGuard, l'auto-modération de Nodyx, a été repris de fond en comble. Il reste **éteint par
+défaut** : rien ne change sur ton instance tant que tu ne l'allumes pas.
+
+- **Le moteur** surveille maintenant tout le site, pas seulement le chat : forum, profils,
+  sondages et wiki (#939). Les règles écrites en expressions régulières passent par re2, qui ne se
+  laisse pas bloquer par un texte piégé. Plusieurs avertissements peuvent maintenant mener à une
+  sourdine ou à une exclusion temporaire, ce qui n'était qu'une promesse avant.
+- **Huit règles prêtes à l'emploi** (spam de liens, invitations, mentions en masse, inondation,
+  majuscules, liens des comptes tout neufs, texte corrompu, mots interdits). Sur une instance qui
+  existait déjà, aucune ne touche un membre sans ton accord : celles qui avertiraient ou
+  supprimeraient commencent en observation, elles notent ce qu'elles auraient fait sans rien
+  faire, pour que tu juges avant d'agir. Les autres se contentent de signaler à l'équipe, et les
+  mots interdits attendent ta liste (#941). Cinq modèles de communauté (jeunesse, jeu compétitif,
+  entraide, créatifs, stricte) les règlent d'un coup, avec un aperçu de ce qui change avant
+  d'appliquer (#947).
+- **Cinq crans, du plus doux au plus ferme** : observer, signaler à l'équipe, retenir, avertir,
+  supprimer. Le cran « Retenir » met un message de côté : son auteur le voit « en attente de
+  validation », personne d'autre ne le voit, et l'équipe l'approuve ou le refuse. Sans décision au
+  bout de 72 heures, il est refusé et l'auteur est prévenu (#951).
+- **Un écran pour l'admin** : une vue d'ensemble, les règles rangées par catégorie, un bac à sable
+  pour tester une phrase sans risque, un journal raconté en phrases, un guide interactif, et une
+  page pour voir ce que voit un membre (#942, #945, #946). Un interrupteur « OctoGuard actif »
+  l'allume ou l'éteint d'un clic (#950).
+- **On ne juge jamais un message seul.** Les signalements des membres, ceux d'OctoGuard et les
+  messages retenus arrivent dans une seule file. Pour chacun, l'équipe voit la conversation autour
+  et ce que l'auteur a modifié depuis : l'ancien texte barré, le nouveau à côté (#951, #949).
+  L'ancien texte n'est visible que de l'équipe et s'efface au bout de 90 jours.
+- **Un barème des sanctions, le même pour toute l'équipe.** Quatre marches, réglées une fois :
+  un avertissement, puis une sourdine, puis une plus longue, puis une exclusion temporaire. On
+  monte ou descend chaque marche d'un clic, jamais en dessous de la précédente. Depuis un
+  signalement ou la fiche d'un membre, « Appliquer le barème » dit exactement ce qui va se passer
+  avant de le faire, et une jauge montre où en est le membre. Une exclusion demande toujours un
+  motif écrit ; si l'équipe le veut, une exclusion de 7 jours ou plus attend l'accord d'une seconde
+  personne. Les écarts anciens s'effacent avec le temps, et au-delà de la dernière marche, c'est un
+  admin qui décide, jamais l'automatisme. Une règle d'OctoGuard au cran « Avertir » peut aussi
+  « suivre le barème » : chaque déclenchement fait monter le membre d'une marche, une par
+  24 heures au plus, et arrivé à l'exclusion, OctoGuard n'exclut pas, il prévient l'équipe.
+- **Une décision se conteste.** Un avertissement ou une sourdine reçus se contestent une fois,
+  dans les 30 jours, depuis la notification, le message « tu es en sourdine » du chat ou la page
+  « Avertissements et sourdines » du compte (#973). Une autre personne de l'équipe tranche dans
+  l'onglet « Contestations » des signalements : celle qui a pris la décision ne le peut pas.
+  Annuler la décision la défait vraiment (avertissement retiré, sourdine levée, une marche de
+  moins sur le barème), et le membre reçoit la réponse. Il ne voit jamais le nom de la règle ni
+  celui de la personne qui l'a sanctionné.
+- **Le bouclier anti-raid.** Quand une bande de comptes débarque d'un coup pour tout saccager, un
+  bouton dans OctoGuard (Protection, Bouclier anti-raid) lève le bouclier 30 minutes : les comptes
+  créés depuis moins d'un jour lisent sans écrire (chat, forum, messages privés), les liens du chat
+  et du forum attendent d'être relus, le chat passe à un message toutes les 10 secondes, et
+  l'équipe est prévenue (notification, webhooks d'équipe). L'équipe n'est jamais touchée. Il se
+  baisse tout seul, même si le serveur redémarre. Le bouton marche même OctoGuard éteint ; allumé,
+  OctoGuard repère la vague (trop de comptes neufs en 10 minutes, trop de messages retenus en 5)
+  et prévient l'équipe, ou lève le bouclier tout seul si on l'y autorise. Chaque membre voit avant
+  d'écrire ce qui le concerne, et le guide a un chapitre de plus : « Quand un raid arrive ».
+- **« Tu es sûr ? » avant d'envoyer.** Quand un message du chat ou du forum serait retenu ou
+  refusé, son auteur le sait avant de l'envoyer : « Ton message risque d'être retenu. Il pourrait
+  blesser quelqu'un, et personne ne l'a encore vu. » Il le reformule, ou l'envoie quand même, et
+  le message est alors jugé normalement. Rien n'est noté nulle part tant qu'il n'a pas envoyé, et
+  la règle en cause n'est jamais nommée. Éteint par défaut ; le réglage est dans « Vu par un
+  membre », avec un aperçu, et le modèle « Communauté jeunesse » l'allume.
+- **Se tromper fait partie du jeu.** « Annuler » une action d'OctoGuard ne marchait pas, il marche
+  maintenant, et une seule fois (#944). Une action marquée « faux positif » peut apprendre une
+  exception à la règle, mais seulement dans un cas sûr (« contenu » attrapé par « \*con\* ») et
+  seulement si tu coches la case : une règle ne s'adoucit jamais toute seule (#953). Avant
+  d'allumer une règle, tu peux la rejouer sur les 30 derniers jours pour voir qui elle aurait
+  concerné, sans toucher à personne (#954).
+
+Quelques trous trouvés en chemin, et bouchés :
+
+- **Cocher une règle coupait la page en deux.** Dans Mes règles, allumer « Mots interdits » (ou
+  tout autre interrupteur d'OctoGuard) faisait remonter toute l'administration hors de l'écran,
+  sans moyen de revenir. La case cachée de l'interrupteur prenait pour repère un conteneur de la
+  page que personne ne peut faire défiler. Même correctif pour deux interrupteurs de l'apparence
+  et du constructeur de page d'accueil, puis, après une seconde passe page par page, pour les
+  boutons « Choisir un fichier » de l'éditeur de profil (avatar, bannière, police), l'import d'un
+  modèle d'OctoGuard, deux panneaux d'apparence et la bibliothèque de sons.
+- **Inviter quelqu'un dans une conversation privée lui donnait tout l'historique.** Ajouter une
+  troisième personne à une conversation à deux la transformait en groupe, et le nouveau venu
+  lisait tout ce qui s'y était dit avant lui, sans que personne ne l'ait accepté. Maintenant,
+  inviter crée un nouveau groupe : ce qui s'est dit à deux reste à deux. Au passage, un groupe ne
+  chiffrait ses messages que pour un seul de ses membres, et les autres recevaient des messages
+  illisibles. Un groupe part donc en clair, et l'écran le dit avant de le créer. Un groupe compte
+  dix personnes au plus.
+- **Changer vite de conversation pouvait chiffrer un message pour la mauvaise personne.** Si
+  l'on quittait une conversation pendant que sa clé arrivait, cette clé se posait sur la
+  suivante, et le message écrit là devenait illisible pour son destinataire, même après
+  rechargement. Le message chiffré part aussi toujours dans la conversation où il a été écrit.
+- **Le lien de vérification d'e-mail expire vraiment.** L'e-mail promettait « valable 24 heures »,
+  mais l'échéance n'était jamais vérifiée : ce lien, qui ouvre une session, restait bon pour
+  toujours. Il expire maintenant au bout de 24 heures, comme annoncé. Et si on le laisse passer,
+  on peut enfin en demander un autre depuis la connexion : le bouton « Renvoyer l'email » ne
+  savait pas à quelle adresse l'envoyer et ne faisait rien. La page du lien et la connexion d'un
+  compte à vérifier parlent maintenant la langue du membre.
+  Dans la foulée : une erreur ou une réponse en cours ne suit plus d'une conversation à l'autre,
+  un message n'est plus perdu sans un mot quand la connexion n'est pas prête, et le bandeau
+  « chiffrés de bout en bout » ne s'affiche plus sur une conversation qui part en clair.
+
+- **Une exclusion temporaire pouvait devenir définitive.** Si la personne exclue tentait de se
+  reconnecter pendant son exclusion, elle restait bloquée pour toujours, même une fois sa peine
+  finie, et elle revenait sans son rôle ni son grade. Un bannissement définitif posé par-dessus
+  une exclusion redevenait temporaire. Les trois sont réparés : l'exclusion se lève vraiment à
+  son échéance, le membre retrouve sa place, et un bannissement définitif le reste. Ça n'a touché
+  personne, OctoGuard étant éteint et seul à poser ces exclusions.
+
+- Un lien caché derrière un texte (« ici ») échappait aux règles de liens du forum, et OctoGuard
+  ne lisait que les 1000 premiers caractères d'un message du forum ou du wiki (#951).
+- Modifier un message du chat contournait toutes les règles, et une sourdine n'empêchait pas de
+  réécrire ses anciens messages (#949).
+- Une règle de liens ne savait pas lire le chemin d'une adresse (`discord.com/invite`), et ses
+  réglages n'étaient pas vérifiés par le serveur (#943).
+- Lever une sourdine ne vérifiait pas le rang, alors que la poser le faisait : un modérateur
+  pouvait lever celle qu'un admin avait posée sur un autre modérateur. C'est le même garde-fou
+  dans les deux sens maintenant, et l'écran dit pourquoi quand il refuse.
+
+**Si tu veux l'allumer**, on te conseille de laisser les règles une semaine en observation, de
+regarder le journal, puis de passer au cran qui te convient. Si tu préfères qu'il ne puisse pas
+être allumé depuis l'écran, ajoute `OCTOGUARD_FORCE_OFF=true` dans le `.env` du cœur.
+
+### Administration refaite
+
+- Un kit commun pour l'administration, et les premières pages refaites avec : tableau de bord,
+  membres, grades, catégories, étiquettes, modération, journal (#925, #927). L'admin suit
+  maintenant le thème clair ou sombre, au lieu de rester toute noire.
+- Le tableau de bord annonçait 158 membres quand la page Membres en comptait 105. Il y avait cinq
+  façons de compter les membres, donc cinq chiffres différents ; il n'y en a plus qu'une (#926).
+- Après une mise à jour, l'admin ne propose plus de « mettre à jour » vers la version qu'on vient
+  d'installer (#901).
+- Ce qu'on crée se modifie ensuite. Un tag se renomme et change de couleur sans quitter les
+  discussions qui le portent (avant, il fallait le supprimer et le reposer partout). Une annonce de
+  la barre du haut se corrige : texte, couleur, date de fin. Un webhook affiche « Modifier » dans
+  la liste, et le clic descend jusqu'à son réglage, qui restait caché sous la liste. L'heure de fin
+  d'une annonce est enregistrée dans ton fuseau : 18 h à Paris n'est plus 19 h.
+- Les tags servent enfin à quelque chose. Au-dessus de la liste d'une catégorie, « Filtrer par
+  tag » n'affiche que les sujets qui le portent, avec une adresse qu'on peut partager ; dans un
+  sujet, cliquer un tag mène au même filtre. La page Tags de l'admin explique à quoi ils servent,
+  montre ce que voient les membres, propose huit idées à créer en un clic (Question, Résolu,
+  Tutoriel…) et compte les discussions de chaque tag : supprimer un tag dit de combien de sujets
+  il sera retiré.
+- L'équipe de modération change les tags d'un sujet sur place (« Changer les tags », à côté des
+  tags) : l'auteur choisit en écrivant, l'équipe range ensuite. Un tag en double ou disparu ne
+  fait plus échouer l'enregistrement d'un sujet, et un tag inconnu est refusé avant d'effacer
+  ceux qui étaient posés.
+
+### Interface : le thème clair, page après page
+
+Les messages privés, la musique, le jardin, la connexion et l'inscription, les notifications, la
+recherche, les sondages, la bibliothèque, Discover, l'éditeur de profil, les réglages, les
+tableaux blancs, la page À propos, l'annuaire, la réputation et les statuts suivent maintenant le
+thème clair ou sombre, tout comme le tiroir des salons et la barre du bas sur mobile (#913, #915,
+#916, #919 à
+#924). Le profil suit le thème du site, sauf si son propriétaire
+s'en est donné un (#918). Le QR code de Signet s'affiche enfin dans les réglages (#923).
+
+Quand le chat refusait un message, il affichait ce que le serveur lui disait, tel quel : un code
+technique (`channel_read_only`) dans un salon en lecture seule, ou une phrase en français même pour
+qui avait choisi une autre langue. C'est maintenant une vraie phrase, dans la langue du membre. Et
+un message privé refusé ne disparaît plus sans un mot : on dit pourquoi, et le texte revient dans
+le champ pour être corrigé.
+
+### Webhooks : ta communauté parle aux autres outils
+
+- **Plusieurs destinations, chacune de sa sorte.** Dans Administration, Intégrations, Webhooks : un
+  salon Discord ou Matrix pour annoncer les nouveautés, ton téléphone (ntfy) pour la modération,
+  ton propre outil (n8n, Node-RED, un script) en JSON signé. Les annonces publiques et les alertes
+  de modération sont séparées dès la liste : une alerte de modération nomme des membres, elle ne
+  part jamais vers une destination publique, et le serveur le refuse même si l'écran se trompait.
+- **De quoi annoncer** : nouvel article du forum (un message retenu seulement une fois approuvé),
+  article mis en avant, nouveau morceau, événement public, sondage, page wiki publique, live qui
+  commence, nouvelle arrivée (éteint par défaut). Côté modération : sanctions, signalements,
+  messages retenus, contestations, barème, réglages d'OctoGuard, observations.
+- **Fait pour qu'on s'en serve** : un guide pas à pas par outil, un aperçu du message tel qu'il
+  arrivera, « Envoyer un test » qui répond tout de suite et explique un échec, l'historique des 50
+  derniers envois. Un envoi raté est réessayé après 1 puis 10 minutes ; après 10 échecs de suite la
+  destination se met en pause et les admins sont prévenus. L'ancien webhook d'OctoGuard est repris
+  tel quel.
+
+### Sous le capot
+
+- **Sécurité : le contenu d'une page du wiki est nettoyé.** Il était enregistré tel quel, puis
+  affiché tel quel : un membre de l'équipe pouvait y glisser du HTML trompeur (faux contenu, faux
+  formulaire). Le code, lui, était déjà bloqué par la politique de sécurité du navigateur, qui
+  restait la seule ligne de défense. Le contenu passe maintenant par le même nettoyeur que le
+  forum, à l'enregistrement et à la lecture. Aucune page n'avait été piégée ; les pages
+  existantes s'affichent à l'identique. Au passage, une vidéo intégrée dont la source est refusée
+  ne laisse plus de cadre vide dans un message.
+- **Sécurité : un pseudo ne peut plus contenir de HTML.** Il acceptait n'importe quel signe et
+  s'affiche parfois à l'intérieur d'un texte mis en forme (« Envoie ce lien à … », « En réponse
+  à … ») : un pseudo comme `<img …>` devenait une balise. Deux serrures : l'inscription refuse
+  les signes < > " ' ` & / \ et les caractères invisibles (la page le dit pendant la frappe), et
+  chaque nom inséré dans un texte mis en forme est échappé, y compris le nom affiché, libre.
+  Un test fait échouer la construction si un nouveau texte oublie l'échappement. Aucun compte
+  existant n'était concerné.
+- **Les événements suivent les mêmes règles que le forum.** La description d'un événement avait
+  son propre nettoyeur, plus laxiste : une image hébergée sur un autre site restait en place, et
+  chaque personne qui ouvrait l'événement la chargeait chez ce site, qui voyait son adresse IP.
+  Elle est maintenant recopiée sur l'instance, comme au forum. Les liens vers les domaines
+  bloqués sont retirés. Dans l'autre sens, l'événement garde enfin ce que l'éditeur propose et
+  que l'ancien nettoyeur jetait sans prévenir : le lecteur audio et les ancres des titres.
+  L'image de couverture, elle, doit être un fichier envoyé sur l'instance : l'interface le
+  faisait déjà, un appel direct à l'API ne peut plus y mettre l'image d'un autre site. Une
+  ancienne couverture reste en place tant qu'on n'y touche pas.
+- **Sécurité : un événement « Privé » est vraiment privé.** La liste du calendrier le réservait
+  aux membres, mais son lien direct s'ouvrait pour n'importe qui, même sans compte, et un
+  compte extérieur à la communauté pouvait s'y inscrire. Les deux sont fermés. Un seul
+  événement privé existait sur nos instances, sur l'instance de démonstration.
+- **Le chat garde ce que l'éditeur propose.** Il avait sa propre liste de ce qui est permis,
+  restée en retard sur celle du forum : un lecteur audio ou un direct Twitch disparaissait à
+  l'envoi sans prévenir, et une vidéo refusée laissait une boîte vide dans le message. Le chat
+  et les messages privés utilisent maintenant les mêmes règles que le forum, avec une seule
+  différence : les titres n'y portent pas d'ancre.
+- **L'éditeur ne perd plus rien et se laisse faire.** Coller une capture d'écran ou déposer
+  une image l'envoie et l'insère directement (avant, rien ne se passait). Deux boutons Annuler
+  et Refaire, pour le téléphone où il n'y a pas de Ctrl+Z. Et un brouillon automatique, gardé
+  dans ton navigateur seulement : en revenant sur la page, l'éditeur te propose de reprendre
+  ton texte ou de l'effacer. Le brouillon s'efface à l'envoi et à la déconnexion.
+- **Un lien Nodyx devient une carte.** Partager un sujet, une réponse ou un événement dans le
+  chat ou dans le forum affiche sa carte sous le message : titre, auteur, réponses et tags pour
+  un sujet, extrait pour une réponse, date, lieu, image et participants pour un événement, avec
+  un bouton « Je participe » qu'on défait d'un second clic. La carte est lue au moment où tu la
+  vois, avec tes droits : un contenu supprimé ou qui ne t'est pas ouvert devient « Contenu
+  indisponible », sans rien en révéler. Trois cartes au plus par message, un message qui n'est
+  qu'un lien ne montre que sa carte, et l'auteur d'un message du chat peut retirer la carte (le
+  lien reste) puis la remettre. Les liens vers d'autres sites ne changent pas.
+- **Dans l'éditeur, c'est toi qui choisis.** Coller l'adresse d'un sujet, d'une réponse ou d'un
+  événement l'insère avec son titre et montre l'aperçu de sa carte sous la ligne. Une petite
+  bulle propose « Carte », « Lien simple » (le lien sans carte) ou « Texte brut » (l'adresse telle
+  quelle), et Ctrl+Z revient au lien exactement comme tu l'as collé.
+- **Les cartes partout où l'on publie.** Le fil d'actu, la page d'un statut, les messages d'un
+  profil et le chat d'un salon vocal affichent eux aussi la carte d'un lien Nodyx, avec les mêmes
+  règles que le chat et le forum. Un statut ne garde plus d'aperçu figé d'une page de Nodyx (le
+  serveur allait copier sa propre page) : la carte, à jour, le remplace. Sans réponse ni inscrit,
+  une carte le dit en clair (« Aucune réponse pour l'instant », « Personne n'est encore inscrit »)
+  au lieu d'un « 0 ».
+- **Les cartes dans le wiki et les messages privés.** Dans une page du wiki, un lien seul sur sa
+  ligne devient une carte, à sa place dans l'article ; un lien dans une phrase reste un lien. Dans
+  un message privé chiffré, aucune carte ne s'affiche toute seule : afficher une carte demande au
+  serveur ce qu'il y a derrière le lien, et Nodyx ne doit pas apprendre ce qui circule dans une
+  conversation qui lui est cachée. Un bouton « Voir l'aperçu » laisse le choix, avec une option
+  « toujours » par conversation, gardée sur ton appareil seulement et effacée à la déconnexion.
+  Les anciens messages non chiffrés ont leurs cartes comme le chat.
+- **Toutes les pages sont plus légères.** L'éditeur de texte était chargé par chaque page de
+  Nodyx, même celles où l'on n'écrit rien, l'accueil compris : environ 40 Ko compressés de trop
+  à chaque visite. Il ne se charge plus que là où il s'affiche. Si son chargement échoue (une
+  page restée ouverte pendant une mise à jour, par exemple), un champ texte simple prend le
+  relais, pré-rempli, pour ne jamais perdre ce qu'on écrit.
+  Dans l'éditeur lui-même, la coloration du code (environ 50 Ko) n'est plus chargée qu'au
+  premier bloc de code : écrire un message sans code ne la télécharge plus.
+- **Chaque page télécharge deux fois moins.** Les neuf langues de Nodyx partaient avec chaque
+  page, alors qu'on n'en lit qu'une : 437 Ko compressés sur 666. La page ne charge plus que la
+  langue affichée, et l'anglais en plus quand elle n'est pas encore entièrement traduite. Pour
+  un visiteur francophone, la première visite passe d'environ 666 à 341 Ko. Changer de langue
+  reste instantané à l'œil : la nouvelle se charge au moment du choix.
+- **Annuler un événement privé ne le rend plus public.** Le bouton « Annuler l'événement » (et
+  « Rétablir ») n'envoie qu'une seule information, mais le serveur réécrivait au passage les autres
+  réglages avec leurs valeurs de création : l'événement devenait public, perdait sa description et
+  ses tags, et les inscriptions étaient coupées. Une modification ne change plus que ce qu'on
+  envoie. Si un de tes événements annulés a perdu sa description ou est passé en public, il faut
+  le corriger à la main depuis sa page de modification.
+- **Sécurité : un événement privé n'est plus annoncé à toutes les connexions.** Créer, modifier,
+  supprimer un événement ou s'y inscrire était diffusé en direct à toutes les personnes connectées,
+  y compris un compte retiré de la communauté qui gardait sa session : titre, description, lieu
+  et inscrits d'un événement privé compris. Seul un événement public est encore annoncé, et sans
+  identifiant interne.
+- **Sécurité : le serveur ne s'appelle plus lui-même sur demande.** Le webhook d'OctoGuard et la
+  recopie des images collées dans le forum ou les tâches allaient chercher n'importe quelle adresse,
+  y compris celles du serveur et de son réseau local. Les deux passent maintenant par la garde
+  partagée, vérifiée au moment même de la connexion, sans suivre de redirection à l'aveugle. Le
+  réseau local reste possible pour le webhook si l'admin du serveur l'autorise
+  (`OCTOGUARD_WEBHOOK_ALLOW_PRIVATE`). On peut aussi enfin effacer l'adresse ou le secret du webhook.
+- Toutes les applications du dépôt passent à SvelteKit 3 (#904, #905, #907, #908, #909, #914), ce
+  qui ferme les dernières alertes Dependabot de ce côté.
+- Les instances secondaires envoient enfin leurs ressources à l'annuaire : elles se les envoyaient
+  à elles-mêmes depuis des mois et essuyaient un refus toutes les heures (#902).
+- La version affichée par nodyx.dev et start.nodyx.org suit le déploiement, sans redémarrage
+  (#900).
+- La porte des traductions repère aussi le français sans accent (#917), et un avertissement de
+  fastify au démarrage a disparu (#912). Mises à jour Rust dans le serveur TURN, le serveur et le
+  gossip (#910, #911).
+- Un peu de ménage dans les traductions : 158 phrases que plus rien n'affichait (l'ancien
+  OctoGuard, l'ancienne page des signalements, quelques restes) quittent les fichiers de langue.
+  Pour les traducteurs, c'est autant de lignes qu'ils n'auront pas à traduire pour rien.
+- **Nodyx te tutoie.** Le français mélangeait « tu » et « vous », parfois dans la même phrase.
+  C'est « tu » partout maintenant : l'interface, les e-mails, les messages d'erreur. Une
+  communauté, ça se tutoie, et ça parle plus simplement aux plus jeunes. Le « vous » reste là
+  où il veut dire « vous tous », et dans les textes juridiques.
+
+Merci à celles et ceux qui animent leur communauté sur Nodyx et nous disent quand quelque chose
+coince. C'est pour vous qu'on prend le temps de bien faire, même quand ça prend plus longtemps que
+prévu.
+
 ---
 
 ## [2.13.0] — 2026-10-29

@@ -128,14 +128,15 @@ export interface ApplyMuteInput {
   appliedBy?: string | null      // null = action automatique OctoGuard
   ruleId?:    string | null      // si déclenché par une règle auto-mod
   eventId?:   string             // si non fourni, généré ici (UUID v4)
+  silent?:    boolean            // true : l'appelant écrit lui-même au journal (barème)
 }
 
 export async function applyMute(input: ApplyMuteInput): Promise<ChatMuteRow | null> {
   try {
     const expiresAt = durationToExpiresAt(input.duration ?? null)
     const { rows } = await db.query<ChatMuteRow>(
-      `INSERT INTO chat_mutes (user_id, channel_id, reason, applied_by, expires_at)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO chat_mutes (user_id, channel_id, reason, applied_by, expires_at, rule_id)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id, user_id, channel_id, reason, applied_by,
                  applied_at::text AS applied_at,
                  expires_at::text AS expires_at`,
@@ -145,6 +146,7 @@ export async function applyMute(input: ApplyMuteInput): Promise<ChatMuteRow | nu
         input.reason ?? null,
         input.appliedBy ?? null,
         expiresAt,
+        input.ruleId ?? null,
       ]
     )
     const row = rows[0]
@@ -152,12 +154,13 @@ export async function applyMute(input: ApplyMuteInput): Promise<ChatMuteRow | nu
 
     invalidateMuteCache(input.userId)
 
-    // Log dans admin_audit_log
-    logOctoGuardAction({
+    // Log dans admin_audit_log (sauf si l'appelant le fait lui-même)
+    if (!input.silent) logOctoGuardAction({
       action:       'octoguard.mute_user',
       target_type:  'user',
       target_id:    input.userId,
       target_label: input.reason ?? null,
+      actor_id:     input.appliedBy ?? null,
       metadata: {
         event_id:    input.eventId ?? randomUUID(),
         actor:       input.appliedBy ? 'admin' : 'octoguard:auto',
@@ -194,6 +197,7 @@ export async function removeMute(muteId: string, removedBy?: string | null): Pro
       target_type:  'user',
       target_id:    rows[0].user_id,
       target_label: null,
+      actor_id:     removedBy ?? null,
       metadata: {
         event_id:  randomUUID(),
         actor:     removedBy ? 'admin' : 'octoguard:auto',

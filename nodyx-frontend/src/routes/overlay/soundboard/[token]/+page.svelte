@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte'
-	import { browser } from '$app/environment'
+	import { browser } from '$app/env'
 	import { page } from '$app/state'
-	import { PUBLIC_API_URL } from '$env/static/public'
+	import { PUBLIC_API_URL } from '$app/env/public'
 	import { t } from '$lib/i18n'
 
 	const tFn = $derived($t)
@@ -353,7 +353,7 @@
 		<div class="absolute top-6 left-1/2 -translate-x-1/2 px-4 py-2 bg-zinc-950/85 backdrop-blur-md border border-emerald-500/50 rounded-full shadow-2xl flex items-center gap-2 text-xs pointer-events-none animate-fade-out">
 			<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
 			<span class="text-zinc-100 font-medium">{tFn('overlay_sb.ready')}</span>
-			<span class="text-zinc-500">· appuie sur un bouton 🎵 de ton Stream Deck</span>
+			<span class="text-zinc-500">{tFn('overlay_sb.ready_hint')}</span>
 		</div>
 	{/if}
 	{#if nowPlaying && config.osdPosition !== 'hidden'}

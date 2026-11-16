@@ -118,6 +118,29 @@ export async function searchMentionTargets(
 	return [...membros, ...aliases].slice(0, limit)
 }
 
+/**
+ * Só os aliases de personagem (o chat usa o autocomplete de pessoas/grupos do
+ * upstream, `$lib/mentions`, e lista os aliases logo abaixo). 503 = módulo RPG
+ * desligado: lista vazia, nada quebra.
+ */
+export async function searchAliasTargets(
+	api: ApiFetch,
+	q: string,
+	token?: string,
+	limit = 6,
+	category?: string,
+): Promise<MentionTarget[]> {
+	const init: RequestInit = token ? { headers: { Authorization: `Bearer ${token}` } } : {}
+	const res = await api(`/trik/aliases?q=${encodeURIComponent(q)}${categoryParam(category)}`, init).catch(() => null)
+	if (!res?.ok) return []
+	try {
+		const aliases = ((await res.json())?.aliases ?? []) as AliasResposta[]
+		return aliases.slice(0, limit).map((a) => ({ username: a.username, avatar: a.avatar, alias: a.alias, playerName: a.player_name }))
+	} catch {
+		return []
+	}
+}
+
 // ── NPCC (`@npcc:`) ───────────────────────────────────────────────────────────
 // Um NPCC é um tópico da categoria NPCC. Vira um alias como os outros, só que o
 // alvo entre parênteses é `npcc:<thread id>` em vez de um username : o render
