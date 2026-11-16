@@ -42,13 +42,15 @@ export async function create(data: {
   thread_id?: string | null
   post_id?:   string | null
   status_post_id?: string | null
+  /** Court contenu propre au type (ex. motif d'un avertissement), migration 128 */
+  meta?:      Record<string, unknown> | null
 }): Promise<Notification> {
   const { rows } = await db.query<Notification>(
-    `INSERT INTO notifications (user_id, type, actor_id, thread_id, post_id, status_post_id)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO notifications (user_id, type, actor_id, thread_id, post_id, status_post_id, meta)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING *`,
     [data.user_id, data.type, data.actor_id ?? null, data.thread_id ?? null, data.post_id ?? null,
-     data.status_post_id ?? null]
+     data.status_post_id ?? null, data.meta ? JSON.stringify(data.meta) : null]
   )
   return rows[0]
 }
@@ -102,6 +104,7 @@ export async function listForUser(
             t.category_id  AS category_id,
             t.slug         AS thread_slug,
             cat.slug       AS category_slug,
+            ch.name        AS channel_name,
             CASE WHEN p.id IS NULL THEN NULL ELSE (
               SELECT COUNT(*)::int FROM posts p2
               WHERE p2.thread_id = p.thread_id AND p2.created_at < p.created_at
@@ -111,6 +114,7 @@ export async function listForUser(
      LEFT JOIN threads    t   ON t.id  = n.thread_id
      LEFT JOIN categories cat ON cat.id = t.category_id
      LEFT JOIN posts      p   ON p.id  = n.post_id
+     LEFT JOIN channels   ch  ON ch.id::text = n.meta->>'channel_id'
      WHERE n.user_id = $1
      ORDER BY n.created_at DESC
      LIMIT $2`,

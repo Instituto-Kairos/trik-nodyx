@@ -17,6 +17,7 @@
     // l'éditeur riche s'ouvre en plein écran sur mobile, en carte sur desktop.
 
     import { socket } from '$lib/socket'
+    import { can } from '$lib/permissions'
     import { page } from '$app/state'
     import { linkifyHtml } from '$lib/linkify'
     import { renderSpoilers } from '$lib/spoiler'
@@ -24,6 +25,11 @@
     import NodyxEditor from '$lib/components/editor/NodyxEditor.svelte'
     import { t } from '$lib/i18n'
     import { messagesVisibles } from '$lib/chatFil'
+	import LinkCards from '$lib/components/LinkCards.svelte'
+	import { createSoleSet } from '$lib/linkCardsSole.svelte'
+	import { mentionChips } from '$lib/actions/mentionChips'
+	import { placeChips } from '$lib/actions/placeChips'
+	const sole = createSoleSet() // D40 : messages réduits à leur carte
 
     const tFn = $derived($t)
 
@@ -76,10 +82,11 @@
     let editorKey   = $state(0)                     // remonte l'éditeur à chaque ouverture
 
     // ── Qui suis-je (pour la modération) ──────────────────────────────────────
-    const me      = $derived((page.data as { user?: { id?: string; role?: string } })?.user)
+    const me      = $derived((page.data as { user?: { id?: string; role?: string; permissions?: string[] } })?.user)
     const userId  = $derived(me?.id ?? '')
-    const isAdmin = $derived(me?.role === 'owner' || me?.role === 'admin')
-    const canActOn = (m: StageMessage) => m.author_id === userId || isAdmin
+    // Supprimer le message d'un autre : moderate_content (lib/permissions.ts)
+    const canModerateContent = $derived(can(me as never, 'moderate_content'))
+    const canActOn = (m: StageMessage) => m.author_id === userId || canModerateContent
 
     const emojis = $derived($customEmojisStore)
 
@@ -269,9 +276,10 @@
                                 </div>
                             {/if}
                         </div>
-                        <div class="stage-msg break-words text-[13px]" style="color: rgb(209,213,219)">
+                        <div class="stage-msg break-words text-[13px]" style="color: rgb(209,213,219)" hidden={sole.has(msg.id)} use:mentionChips={{ html: msg.content ?? '', token: (page.data as any)?.token ?? null, me: (page.data as any)?.user?.id ?? null }} use:placeChips={{ html: msg.content ?? '', token: (page.data as any)?.token ?? null }}>
                             {@html renderCustomEmojis(linkifyHtml(renderSpoilers(msg.content ?? '')), emojis)}
                         </div>
+                        <div class="stage-cards"><LinkCards html={msg.content ?? ''} token={(page.data as any)?.token ?? null} onsole={(v) => sole.set(msg.id, v)} /></div>
                     </div>
                 </div>
             {/if}
@@ -359,6 +367,14 @@
 {/if}
 
 <style>
+    /* Le chat d'un salon vocal est toujours sombre : ses cartes aussi, quel que soit le
+       thème du site (sinon une carte blanche sur le panneau sombre). */
+    .stage-cards {
+        --nx-surface: rgb(31 41 55); --nx-text: rgb(229 231 235);
+        --nx-text-muted: rgb(156 163 175); --nx-text-faint: rgb(107 114 128);
+        color-scheme: dark;
+    }
+
     /* Le contenu vient de l'éditeur (HTML assaini côté serveur) : on borne juste
        ce qui pourrait casser la colonne étroite du panneau. */
     .stage-msg :global(p)   { margin: 0; }

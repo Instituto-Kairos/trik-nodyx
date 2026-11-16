@@ -1,3 +1,4 @@
+import { PLACE_VALUE } from '../services/places'
 import sanitizeHtml from 'sanitize-html'
 import { isContainedUploadPath } from './uploadPath'
 
@@ -24,7 +25,9 @@ const ALLOWED_TAGS = [
 
 const ALLOWED_ATTRS: sanitizeHtml.IOptions['allowedAttributes'] = {
   '*':      ['class', 'data-align', 'data-type'],
-  'span':   ['class', 'style', 'data-align', 'data-type'],
+  // data-mention : une mention liée à la PERSONNE (« u:<id> ») ou à un groupe
+  // (« g:ici »…), voir SPECS/NODYX_MENTIONS_CDC.md. Valeur vérifiée par transformTags.span.
+  'span':   ['class', 'style', 'data-align', 'data-type', 'data-mention'],
   'p':      ['class', 'style', 'data-align', 'data-type'],
   // id sur les titres : permet les sommaires à ancres (#section). Pas d'id
   // ailleurs pour limiter le risque de DOM clobbering.
@@ -39,7 +42,11 @@ const ALLOWED_ATTRS: sanitizeHtml.IOptions['allowedAttributes'] = {
   'h2':     ['class', 'id', 'style', 'data-align', 'data-type'],
   'h3':     ['class', 'id', 'data-align', 'data-type'],
   'h4':     ['class', 'id', 'data-align', 'data-type'],
-  'a':      ['href', 'target', 'rel'],
+  // data-card="off" : l'auteur a choisi d'afficher ce lien Nodyx SANS sa carte
+  // (« Retirer la carte », « Lien simple »). Seule la valeur « off » passe : toute
+  // autre est retirée en entier par transformTags.a (une liste de valeurs laisserait
+  // un « data-card » vide).
+  'a':      ['href', 'target', 'rel', 'data-card', 'data-place'],
   'img':    ['src', 'alt', 'width', 'height'],
   'iframe': ['src', 'width', 'height', 'frameborder', 'allowfullscreen', 'allow'],
   'audio':              ['src', 'controls', 'preload'],
@@ -83,10 +90,31 @@ const BLOCKED_LINK_DOMAINS = new Set([
   ..._envBlocked,
 ])
 
-export function sanitize(raw: string): string {
+// Les titres SANS id : même liste, moins l'ancre. Voir SanitizeOptions.headingIds.
+const ATTRS_NO_HEADING_IDS: sanitizeHtml.IOptions['allowedAttributes'] = Object.fromEntries(
+  Object.entries(ALLOWED_ATTRS as Record<string, string[]>).map(([tag, attrs]) =>
+    [tag, /^h[1-4]$/.test(tag) ? attrs.filter(a => a !== 'id') : attrs]),
+)
+
+/** Valeurs acceptées pour data-mention : une personne (u:<uuid>) ou un groupe connu. */
+export const MENTION_VALUE = /^(?:u:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|g:(?:ici|equipe|moderation|tous|grade:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))$/
+
+export interface SanitizeOptions {
+  /**
+   * Garder l'id des titres (ancres d'un sommaire). Vrai par défaut : forum, wiki,
+   * tâches, événements. FAUX pour le chat et les messages privés : la page du chat
+   * retrouve sa zone de saisie par getElementById('chat-input'), et les messages
+   * sont AU-DESSUS d'elle dans le document ; un titre id="chat-input" serait trouvé
+   * en premier et détournerait la saisie. Un sommaire n'a pas d'usage dans un
+   * message de chat : on perd une ancre, pas une fonction.
+   */
+  headingIds?: boolean
+}
+
+export function sanitize(raw: string, opts: SanitizeOptions = {}): string {
   return sanitizeHtml(raw, {
     allowedTags: ALLOWED_TAGS,
-    allowedAttributes: ALLOWED_ATTRS,
+    allowedAttributes: opts.headingIds === false ? ATTRS_NO_HEADING_IDS : ALLOWED_ATTRS,
     // Embeds vidéo : uniquement les domaines de lecteur OFFICIELS de chaque
     // plateforme (pas une page quelconque du site). Twitch permet d'intégrer un
     // live dans un post : le LECTEUR vit sur player.twitch.tv, le CHAT sur
@@ -103,6 +131,20 @@ export function sanitize(raw: string): string {
       'player.twitch.tv', 'www.twitch.tv',
     ],
     transformTags: {
+      'span': (tagName, attribs) => {
+        const m = attribs['data-mention']
+        if (m === undefined || MENTION_VALUE.test(m)) return { tagName, attribs }
+        const cleaned: Record<string, string> = { ...attribs }
+        delete cleaned['data-mention']
+        return { tagName, attribs: cleaned }
+      },
+      'a': (tagName, attribs) => {
+        const cleaned: Record<string, string> = { ...attribs }
+        if (cleaned['data-card'] !== undefined && cleaned['data-card'] !== 'off') delete cleaned['data-card']
+        // « # » (lot C4) : une marque d'endroit « <sorte>:<uuid> », rien d'autre
+        if (cleaned['data-place'] !== undefined && !PLACE_VALUE.test(cleaned['data-place'])) delete cleaned['data-place']
+        return { tagName, attribs: cleaned }
+      },
       'nodyx-audio-player': (tagName, attribs) => {
         if (attribs.cover && !isAllowedImgSrc(attribs.cover)) {
           const cleaned: Record<string, string> = { ...attribs }
@@ -125,6 +167,9 @@ export function sanitize(raw: string): string {
       if (frame.tag === 'audio')               return !isAllowedAudioSrc(frame.attribs?.src ?? '')
       if (frame.tag === 'nodyx-audio-player')  return !!frame.attribs?.src && !isAllowedAudioSrc(frame.attribs.src)
       if (frame.tag === 'nodyx-track')         return !isAllowedAudioSrc(frame.attribs?.src ?? '')
+      // Une iframe dont la source a été refusée (domaine inconnu, srcdoc) reste
+      // sinon une boîte VIDE de 300 × 150 dans la page : on la retire entière.
+      if (frame.tag === 'iframe')              return !frame.attribs?.src
       if (frame.tag === 'a') {
         const href = frame.attribs?.href ?? ''
         try {

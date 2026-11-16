@@ -56,7 +56,14 @@ export const actions: Actions = {
 			return fail(res.status, {
 				error: json.error,
 				code: json.code ?? null,
+				i18n_key: json.i18n_key ?? null,
 			});
+		}
+
+		// 202 : le fil est retenu pour relecture (OctoGuard, cran « Retenir »). Il
+		// n'existe pas encore : on reste sur la page et on le montre en attente.
+		if (res.status === 202) {
+			return { held: true, heldTitle: title, heldContent: content, pollDropped: !!pollJson };
 		}
 
 		// Si un sondage est joint, le créer avec le thread_id

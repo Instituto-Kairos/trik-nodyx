@@ -1,0 +1,2984 @@
+<script lang="ts">
+	import { onMount, onDestroy, untrack } from 'svelte'
+	import { page } from '$app/state'
+	import { apiFetch } from '$lib/api'
+	import { anchoredPopover } from '$lib/actions/anchoredPopover'
+	import { t, locale } from '$lib/i18n'
+	import { TextSelection } from '@tiptap/pm/state'
+	import { closeHistory } from '@tiptap/pm/history'
+	import { toInternalPath, cardFor } from '$lib/linkCards'
+	import { internalLinkAt, linkCardPreviewPlugin, type LinkHit } from './linkCardPreview'
+	import MentionList from '$lib/components/MentionList.svelte'
+	import MentionWarnings from '$lib/components/MentionWarnings.svelte'
+	import { suggestMentions, insertLabel, refOf, refsIn, MENTION_TRIGGER, type MentionSuggestion } from '$lib/mentions'
+	import { draftKey, readDraft, writeDraft, removeDraft } from '$lib/editorDrafts'
+	import PlaceList from '$lib/components/PlaceList.svelte'
+	import CommandHelp from '$lib/components/CommandHelp.svelte'
+	import { suggestPlaces, publicMark, pastedMark, placeFor, PLACE_TRIGGER, PLACE_VALUE, type Place, type PlaceKind } from '$lib/places'
+	import { placeIconSvg } from '$lib/actions/placeChips'
+	import { customEmojisStore, loadCustomEmojis, wrapEmojiShortcodes } from '$lib/customEmojis'
+	import { get } from 'svelte/store'
+	import { searchAliasTargets, searchNpccTargets, searchNpcTargets, mentionInsertText, type MentionTarget } from '$lib/mentionTargets'
+
+	let {
+		name       = 'content',
+		placeholder = '',
+		initialContent = '',
+		compact    = false,
+		mentions   = false,
+		mentionCategory = undefined,
+		scramble   = false,
+		customEmojis = false,
+		onchange   = (_html: string) => {},
+	}: {
+		name?:           string
+		placeholder?:    string
+		initialContent?: string
+		compact?:        boolean
+		/**
+		 * Liga o autocomplete de `@` (membros + aliases de personagem).
+		 *
+		 * Opt-in, e não o contrário: o editor é compartilhado por dez telas, mas o
+		 * texto inserido (`@[Nome](username)`) só é RENDERIZADO onde alguém o
+		 * passou por renderAliasMentions() — hoje, o tópico do fórum. Ligado por
+		 * padrão, as outras telas gravariam uma marcação que apareceria crua.
+		 */
+		mentions?:       boolean
+		/** Categoria do fórum: dentro do AU (trik_013) as menções são só do AU. */
+		mentionCategory?: string
+		/** Mostra o botão de texto ofuscado (só o Narrador; o core também valida).
+		 *  A extensão fica sempre ligada: quem edita um post do Narrador não apaga o efeito. */
+		scramble?:       boolean
+		/** Aba de emojis da instância no seletor: insere `:atalho:`, que só vira
+		 *  imagem onde o render passa por renderCustomEmojis() (hoje: fórum, chat, DM). */
+		customEmojis?:   boolean
+		onchange?:       (html: string) => void
+	} = $props()
+
+	// ── i18n ─────────────────────────────────────────────────────────────────
+	const tFn = $derived($t)
+
+	// ── Auth token (used for authenticated uploads) ─────────────────────────
+	const token = $derived((page.data as any)?.token as string | undefined)
+
+	// ── Placeholder (i18n fallback) ─────────────────────────────────────────
+	const resolvedPlaceholder = $derived(placeholder || tFn('editor.default_placeholder'))
+
+	// ── DOM refs ──────────────────────────────────────────────────────────────
+	let editorEl    = $state<HTMLElement | undefined>(undefined)
+	let wrapperEl   = $state<HTMLElement | undefined>(undefined)
+	let editor: any = $state(null)
+
+	// ── Synced HTML (for the hidden form input) ───────────────────────────────
+	let html        = $state(untrack(() => initialContent))
+	let charCount   = $state(0)
+
+	// ── Toolbar UI state ──────────────────────────────────────────────────────
+	let showColor   = $state(false)
+	let showEmoji   = $state(false)
+	let showLink    = $state(false)
+	let showImage   = $state(false)
+	let showVideo   = $state(false)
+	let showAudio   = $state(false)
+	let showTable   = $state(false)
+	// Mobile seulement : déplie les options repliées derrière le bouton « ⋯ ».
+	// Sur ≥ 640px la barre est entière et ce drapeau ne sert à rien.
+	let moreOpen    = $state(false)
+
+	let linkUrl     = $state('')
+	let imageUrl    = $state('')
+	let imageAlt    = $state('')
+	// `inline` place l'image DANS la ligne de texte, au lieu de la poser sur sa
+	// propre ligne comme les quatre autres. C'est ce qui permet une icône devant
+	// un lien, un logo au fil d'une phrase, un pictogramme dans un tableau.
+	let imageAlign  = $state<'left'|'center'|'right'|'full'|'inline'>('center')
+	// Position du noeud image sélectionné quand on ouvre le menu image : permet
+	// de REMPLACER l'image au lieu d'en insérer une nouvelle (la sélection se
+	// perd dès qu'on tape dans le champ URL, on la capture donc à l'ouverture).
+	let replaceImagePos = $state<number | null>(null)
+	let videoUrl    = $state('')
+
+	// ── Barre flottante (quickbar) sur la sélection ───────────────────────────
+	// Apparaît au-dessus du texte surligné, avec le bouton Ancre (pilote le
+	// sommaire) + formatage rapide. Positionnée à la main (zéro dépendance).
+	let bubbleEl       = $state<HTMLElement | undefined>(undefined)
+	let bubbleVisible  = $state(false)
+	let bubbleTop      = $state(0)
+	let bubbleLeft     = $state(0)
+	let bubbleBelow    = $state(false)    // affichée SOUS la sélection (anti-débord haut)
+	let blockIsAnchored = $state(false)   // état du bloc courant (titre ancré ?)
+
+	// Audio upload state
+	let audioFileEl       = $state<HTMLInputElement | undefined>(undefined)
+	let audioCoverFileEl  = $state<HTMLInputElement | undefined>(undefined)
+	let audioUploading    = $state(false)
+	let audioError        = $state('')
+	let audioUrlExternal  = $state('')
+	let audioPickedFile   = $state<File | null>(null)
+	let audioTitle        = $state('')
+	let audioArtist       = $state('')
+	let audioAllowDownload= $state(false)
+	let audioCoverFile    = $state<File | null>(null)
+	let audioCoverPreview = $state<string | null>(null)  // blob: URL for popup preview
+	let audioCoverDetected= $state<{ mime: string; bytes: Uint8Array } | null>(null)
+	let audioStaged       = $state<Array<{ src: string; title: string; artist: string; cover: string }>>([])
+
+	// ── Media picker ──────────────────────────────────────────────────────────
+	let showMediaPicker = $state(false)
+	let mediaImages     = $state<any[]>([])
+	let mediaLoading    = $state(false)
+
+	async function openMediaPicker() {
+		showMediaPicker = true
+		if (mediaImages.length > 0) return
+		mediaLoading = true
+		try {
+			// IK e AU são públicos; o Bulk é só de quem enviou (trik_019); a staff
+			// da instância também vê os assets 'staff' (trik_016). Cada um com selo.
+			const role  = (page.data as any).user?.role ?? ''
+			const staff = token && ['owner', 'admin', 'moderator'].includes(role)
+			const auth  = { headers: { Authorization: `Bearer ${token}` } }
+			const read  = async (r: Response | null) => r?.ok ? ((await r.json()).assets ?? []) : []
+			const [ik, au, bulk, staffRes] = await Promise.all([
+				fetch('/api/v1/assets?type=ik&limit=100').catch(() => null),
+				fetch('/api/v1/assets?type=au&limit=100').catch(() => null),
+				token ? apiFetch(fetch, '/assets/mine/bulk', auth).catch(() => null) : null,
+				staff ? apiFetch(fetch, '/assets/staff', auth).catch(() => null) : null,
+			])
+			mediaImages = [...await read(bulk), ...await read(staffRes), ...await read(ik), ...await read(au)]
+		} finally { mediaLoading = false }
+	}
+
+	// ── Colar / arrastar imagem → asset Bulk (trik_019) ───────────────────────
+	// Substitui o antigo botão de imagem do feed: a imagem vira um asset privado
+	// de quem colou (dá para reclassificar depois em /library) e entra no texto.
+	const PASTE_MAX_BYTES = 12 * 1024 * 1024
+
+	function imageFilesFrom(list: FileList | DataTransferItemList | null | undefined): File[] {
+		if (!list) return []
+		const out: File[] = []
+		for (const it of Array.from(list as ArrayLike<File | DataTransferItem>)) {
+			const f = it instanceof File ? it : (it.kind === 'file' ? it.getAsFile() : null)
+			if (f && f.type.startsWith('image/')) out.push(f)
+		}
+		return out
+	}
+
+	async function uploadPastedImages(files: File[], pos?: number) {
+		if (!token || files.length === 0) return
+		pasteError = ''
+		for (const file of files) {
+			if (file.size > PASTE_MAX_BYTES) { pasteError = tFn('library.err.too_large_simple'); continue }
+			pasteUploading++
+			try {
+				const form = new FormData()
+				const base = file.name && file.name !== 'image.png' ? file.name.replace(/\.[^.]+$/, '') : ''
+				form.append('name', (base || `colada-${new Date().toISOString().slice(0, 16).replace('T', '-')}`).slice(0, 100))
+				form.append('asset_type', 'bulk')
+				form.append('file', file)   // por último: o multipart só vê os campos antes do arquivo
+				const res = await apiFetch(fetch, '/assets', {
+					method:  'POST',
+					headers: { Authorization: `Bearer ${token}` },
+					body:    form,
+				})
+				if (!res.ok) {
+					pasteError = (await res.json().catch(() => ({}))).error ?? tFn('editor.paste_error')
+					continue
+				}
+				const { asset } = await res.json()
+				const attrs = { src: `/uploads/${asset.file_path}`, alt: asset.name ?? '' }
+				const chain = editor?.chain().focus()
+				if (pos !== undefined) chain?.insertContentAt(pos, { type: 'image', attrs }).run()
+				else chain?.setImage(attrs).run()
+				mediaImages = []   // o seletor recarrega e já mostra a nova no Bulk
+			} catch {
+				pasteError = tFn('editor.paste_error')
+			} finally {
+				pasteUploading--
+			}
+		}
+	}
+
+	function pickMedia(asset: { file_path: string; name: string }) {
+		imageUrl = `/uploads/${asset.file_path}`
+		imageAlt = asset.name
+		showMediaPicker = false
+	}
+
+	// ── Active state (updated on every editor transaction) ────────────────────
+	let a = $state({
+		bold: false, italic: false, underline: false, strike: false, scramble: false, spoiler: false, code: false,
+		h1: false, h2: false, h3: false,
+		bullet: false, ordered: false,
+		quote: false, codeBlock: false, link: false,
+		left: false, center: false, right: false, justify: false,
+		table: false, canUndo: false, canRedo: false,
+	})
+
+	function syncActive() {
+		if (!editor) return
+		a = {
+			bold:     editor.isActive('bold'),
+			italic:   editor.isActive('italic'),
+			underline:editor.isActive('underline'),
+			strike:   editor.isActive('strike'),
+			scramble: editor.isActive('scramble'),
+			spoiler:  editor.isActive('spoiler'),
+			code:     editor.isActive('code'),
+			h1:       editor.isActive('heading', { level: 1 }),
+			h2:       editor.isActive('heading', { level: 2 }),
+			h3:       editor.isActive('heading', { level: 3 }),
+			bullet:   editor.isActive('bulletList'),
+			ordered:  editor.isActive('orderedList'),
+			quote:    editor.isActive('blockquote'),
+			codeBlock:editor.isActive('codeBlock'),
+			link:     editor.isActive('link'),
+			left:     editor.isActive({ textAlign: 'left' }),
+			center:   editor.isActive({ textAlign: 'center' }),
+			right:    editor.isActive({ textAlign: 'right' }),
+			justify:  editor.isActive({ textAlign: 'justify' }),
+			table:    editor.isActive('table'),
+			canUndo:  editor.can().undo(),
+			canRedo:  editor.can().redo(),
+		}
+	}
+
+	// ── Initialise Tiptap (browser-only) ──────────────────────────────────────
+	onMount(async () => {
+		const { Editor, Node, Mark, Extension, InputRule, mergeAttributes, markInputRule } = await import('@tiptap/core')
+		// Emojis da instância: a lista precisa existir antes do conteúdo inicial ser lido.
+		if (customEmojis) await loadCustomEmojis()
+		const { default: StarterKit }            = await import('@tiptap/starter-kit')
+		const { default: Underline }             = await import('@tiptap/extension-underline')
+		const { default: TextAlign }             = await import('@tiptap/extension-text-align')
+		const { default: Link }                  = await import('@tiptap/extension-link')
+		const { default: Image }                 = await import('@tiptap/extension-image')
+		const { default: Youtube }               = await import('@tiptap/extension-youtube')
+		const { Table }                          = await import('@tiptap/extension-table')
+		const { default: TableRow }              = await import('@tiptap/extension-table-row')
+		const { default: TableCell }             = await import('@tiptap/extension-table-cell')
+		const { default: TableHeader }           = await import('@tiptap/extension-table-header')
+		const { default: Color }                 = await import('@tiptap/extension-color')
+		const { TextStyle }                      = await import('@tiptap/extension-text-style')
+		const { default: Placeholder }           = await import('@tiptap/extension-placeholder')
+		const { default: CharacterCount }        = await import('@tiptap/extension-character-count')
+		const { CodeBlockLowlight }              = await import('@tiptap/extension-code-block-lowlight')
+
+		// ── Coloration du code, chargée au PREMIER bloc de code ───────────────
+		// lowlight + ses 37 langages pèsent ~50 Ko (gzip) : les charger à l'ouverture
+		// de l'éditeur, c'est les faire payer à chaque message, même sans code. Le
+		// greffon reçoit d'abord un lowlight « vide » (texte sans couleur), puis le
+		// vrai dès qu'un bloc de code existe (document qui en contient, ou bloc inséré).
+		// Le langage est DEVINÉ (pas de choix de langage) : il faut donc tous les
+		// langages d'un coup, pas un par un.
+		type LowlightLike = {
+			highlight: (lang: string, value: string) => any
+			highlightAuto: (value: string) => any
+			listLanguages: () => string[]
+			registered: (lang: string) => boolean
+		}
+		let realLowlight: LowlightLike | null = null
+		const plain = (value: string) => ({ type: 'root', children: [{ type: 'text', value }] })
+		const lowlight: LowlightLike = {
+			highlight:     (lang, value) => realLowlight ? realLowlight.highlight(lang, value) : plain(value),
+			highlightAuto: (value)       => realLowlight ? realLowlight.highlightAuto(value) : plain(value),
+			listLanguages: ()            => realLowlight ? realLowlight.listLanguages() : [],
+			registered:    (lang)        => realLowlight ? realLowlight.registered(lang) : false,
+		}
+		let grammarsRequested = false
+		function hasCodeBlock(doc: any): boolean {
+			let found = false
+			doc.descendants((node: any) => { if (found) return false; if (node.type.name === 'codeBlock') found = true })
+			return found
+		}
+		function ensureCodeColors(ed: any) {
+			if (grammarsRequested || !hasCodeBlock(ed.state.doc)) return
+			grammarsRequested = true
+			import('lowlight').then(({ common, createLowlight }) => {
+				realLowlight = createLowlight(common)
+				if (ed.isDestroyed) return
+				// Forcer le greffon à recolorer : un « setNodeMarkup » sans changement sur
+				// chaque bloc de code est une modification du document qui touche ces
+				// blocs (seule condition de recalcul du greffon), sans entrée d'annulation.
+				const tr = ed.state.tr
+				ed.state.doc.descendants((node: any, pos: number) => {
+					if (node.type.name === 'codeBlock') tr.setNodeMarkup(pos, undefined, node.attrs)
+				})
+				tr.setMeta('addToHistory', false)
+				ed.view.dispatch(tr)
+			}).catch(() => { grammarsRequested = false })
+		}
+
+		// ── Custom Image with alignment ──────────────────────────────────────
+		const AlignableImage = Image.extend({
+			// `inline: true` est STRUCTUREL, pas cosmétique.
+			//
+			// Par défaut l'extension Image crée un nœud de BLOC (`group: 'block'`).
+			// Un nœud de bloc ne peut pas vivre dans un paragraphe : à la lecture,
+			// ProseMirror l'EXTRAIT et le pose entre deux paragraphes. Une icône
+			// posée devant un lien se retrouvait donc seule sur sa ligne dès que
+			// l'auteur rouvrait son article dans l'éditeur, alors qu'elle était
+			// correcte à la publication. Constaté en production le 2026-08-19.
+			//
+			// En `inline`, l'image devient un nœud de ligne : elle reste dans le
+			// paragraphe. Les alignements de bloc (`center`, `full`) continuent de
+			// s'afficher en bloc, c'est le CSS qui les gouverne, pas le schéma.
+			addOptions() {
+				// `this.parent?.()` est typé optionnel, mais il est toujours défini
+				// sur une extension dérivée : sans l'assertion, le type résultant a
+				// des champs facultatifs et ne satisfait plus `ImageOptions`.
+				return { ...this.parent!(), inline: true }
+			},
+			addAttributes() {
+				return {
+					...this.parent?.(),
+					align: { default: 'center', parseHTML: (el: HTMLElement) => el.getAttribute('data-align'), renderHTML: (attrs: any) => ({ 'data-align': attrs.align }) },
+					width: { default: null, parseHTML: (el: HTMLElement) => el.getAttribute('width'), renderHTML: (attrs: any) => attrs.width ? { width: attrs.width } : {} },
+				}
+			},
+			// NodeView avec poignées de coin : on attrape un coin, on tire, et au
+			// relâchement la largeur s'aimante à 25/50/75/100 %. La largeur est
+			// stockée en attribut width (% — survit au sanitizer) ; le rendu public
+			// reste un simple <img data-align width>, sans wrapper.
+			addNodeView() {
+				return ({ node, editor, getPos }: any) => {
+					const applyWidth = (align: string, width: string | null) => {
+						wrap.style.width = align === 'full' ? (width || '100%') : (width || '')
+					}
+					const wrap = document.createElement('div')
+					wrap.className = 'nodyx-img-wrap'
+					wrap.setAttribute('data-align', node.attrs.align || 'center')
+					applyWidth(node.attrs.align || 'center', node.attrs.width)
+
+					const img = document.createElement('img')
+					img.src = node.attrs.src
+					if (node.attrs.alt) img.alt = node.attrs.alt
+					img.draggable = false
+					wrap.appendChild(img)
+
+					const badge = document.createElement('span')
+					badge.className = 'nodyx-img-badge'
+					badge.textContent = node.attrs.width || (node.attrs.align === 'full' ? '100%' : 'auto')
+					wrap.appendChild(badge)
+
+					const SNAPS = [25, 50, 75, 100]
+					let curPct = 100
+
+					const startResize = (e: MouseEvent, corner: string) => {
+						e.preventDefault(); e.stopPropagation()
+						const startX = e.clientX
+						const startW = img.getBoundingClientRect().width
+						const parent = wrap.parentElement
+						const containerW = parent ? parent.getBoundingClientRect().width : startW
+						const dir = (corner === 'ne' || corner === 'se') ? 1 : -1
+						wrap.classList.add('resizing')
+						const onMove = (ev: MouseEvent) => {
+							const dx = (ev.clientX - startX) * dir
+							const newW = Math.max(40, Math.min(containerW, startW + dx))
+							curPct = Math.round((newW / containerW) * 100)
+							wrap.style.width = curPct + '%'
+							badge.textContent = curPct + '%'
+						}
+						const onUp = () => {
+							document.removeEventListener('mousemove', onMove)
+							document.removeEventListener('mouseup', onUp)
+							wrap.classList.remove('resizing')
+							const snapped = SNAPS.reduce((a, b) => Math.abs(b - curPct) < Math.abs(a - curPct) ? b : a, SNAPS[0])
+							const widthVal = snapped + '%'
+							wrap.style.width = widthVal
+							badge.textContent = widthVal
+							if (typeof getPos === 'function') {
+								const pos = getPos()
+								const cur = editor.state.doc.nodeAt(pos)
+								if (cur) editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, undefined, { ...cur.attrs, width: widthVal }))
+							}
+						}
+						document.addEventListener('mousemove', onMove)
+						document.addEventListener('mouseup', onUp)
+					}
+
+					for (const c of ['nw', 'ne', 'sw', 'se']) {
+						const h = document.createElement('span')
+						h.className = 'nodyx-img-handle h-' + c
+						h.addEventListener('mousedown', (e) => startResize(e, c))
+						wrap.appendChild(h)
+					}
+
+					return {
+						dom: wrap,
+						update(updated: any) {
+							if (updated.type.name !== 'image') return false
+							if (updated.attrs.src !== img.getAttribute('src')) img.src = updated.attrs.src
+							img.alt = updated.attrs.alt || ''
+							wrap.setAttribute('data-align', updated.attrs.align || 'center')
+							applyWidth(updated.attrs.align || 'center', updated.attrs.width)
+							badge.textContent = updated.attrs.width || (updated.attrs.align === 'full' ? '100%' : 'auto')
+							return true
+						},
+						ignoreMutation: () => true,
+					}
+				}
+			},
+		})
+
+		// ── Youtube robuste au round-trip ───────────────────────────────────
+		// TipTap sérialise une vidéo en <div data-youtube-video><iframe…/></div>.
+		// Le sanitizer backend ne garde pas `data-youtube-video` sur le <div>,
+		// donc au rechargement l'extension ne reconnaissait plus son wrapper et
+		// JETAIT l'iframe (vidéos qui disparaissent à la réédition). On ajoute
+		// une règle parseHTML qui reparse aussi un <iframe> nu d'origine YouTube.
+		// ── Liens : une ancre interne ne s'ouvre pas dans un onglet ──────────
+		//
+		// L'extension Link applique par DÉFAUT `target="_blank"` et
+		// `rel="noopener noreferrer nofollow"` à tous les liens, sans distinguer
+		// leur destination. Appliqué à une ancre `#section`, ça ouvre un onglet
+		// VIDE au lieu de descendre dans la page : tout sommaire éditable était
+		// donc cassé dès la première réouverture de l'article. Constaté en
+		// production le 2026-08-19.
+		//
+		// On ne retire ces attributs que pour les ancres, jamais pour les liens
+		// sortants, où ils restent la bonne pratique.
+		const SmartLink = Link.extend({
+			renderHTML({ HTMLAttributes }: any) {
+				const href = HTMLAttributes?.href
+				if (typeof href === 'string' && href.startsWith('#')) {
+					const { target: _t, rel: _r, ...interne } = HTMLAttributes
+					return ['a', mergeAttributes(interne), 0]
+				}
+				return ['a', mergeAttributes(this.options.HTMLAttributes, HTMLAttributes), 0]
+			},
+			// « Nodyx relié » : data-card="off" = ce lien Nodyx s'affiche SANS sa carte
+			// (bulle « Lien simple », « Retirer la carte » du chat). Gardé à la réédition.
+			addAttributes() {
+				return {
+					...this.parent?.(),
+					card: {
+						default: null,
+						parseHTML: (el: HTMLElement) => el.getAttribute('data-card') === 'off' ? 'off' : null,
+						renderHTML: (attrs: any) => attrs.card === 'off' ? { 'data-card': 'off' } : {},
+					},
+				}
+			},
+		})
+
+		const RobustYoutube = Youtube.extend({
+			// L'extension enveloppe l'iframe dans `<div data-youtube-video>`. Or
+			// l'assainisseur du coeur n'autorise pas cet attribut : il le retire et
+			// laisse un `<div>` NU, sans aucune prise pour le style. Consequence
+			// mesuree le 2026-08-20 : toute video inseree depuis l'editeur perdait
+			// sa mise en forme, gardant 360 px de haut pour 324 de large, donc un
+			// ratio faux. Ce n'etait pas un defaut d'aller-retour, c'etait le cas
+			// NORMAL, et les videos ecrites a la main etaient l'exception.
+			//
+			// `class` fait partie des attributs autorises : on y accroche la classe
+			// que la feuille de style attend deja, sans rien retirer de ce que
+			// l'extension produit pour son propre usage dans l'editeur.
+			renderHTML(props: any) {
+				// `this.parent!` et non `?.` : sur une extension derivee le parent est
+				// toujours defini, et `renderHTML` doit rendre un DOMOutputSpec, jamais
+				// `undefined`. Meme contrainte que pour `addOptions` plus bas.
+				const rendu = this.parent!(props)
+				if (Array.isArray(rendu) && rendu[0] === 'div' && rendu[1] && typeof rendu[1] === 'object') {
+					rendu[1] = mergeAttributes(rendu[1], { class: 'youtube-wrapper' })
+				}
+				return rendu
+			},
+			parseHTML() {
+				return [
+					...(this.parent?.() ?? []),
+					{
+						tag: 'iframe[src]',
+						getAttrs: (el: any) => {
+							const src = el?.getAttribute?.('src') ?? ''
+							return /(?:youtube(?:-nocookie)?\.com|youtu\.be)/.test(src) ? {} : false
+						},
+					},
+				]
+			},
+		})
+
+		// ── Heading anchors ──────────────────────────────────────────────────
+		// Attribut id sur les titres : posé automatiquement par le bouton
+		// Sommaire, préservé au round-trip HTML. Le sanitizer backend ne
+		// l'accepte que sur h2/h3/h4 (cf forums.ts), le bouton ne cible que
+		// les niveaux 2-3.
+		const HeadingIds = Extension.create({
+			name: 'headingIds',
+			addGlobalAttributes() {
+				return [{
+					types: ['heading'],
+					attributes: {
+						id: {
+							default: null,
+							parseHTML: (el: HTMLElement) => el.getAttribute('id'),
+							renderHTML: (attrs: Record<string, any>) => attrs.id ? { id: attrs.id } : {},
+						},
+					},
+				}]
+			},
+		})
+
+		// ── Boîte sommaire façon wiki ────────────────────────────────────────
+		// <div class="toc"> flottant à droite (style .toc dans app.css).
+		// Contenu libre : le bouton Sommaire la pré-remplit avec les liens
+		// d'ancres, mais l'auteur peut l'éditer comme n'importe quel bloc.
+		const TocBox = Node.create({
+			name: 'tocBox',
+			group: 'block',
+			// paragraph+ uniquement : le sommaire ne contient que du texte (titre +
+			// liens d'ancres). Interdit aux images/vidéos/blocs de s'y faire aspirer
+			// au backspace (ProseMirror joignait un bloc image dans cette boîte
+			// isolante, l'image disparaissait alors dans un conteneur invisible).
+			content: 'paragraph+',
+			isolating: true,
+			selectable: true,
+			draggable: true,
+			parseHTML()  { return [{ tag: 'div.toc' }] },
+			renderHTML({ HTMLAttributes }) {
+				return ['div', mergeAttributes(HTMLAttributes, { class: 'toc' }), 0]
+			},
+		})
+
+		// ── Live Twitch (.twitch-live) : bloc HTML protégé ───────────────────
+		// Même piège que la console SSH ci-dessous, découvert en prod : l'éditeur
+		// ne connaît pas les iframes Twitch, donc il les JETAIT silencieusement à
+		// la réédition. On corrigeait une virgule ailleurs dans l'article, et le
+		// lecteur + le chat disparaissaient à l'enregistrement.
+		// Nœud ATOMIQUE : capture son HTML interne au chargement, le ré-émet tel
+		// quel à la sauvegarde. Les paramètres de l'embed (chaîne, `parent`,
+		// thème) sont donc préservés à l'identique, sans qu'on ait à les deviner.
+		const TwitchLive = Node.create({
+			name: 'twitchLive',
+			group: 'block',
+			atom: true,
+			selectable: true,
+			draggable: true,
+			addAttributes() {
+				return {
+					html: { default: '', parseHTML: (el: HTMLElement) => el.innerHTML, renderHTML: () => ({}) },
+				}
+			},
+			parseHTML() { return [{ tag: 'div.twitch-live' }] },
+			renderHTML({ node }: any) {
+				const dom = document.createElement('div')
+				dom.className = 'twitch-live'
+				dom.innerHTML = node.attrs.html
+				return dom
+			},
+			addNodeView() {
+				return ({ node }: any) => {
+					// Aperçu non éditable. `pointer-events: none` sur les iframes :
+					// sinon le lecteur avale les clics et le bloc devient impossible
+					// à sélectionner, donc à déplacer ou supprimer.
+					const dom = document.createElement('div')
+					dom.setAttribute('contenteditable', 'false')
+					const inner = document.createElement('div')
+					inner.className = 'twitch-live'
+					inner.innerHTML = node.attrs.html
+					inner.style.pointerEvents = 'none'
+					dom.appendChild(inner)
+					return { dom }
+				}
+			},
+		})
+
+		// ── Console SSH (.nodyx-term) : bloc HTML protégé ────────────────────
+		// Les tutos d'installation contiennent des consoles stylées (div.nodyx-term
+		// avec barre/corps/spans colorés). Ce n'est PAS éditable inline : on en
+		// fait un nœud ATOMIQUE qui capture son HTML interne au chargement et le
+		// ré-émet tel quel à la sauvegarde. Sans ça, l'éditeur déstructurait la
+		// console à la réédition (perte de données).
+		const NodyxTerm = Node.create({
+			name: 'nodyxTerm',
+			group: 'block',
+			atom: true,
+			selectable: true,
+			draggable: true,
+			addAttributes() {
+				return {
+					html: { default: '', parseHTML: (el: HTMLElement) => el.innerHTML, renderHTML: () => ({}) },
+				}
+			},
+			parseHTML() { return [{ tag: 'div.nodyx-term' }] },
+			renderHTML({ node }: any) {
+				const dom = document.createElement('div')
+				dom.className = 'nodyx-term'
+				dom.innerHTML = node.attrs.html
+				return dom
+			},
+			addNodeView() {
+				return ({ node, editor, getPos }: any) => {
+					// Wrapper non éditable : barre d'outils (label + toggle Rendu/Code)
+					// + zone d'affichage. Le code source du bloc se modifie via le
+					// bouton « Code » (façon CMS), jamais au clavier directement.
+					const dom = document.createElement('div')
+					dom.className = 'nodyx-term-wrap'
+					dom.setAttribute('contenteditable', 'false')
+
+					const bar = document.createElement('div')
+					bar.className = 'nodyx-term-tools'
+					const label = document.createElement('span')
+					label.className = 'ntt-label'
+					label.textContent = 'Console SSH'
+					const btn = document.createElement('button')
+					btn.type = 'button'
+					btn.className = 'ntt-btn'
+					btn.textContent = '</> Code'
+					bar.appendChild(label)
+					bar.appendChild(btn)
+
+					const render = document.createElement('div')
+					render.className = 'nodyx-term'
+					render.innerHTML = node.attrs.html
+
+					dom.appendChild(bar)
+					dom.appendChild(render)
+
+					let editing = false
+					let textarea: HTMLTextAreaElement | null = null
+
+					// Commit immédiat de la source vers l'attribut du nœud : la
+					// modification est prise en compte EN CONTINU pendant la frappe,
+					// sans dépendre du bouton « Rendu » (qui ne fait que rebasculer
+					// la vue). À l'enregistrement, getHTML a toujours la dernière
+					// version. addToHistory:false pour ne pas saturer le ctrl-z.
+					const commit = (val: string) => {
+						if (typeof getPos !== 'function') return
+						const pos = getPos()
+						if (pos == null) return
+						editor.view.dispatch(
+							editor.state.tr.setNodeMarkup(pos, undefined, { html: val }).setMeta('addToHistory', false),
+						)
+					}
+
+					btn.addEventListener('mousedown', (e) => e.preventDefault())
+					btn.addEventListener('click', () => {
+						if (!editing) {
+							editing = true
+							btn.textContent = '✓ Rendu'
+							btn.classList.add('active')
+							textarea = document.createElement('textarea')
+							textarea.className = 'nodyx-term-code'
+							textarea.value = render.innerHTML
+							textarea.addEventListener('input', () => { if (textarea) commit(textarea.value) })
+							render.style.display = 'none'
+							dom.appendChild(textarea)
+							textarea.focus()
+						} else {
+							editing = false
+							btn.textContent = '</> Code'
+							btn.classList.remove('active')
+							const newHtml = textarea ? textarea.value : render.innerHTML
+							render.innerHTML = newHtml
+							render.style.display = ''
+							if (textarea) { textarea.remove(); textarea = null }
+							commit(newHtml)
+						}
+					})
+
+					return {
+						dom,
+						update(updated: any) {
+							if (updated.type.name !== 'nodyxTerm') return false
+							if (!editing) render.innerHTML = updated.attrs.html
+							return true
+						},
+						stopEvent: () => true,
+						ignoreMutation: () => true,
+					}
+				}
+			},
+		})
+
+		// ── Two-Column layout extension ───────────────────────────────────────
+		// PRINCIPE round-trip : on parse sur la CLASSE (que le sanitizer conserve
+		// toujours), pas sur data-col/data-two-cols (que le sanitizer supprime des
+		// <div>). Sans ça, les colonnes étaient méconnues à la réédition et leur
+		// contenu était aplati. On garde aussi la règle data-* pour le contenu
+		// jamais passé par le sanitizer (insertion fraîche, copier/coller interne).
+		const NodyxColumn = Node.create({
+			name: 'nodyxColumn',
+			group: 'nodyxColumn',
+			content: 'block+',
+			isolating: true,
+			parseHTML()  { return [{ tag: 'div.nodyx-col' }, { tag: 'div[data-col]' }] },
+			renderHTML({ HTMLAttributes }) {
+				return ['div', mergeAttributes(HTMLAttributes, { 'data-col': '', class: 'nodyx-col' }), 0]
+			},
+		})
+
+		const NodyxTwoCols = Node.create({
+			name: 'nodyxTwoCols',
+			group: 'block',
+			content: 'nodyxColumn nodyxColumn',
+			isolating: true,
+			parseHTML()  { return [{ tag: 'div.nodyx-two-cols' }, { tag: 'div[data-two-cols]' }] },
+			renderHTML({ HTMLAttributes }) {
+				return ['div', mergeAttributes(HTMLAttributes, { 'data-two-cols': '', class: 'nodyx-two-cols' }), 0]
+			},
+			addCommands(): any {
+				return {
+					insertTwoCols: () => ({ commands }: any) =>
+						commands.insertContent({
+							type: 'nodyxTwoCols',
+							content: [
+								{ type: 'nodyxColumn', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Contenu colonne gauche…' }] }] },
+								{ type: 'nodyxColumn', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Contenu colonne droite…' }] }] },
+							],
+						}),
+				}
+			},
+		})
+
+		// ── Audio nodes ──────────────────────────────────────────────────────
+		// nodyxAudio (the player) contains zero-or-more nodyxTrack children.
+		// Legacy single-track posts have the src directly on <nodyx-audio-player>
+		// (no children). The Web Component handles both shapes.
+		const passthrough = (name: string) => ({
+			default: null as any,
+			parseHTML: (el: HTMLElement) => el.getAttribute(name),
+			renderHTML: (attrs: Record<string, any>) => attrs[name] ? { [name]: attrs[name] } : {},
+		})
+
+		const NodyxTrack = Node.create({
+			name: 'nodyxTrack',
+			group: 'block',
+			atom: true,
+			selectable: false,
+			addAttributes() {
+				return {
+					src:           passthrough('src'),
+					'track-title': passthrough('track-title'),
+					artist:        passthrough('artist'),
+					cover:         passthrough('cover'),
+				}
+			},
+			parseHTML() { return [{ tag: 'nodyx-track[src]' }] },
+			renderHTML({ HTMLAttributes }) {
+				return ['nodyx-track', mergeAttributes(HTMLAttributes)]
+			},
+		})
+
+		const NodyxAudio = Node.create({
+			name: 'nodyxAudio',
+			group: 'block',
+			content: 'nodyxTrack*',
+			selectable: true,
+			draggable: true,
+			addAttributes() {
+				return {
+					src:           passthrough('src'),
+					'track-title': passthrough('track-title'),
+					artist:        passthrough('artist'),
+					cover:         passthrough('cover'),
+					download:      passthrough('download'),
+				}
+			},
+			parseHTML() {
+				return [
+					{ tag: 'nodyx-audio-player' },
+					{ tag: 'audio[src]' },  // legacy
+				]
+			},
+			renderHTML({ HTMLAttributes }) {
+				return ['nodyx-audio-player', mergeAttributes(HTMLAttributes), 0]
+			},
+			addCommands(): any {
+				return {
+					// Single-track convenience: { src, 'track-title', artist, cover, download }
+					setNodyxAudio: (attrs: Record<string, string>) => ({ commands }: any) => {
+						if (!attrs.src) return false
+						return commands.insertContent({
+							type: 'nodyxAudio',
+							attrs: { download: attrs.download || null },
+							content: [{
+								type: 'nodyxTrack',
+								attrs: {
+									src:           attrs.src,
+									'track-title': attrs['track-title'] || null,
+									artist:        attrs.artist        || null,
+									cover:         attrs.cover         || null,
+								},
+							}],
+						})
+					},
+					// Multi-track: { tracks: [{src, title, artist, cover}], download? }
+					setNodyxPlaylist: (opts: { tracks: Array<{src: string, title?: string, artist?: string, cover?: string}>, download?: boolean }) => ({ commands }: any) => {
+						if (!opts.tracks || opts.tracks.length === 0) return false
+						return commands.insertContent({
+							type: 'nodyxAudio',
+							attrs: { download: opts.download ? '1' : null },
+							content: opts.tracks.map(t => ({
+								type: 'nodyxTrack',
+								attrs: {
+									src:           t.src,
+									'track-title': t.title  || null,
+									artist:        t.artist || null,
+									cover:         t.cover  || null,
+								},
+							})),
+						})
+					},
+				}
+			},
+		})
+
+		// ── Mention liée à la PERSONNE (SPECS/NODYX_MENTIONS_CDC.md, D49) ──────────
+		// Enregistrée en <span data-mention="u:<id>">@Nom</span> : le nom n'est qu'un
+		// repli lisible, l'affichage relit le nom à jour. Un atome : on l'efface d'un coup.
+		const MentionNode = Node.create({
+			name: 'mention',
+			group: 'inline',
+			inline: true,
+			atom: true,
+			selectable: false,
+			// ref : « u:<id> » (une personne) ou « g:<clé> » (un groupe, lot M2)
+			addAttributes() {
+				return { ref: { default: null }, label: { default: '' } }
+			},
+			parseHTML() {
+				return [{
+					tag: 'span[data-mention]',
+					getAttrs: (el: HTMLElement) => {
+						const v = el.getAttribute('data-mention') ?? ''
+						if (!/^[ug]:/.test(v)) return false
+						return { ref: v, label: (el.textContent ?? '').replace(/^@/, '') }
+					},
+				}]
+			},
+			renderHTML({ node }: any) {
+				return ['span', { 'data-mention': node.attrs.ref, class: 'nx-mention' }, '@' + node.attrs.label]
+			},
+			renderText({ node }: any) { return '@' + node.attrs.label },
+		})
+
+		// ── « # » : un endroit de la communauté (SPECS/NODYX_COMMANDES_CDC.md, C5) ──
+		// Enregistré en <a href="…" data-place="<sorte>:<id>">#Nom</a>, la même marque
+		// que le chat. Un atome : on l'efface d'un coup. Lu AVANT la marque de lien
+		// (priorité 100), sinon le lien ordinaire l'avalerait et perdrait data-place.
+		const PlaceNode = Node.create({
+			name: 'place',
+			group: 'inline',
+			inline: true,
+			atom: true,
+			selectable: false,
+			addAttributes() {
+				return { ref: { default: null }, url: { default: '' }, label: { default: '' } }
+			},
+			parseHTML() {
+				return [{
+					tag: 'a[data-place]',
+					priority: 100,
+					getAttrs: (el: HTMLElement) => {
+						const ref = el.getAttribute('data-place') ?? ''
+						if (!PLACE_VALUE.test(ref)) return false
+						return { ref, url: el.getAttribute('href') ?? '', label: (el.textContent ?? '').replace(/^#/, '') }
+					},
+				}]
+			},
+			renderHTML({ node }: any) {
+				return ['a', { href: node.attrs.url, 'data-place': node.attrs.ref }, '#' + node.attrs.label]
+			},
+			renderText({ node }: any) { return '#' + node.attrs.label },
+			// Dans l'éditeur, la personne qui écrit voit la vraie puce (nom à jour, icône) ;
+			// le HTML enregistré, lui, garde le mot neutre d'un endroit réservé aux membres.
+			addNodeView() {
+				return ({ node }: any) => {
+					const dom = document.createElement('span')
+					dom.className = 'nx-place'
+					dom.contentEditable = 'false'
+					const kind = String(node.attrs.ref ?? '').split(':')[0] as PlaceKind
+					dom.append(placeIconSvg(kind), document.createTextNode(node.attrs.label))
+					placeFor(node.attrs.ref, token ?? null).then(r => {
+						if (!dom.isConnected && !dom.parentNode) return
+						dom.textContent = ''
+						if (r.ok) dom.append(placeIconSvg(r.kind), document.createTextNode(r.title))
+						else { dom.classList.add('nx-place-private'); dom.append(placeIconSvg('lock'), document.createTextNode(tFn('place.private'))) }
+					})
+					return { dom, ignoreMutation: () => true }
+				}
+			},
+		})
+
+		// Aperçu des cartes de liens Nodyx sous leur ligne (linkCardPreview.ts)
+		const LinkCardPreview = Extension.create({
+			name: 'nxLinkCardPreview',
+			addProseMirrorPlugins() {
+				return [linkCardPreviewPlugin({ origin: () => location.origin, token: () => token ?? null })]
+			},
+		})
+
+		// Texto ofuscado: <span class="scramble">. O texto real fica no HTML (visível
+		// no DevTools, decisão consciente); a animação roda só na leitura (scramble.ts).
+		const Scramble = Mark.create({
+			name: 'scramble',
+			parseHTML() { return [{ tag: 'span.scramble' }] },
+			renderHTML({ HTMLAttributes }) { return ['span', mergeAttributes(HTMLAttributes, { class: 'scramble' }), 0] },
+			addCommands() {
+				return { toggleScramble: () => ({ commands }: any) => commands.toggleMark(this.name) } as any
+			},
+		})
+
+		// Emoji da instância como nó inline: no editor mostra a imagem; no HTML sai
+		// <span class="nx-emoji-code">:atalho:</span> (o texto continua salvo).
+		const emojiUrl = (sc: string) => get(customEmojisStore).find(e => e.shortcode === sc)?.url ?? null
+		const CustomEmoji = Node.create({
+			name: 'customEmoji',
+			group: 'inline', inline: true, atom: true, selectable: true,
+			addAttributes() { return { shortcode: { default: '' } } },
+			parseHTML() {
+				return [{ tag: 'span.nx-emoji-code', getAttrs: (el: HTMLElement) => ({ shortcode: (el.textContent ?? '').replace(/:/g, '').trim().toLowerCase() }) }]
+			},
+			renderHTML({ node }) { return ['span', { class: 'nx-emoji-code' }, `:${node.attrs.shortcode}:`] },
+			renderText({ node }) { return `:${node.attrs.shortcode}:` },
+			addNodeView() {
+				return ({ node }: any) => {
+					const sc = node.attrs.shortcode as string
+					const url = emojiUrl(sc)
+					let dom: HTMLElement
+					if (url) {
+						const img = document.createElement('img')
+						img.src = url; img.alt = `:${sc}:`; img.title = `:${sc}:`
+						img.className = 'nx-emoji'; img.draggable = false
+						dom = img
+					} else {
+						dom = document.createElement('span'); dom.textContent = `:${sc}:`
+					}
+					return { dom }
+				}
+			},
+			addInputRules() {
+				const type = this.type
+				return [new InputRule({
+					find: /:([a-z0-9_]{1,50}):$/i,
+					handler: ({ state, range, match }: any) => {
+						const sc = String(match[1]).toLowerCase()
+						if (!emojiUrl(sc)) return null
+						state.tr.replaceWith(range.from, range.to, type.create({ shortcode: sc }))
+					},
+				})]
+			},
+		})
+
+		// Spoiler (estilo Discord): <span class="spoiler">. Botão ou `||texto||`.
+		// Na leitura, um clique revela (lib/spoiler.ts); no editor fica visível.
+		const Spoiler = Mark.create({
+			name: 'spoiler',
+			parseHTML() { return [{ tag: 'span.spoiler' }] },
+			renderHTML({ HTMLAttributes }) { return ['span', mergeAttributes(HTMLAttributes, { class: 'spoiler' }), 0] },
+			addCommands() {
+				return { toggleSpoiler: () => ({ commands }: any) => commands.toggleMark(this.name) } as any
+			},
+			addInputRules() {
+				return [markInputRule({ find: /(?:^|\s)(\|\|(?=[^\s|])([^|]+?)\|\|)$/, type: this.type })]
+			},
+		})
+
+		editor = new Editor({
+			element: editorEl!,
+			extensions: [
+				StarterKit.configure({ codeBlock: false, link: false, underline: false }),
+				Underline,
+				TextAlign.configure({ types: ['heading', 'paragraph', 'image'] }),
+				SmartLink.configure({ openOnClick: false, autolink: true }),
+				AlignableImage,
+				RobustYoutube.configure({ nocookie: true }),
+				Table.configure({ resizable: false }),
+				TableRow, TableCell, TableHeader,
+				Color, TextStyle,
+				Placeholder.configure({ placeholder: resolvedPlaceholder }),
+				CharacterCount,
+				CodeBlockLowlight.configure({ lowlight }),
+				HeadingIds, TocBox,
+				NodyxTwoCols, NodyxColumn,
+				NodyxAudio, NodyxTrack,
+				NodyxTerm, TwitchLive,
+				LinkCardPreview,
+				MentionNode,
+				PlaceNode,
+				Scramble, Spoiler, CustomEmoji,
+			],
+			content: customEmojis ? wrapEmojiShortcodes(initialContent) : initialContent,
+			editorProps: {
+				// Liste des mentions ouverte : flèches, Entrée, Tab et Échap lui reviennent
+				handleKeyDown(_view: any, event: KeyboardEvent) {
+					// Liste des endroits ouverte : même règle
+					if (placeOpen && placeItems.length) {
+						if (event.key === 'ArrowDown') { placeActive = (placeActive + 1) % placeItems.length; return true }
+						if (event.key === 'ArrowUp') { placeActive = (placeActive - 1 + placeItems.length) % placeItems.length; return true }
+						if (event.key === 'Enter' || event.key === 'Tab') { pickPlace(placeItems[placeActive]); return true }
+						if (event.key === 'Escape') { closePlace(); return true }
+						return false
+					}
+					// Pessoas/grupos (upstream) e, logo abaixo, os alvos do RPG (trik):
+					// uma lista só para as setas. Sem pessoas, só a lista do RPG.
+					if (mentionOpen && mentionItems.length) {
+						const extra = trikOpen ? trikItems.length : 0
+						const total = mentionItems.length + extra
+						if (event.key === 'ArrowDown') { mentionActive = (mentionActive + 1) % total; return true }
+						if (event.key === 'ArrowUp') { mentionActive = (mentionActive - 1 + total) % total; return true }
+						if (event.key === 'Enter' || event.key === 'Tab') {
+							if (mentionActive < mentionItems.length) pickMention(mentionItems[mentionActive])
+							else { const alvo = trikItems[mentionActive - mentionItems.length]; if (alvo) escolherMention(alvo) }
+							return true
+						}
+						if (event.key === 'Escape') { closeMention(); fecharMention(); return true }
+						return false
+					}
+					if (!trikOpen || trikItems.length === 0) return false
+					if (event.key === 'ArrowDown') { trikIdx = Math.min(trikIdx + 1, trikItems.length - 1); return true }
+					if (event.key === 'ArrowUp') { trikIdx = Math.max(trikIdx - 1, 0); return true }
+					if (event.key === 'Enter' || event.key === 'Tab') {
+						const alvo = trikItems[trikIdx]
+						if (alvo) { escolherMention(alvo); return true }
+						return false
+					}
+					if (event.key === 'Escape') { fecharMention(); return true }
+					return false
+				},
+				// Un endroit collé : jamais le nom affiché par sa puce (pastedMark)
+				transformPastedHTML(pasted: string) {
+					if (!pasted.includes('data-place')) return pasted
+					const doc = new DOMParser().parseFromString(pasted, 'text/html')
+					doc.querySelectorAll<HTMLAnchorElement>('a[data-place]').forEach(a => {
+						const ref = a.getAttribute('data-place') ?? ''
+						if (!PLACE_VALUE.test(ref)) { a.removeAttribute('data-place'); return }
+						const m = pastedMark(ref.split(':')[0] as PlaceKind, a.textContent ?? '', a.getAttribute('href') ?? '', k => tFn(`place.neutral_${k}`))
+						a.setAttribute('href', m.url)
+						a.textContent = '#' + m.label
+					})
+					return doc.body.innerHTML
+				},
+				handlePaste(_view: any, event: ClipboardEvent) {
+					const files = imageFilesOf(event.clipboardData)
+					// L'adresse d'un contenu Nodyx, seule, sur un simple curseur : un lien
+					// qui prendra le titre du contenu (bulle Carte | Lien simple | Texte brut)
+					const pasted = (event.clipboardData?.getData('text/plain') ?? '').trim()
+					if (!files.length && pasted && !/\s/.test(pasted) && editor?.state.selection.empty && !editor.isActive('codeBlock')) {
+						const path = toInternalPath(pasted, location.origin)
+						if (path) { event.preventDefault(); pasteInternalLink(pasted, path); return true }
+					}
+					// Du texte avec ? C'est un morceau de page : collage normal.
+					if (!files.length || (event.clipboardData?.getData('text/plain') ?? '').trim()) return false
+					event.preventDefault()
+					if (!token) return false
+					uploadPastedImages(files)
+					return true
+				},
+				handleDrop(view: any, event: DragEvent, _slice: any, moved: boolean) {
+					if (moved) return false
+					const files = imageFilesOf(event.dataTransfer)
+					if (!files.length || !token) return false
+					event.preventDefault()
+					const at = view.posAtCoords({ left: event.clientX, top: event.clientY })
+					uploadPastedImages(files, at ? at.pos : undefined)
+					return true
+				},
+			},
+			onCreate({ editor: e }) { ensureCodeColors(e) },
+			onTransaction({ editor: e, transaction }) { syncActive(); syncBubble(); syncLinkBubble(); syncMention(); syncPlace(); void detectarMention(); if (transaction.docChanged) ensureCodeColors(e) },
+			onUpdate({ editor: e }) {
+				html = e.getHTML()
+				charCount = e.storage.characterCount.characters()
+				onchange(html)
+				scheduleDraft(html)
+			},
+		})
+
+		syncActive()
+		setupDraft()
+		setupMentionGate()
+	})
+
+	// ── Brouillon automatique (lib/editorDrafts.ts) ──────────────────────────
+	// Seulement dans un formulaire : c'est lui qui dit « envoyé » (événement submit).
+	// Un brouillon trouvé au retour est PROPOSÉ (gardé en mémoire pour « Reprendre »
+	// pendant toute la visite). Si la personne écrit sans répondre, CE QU'ELLE ÉCRIT
+	// est enregistré : le travail le plus récent gagne, rien de ce qu'elle tape ne se
+	// perd en fermant l'onglet.
+	let draftOffer = $state<{ html: string; at: number } | null>(null)
+	let draftStore: string | null = null
+	let draftTimer: ReturnType<typeof setTimeout> | null = null
+	let draftPending: string | null = null
+	function flushDraft() {
+		if (draftTimer) { clearTimeout(draftTimer); draftTimer = null }
+		if (draftStore && draftPending !== null) writeDraft(draftStore, draftPending)
+		draftPending = null
+	}
+	function scheduleDraft(h: string) {
+		if (!draftStore) return
+		draftPending = h
+		if (draftTimer) clearTimeout(draftTimer)
+		draftTimer = setTimeout(flushDraft, 800)
+	}
+	function djb2(str: string): string {
+		let h = 5381
+		for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0
+		return (h >>> 0).toString(36)
+	}
+	function setupDraft() {
+		const form = wrapperEl?.closest('form')
+		if (!form) return
+		// Une page peut avoir plusieurs éditeurs du même nom (sujet du forum : réponse
+		// ET modification d'un message, tous deux « content »). On distingue par l'action
+		// du formulaire et par le contenu de départ : chaque message modifié a son brouillon,
+		// la réponse a le sien.
+		draftStore = draftKey(location.pathname, `${name}:${form.getAttribute('action') ?? ''}:${djb2(initialContent)}`)
+		const d = readDraft(draftStore)
+		if (d && d.html !== initialContent) draftOffer = d
+		form.addEventListener('submit', () => {
+			if (draftTimer) { clearTimeout(draftTimer); draftTimer = null }
+			draftPending = null
+			if (draftStore) removeDraft(draftStore)
+		})
+		window.addEventListener('pagehide', flushDraft)
+	}
+	function restoreDraft() {
+		if (!draftOffer || !editor) return
+		const h = draftOffer.html
+		draftOffer = null
+		editor.commands.setContent(h, { emitUpdate: true })
+	}
+	function discardDraft() {
+		if (draftStore) removeDraft(draftStore)
+		draftOffer = null
+	}
+	const draftWhen = $derived(draftOffer
+		? new Intl.DateTimeFormat($locale, { dateStyle: 'medium', timeStyle: 'short' }).format(draftOffer.at)
+		: '')
+
+	// ── Autocomplete do RPG (trik): aliases, @npcc: e @npc: ───────────────────
+	// As pessoas e os grupos vêm do autocomplete do upstream (MentionNode, mais
+	// abaixo); aqui só o que é do RPG, inserido como texto plano.
+	//
+	// O compositor do fórum nunca teve dropdown de `@` — só o chat tinha. E é no
+	// fórum que as cenas do RPG acontecem (trik_threads), ou seja, é exatamente
+	// aqui que marcar um personagem precisa funcionar.
+	//
+	// Feito à mão em vez de @tiptap/extension-mention de propósito: o texto
+	// inserido é PLANO (`@[Nome](username)`), já que quem o interpreta são
+	// $lib/linkify.ts e o servidor. Um nó customizado do TipTap traria schema,
+	// serialização e migração de conteúdo sem nada em troca.
+	let trikOpen  = $state(false)
+	let trikItems = $state<MentionTarget[]>([])
+	let trikIdx   = $state(0)
+	let trikTop   = $state(0)
+	let trikLeft  = $state(0)
+	// Posições no documento do trecho `@consulta` a substituir.
+	let trikFrom  = 0
+	let trikTo    = 0
+	// Descarta resposta de busca que chegue fora de ordem: sem isto, uma consulta
+	// lenta ("@a") pode sobrescrever a lista de uma mais recente ("@ast").
+	let trikSeq   = 0
+
+	function fecharMention() { trikOpen = false; trikItems = [] }
+
+	async function detectarMention() {
+		if (!mentions || !editor) return
+		const { state } = editor
+		const { from, empty } = state.selection
+		if (!empty) return fecharMention()
+
+		// Só o bloco de texto corrente: `textBetween` com um limite curto evita
+		// varrer o documento a cada tecla.
+		const inicio = Math.max(0, from - 40)
+		const antes  = state.doc.textBetween(inicio, from, '\n', '\n')
+		// \p{L}/\p{N} com flag u: dá para digitar acento na consulta, o que o
+		// \w do chat não permite. A busca no servidor é ILIKE %termo%.
+		// `@npcc:<nome>` (trik) : lista os tópicos da categoria NPCC em vez de
+		// membros. Aceita espaço na consulta, nome de NPCC costuma ter. Testado
+		// antes da forma simples, que pararia no `:`. `@npc:<nome>` faz o mesmo
+		// com as imagens do álbum NPC da galeria.
+		const npcc = antes.match(/@npcc:([\p{L}\p{N} _-]{0,30})$/iu)
+		const npc  = npcc ? null : antes.match(/@npc:([\p{L}\p{N} _-]{0,30})$/iu)
+		const m = npcc ?? npc ?? antes.match(/@([\p{L}\p{N}_-]{1,30})$/u)
+		if (!m) return fecharMention()
+
+		trikFrom = from - m[0].length
+		trikTo   = from
+
+		const coords = editor.view.coordsAtPos(trikFrom)
+		trikTop  = coords.bottom + 4
+		trikLeft = coords.left
+
+		const seq = ++trikSeq
+		try {
+			const api   = (path: string, init?: RequestInit) => apiFetch(fetch, path, init)
+			const alvos = npcc
+				? await searchNpccTargets(api, m[1].trim(), token, mentionCategory)
+				: npc
+					? await searchNpcTargets(api, m[1].trim(), token, mentionCategory)
+					: await searchAliasTargets(api, m[1], token, 6, mentionCategory)
+			if (seq !== trikSeq) return
+			trikItems = alvos
+			trikOpen  = alvos.length > 0
+			trikIdx   = 0
+		} catch {
+			if (seq === trikSeq) fecharMention()
+		}
+	}
+
+	function escolherMention(t: MentionTarget) {
+		if (!editor) return
+		// Texto plano + espaço: o `@[Nome](username)` é lido depois por
+		// $lib/linkify.ts (render) e pelo servidor (notificação).
+		editor.chain().focus()
+			.deleteRange({ from: trikFrom, to: trikTo })
+			.insertContent(mentionInsertText(t) + ' ')
+			.run()
+		fecharMention()
+		if (mentionOpen) closeMention()
+	}
+
+	// ── Close popups when clicking outside the editor ─────────────────────────
+	function onDocClick(e: MouseEvent) {
+		const t = e.target as Node
+		// Les popups sont portalées dans <body> (hors du wrapper) : un clic DEDANS
+		// ne doit pas les refermer, sinon on ne peut rien y taper.
+		const inPopup = t instanceof Element && !!t.closest('.popup')
+		if (wrapperEl && !wrapperEl.contains(t) && !inPopup) {
+			showColor = showEmoji = showLink = showImage = showVideo = showAudio = showTable = false
+			bubbleVisible = false
+			linkHit = null
+			if (mentionOpen) closeMention()
+			if (placeOpen) closePlace()
+			fecharMention()
+		}
+	}
+
+	// Placement des popups : action partagée `anchoredPopover` (portal dans <body>
+	// + ancrage au bouton + bornage écran + bascule). Le calcul vient d'ici à
+	// l'origine ; il est désormais mutualisé, cf src/lib/actions/anchoredPopover.ts.
+
+	$effect(() => {
+		document.addEventListener('click', onDocClick)
+		// Repositionne la barre flottante au scroll/resize tant qu'elle est
+		// visible (sinon, position: fixed, elle « décrochait » de la sélection).
+		const reposition = () => { if (bubbleVisible) syncBubble(); if (linkHit) syncLinkBubble() }
+		window.addEventListener('scroll', reposition, true)
+		window.addEventListener('resize', reposition)
+		return () => {
+			document.removeEventListener('click', onDocClick)
+			window.removeEventListener('scroll', reposition, true)
+			window.removeEventListener('resize', reposition)
+		}
+	})
+
+	onDestroy(() => {
+		flushDraft()
+		if (typeof window !== 'undefined') window.removeEventListener('pagehide', flushDraft)
+		editor?.destroy()
+	})
+
+	// ── Toolbar commands (shortcuts to editor chain) ──────────────────────────
+	const run = (fn: () => void) => { fn(); showColor = showEmoji = showLink = showImage = showVideo = showAudio = showTable = false }
+
+	function insertLink() {
+		if (!linkUrl.trim()) return
+		editor?.chain().focus().setLink({ href: linkUrl }).run()
+		linkUrl = ''; showLink = false; linkResults = []
+	}
+
+	// ── « Nodyx relié » : chercher dans tout Nodyx depuis la fenêtre Lien ─────
+	// Un seul champ : une adresse s'insère telle quelle ; un mot cherche les sujets,
+	// événements, membres, salons et pages du wiki que TU peux ouvrir (le cœur filtre :
+	// GET /links/search). Sans sélection, le titre devient le texte du lien.
+	type LinkResult = { type: 'thread' | 'event' | 'member' | 'channel' | 'wiki'; title: string; url: string; subtitle: string | null }
+	let linkResults   = $state<LinkResult[]>([])
+	let linkSearching = $state(false)
+	let linkSearched  = $state(false)
+	let linkActive    = $state(0)
+	let linkTimer: ReturnType<typeof setTimeout> | null = null
+	let linkSeq = 0
+	const looksLikeAddress = (v: string) => /^(https?:\/\/|\/|#|mailto:)/i.test(v.trim())
+	function onLinkInput() {
+		if (linkTimer) clearTimeout(linkTimer)
+		const q = linkUrl.trim()
+		if (q.length < 2 || looksLikeAddress(q) || !token) { linkResults = []; linkSearched = false; linkSearching = false; return }
+		linkSearching = true
+		linkTimer = setTimeout(async () => {
+			const seq = ++linkSeq
+			try {
+				const res = await apiFetch(fetch, `/links/search?q=${encodeURIComponent(q)}`, { headers: { Authorization: `Bearer ${token}` } })
+				const j = res.ok ? await res.json() : { results: [] }
+				if (seq !== linkSeq) return          // une frappe plus récente a pris le relais
+				linkResults = Array.isArray(j.results) ? j.results : []
+			} catch {
+				if (seq === linkSeq) linkResults = []
+			} finally {
+				if (seq === linkSeq) { linkSearching = false; linkSearched = true; linkActive = 0 }
+			}
+		}, 250)
+	}
+	function pickLink(r: LinkResult) {
+		if (!editor) return
+		const { empty } = editor.state.selection
+		if (empty) {
+			editor.chain().focus().insertContent([
+				{ type: 'text', text: r.title, marks: [{ type: 'link', attrs: { href: r.url } }] },
+				{ type: 'text', text: ' ' },
+			]).run()
+		} else {
+			editor.chain().focus().setLink({ href: r.url }).run()
+		}
+		linkUrl = ''; linkResults = []; linkSearched = false; showLink = false
+	}
+	function onLinkKey(e: KeyboardEvent) {
+		if (e.key === 'Escape') { showLink = false; return }
+		if (linkResults.length && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+			e.preventDefault()
+			linkActive = (linkActive + (e.key === 'ArrowDown' ? 1 : linkResults.length - 1)) % linkResults.length
+			return
+		}
+		if (e.key === 'Enter') {
+			e.preventDefault()
+			if (linkResults.length && !looksLikeAddress(linkUrl)) pickLink(linkResults[linkActive])
+			else insertLink()
+		}
+	}
+	const linkTypeLabel = (t: LinkResult['type']) => tFn(`editor.link.type_${t}`)
+	function linkSubtitle(r: LinkResult): string {
+		if (r.type === 'event' && r.subtitle) {
+			try { return new Intl.DateTimeFormat($locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(r.subtitle)) } catch { return '' }
+		}
+		return r.subtitle ?? ''
+	}
+
+	// Ouvre/ferme le menu image. À l'ouverture, si une image est sélectionnée
+	// (NodeSelection), on capture sa position et on pré-remplit le formulaire :
+	// valider remplacera cette image au lieu d'en insérer une nouvelle.
+	function toggleImagePopup() {
+		const opening = !showImage
+		showColor = showEmoji = showLink = showVideo = showAudio = showTable = false
+		showImage = opening
+		replaceImagePos = null
+		if (opening && editor) {
+			const sel = editor.state.selection as any
+			const node = sel?.node
+			if (node && node.type.name === 'image') {
+				replaceImagePos = sel.from
+				imageUrl   = node.attrs.src ?? ''
+				imageAlt   = node.attrs.alt ?? ''
+				imageAlign = (node.attrs['data-align'] ?? node.attrs.align ?? 'center') as any
+			}
+		}
+	}
+
+	function insertImage() {
+		if (!imageUrl.trim()) return
+		const alignClass = { left: 'float-left mr-4', right: 'float-right ml-4', center: 'mx-auto block', full: 'w-full block', inline: 'inline align-middle' }[imageAlign]
+		const attrs = { src: imageUrl, alt: imageAlt || '', class: alignClass, 'data-align': imageAlign, align: imageAlign }
+		if (replaceImagePos !== null) {
+			// Remplace l'image existante à sa position (conserve le noeud, change
+			// src/alt/alignement) plutôt que d'en insérer une à côté.
+			const pos = replaceImagePos
+			editor?.chain().focus().command(({ tr, state }: any) => {
+				const node = state.doc.nodeAt(pos)
+				if (!node || node.type.name !== 'image') return false
+				tr.setNodeMarkup(pos, undefined, attrs)
+				return true
+			}).run()
+		} else {
+			editor?.chain().focus().setImage(attrs).run()
+		}
+		imageUrl = ''; imageAlt = ''; showImage = false; replaceImagePos = null
+	}
+
+	function insertVideo() {
+		if (!videoUrl.trim()) return
+		editor?.chain().focus().setYoutubeVideo({ src: videoUrl }).run()
+		videoUrl = ''; showVideo = false
+	}
+
+	function resetAudioForm() {
+		audioPickedFile = null
+		audioTitle = ''
+		audioArtist = ''
+		audioAllowDownload = false
+		audioCoverFile = null
+		audioCoverDetected = null
+		if (audioCoverPreview) { try { URL.revokeObjectURL(audioCoverPreview) } catch {} }
+		audioCoverPreview = null
+		audioError = ''
+		audioUrlExternal = ''
+		audioStaged = []
+		if (audioFileEl) audioFileEl.value = ''
+		if (audioCoverFileEl) audioCoverFileEl.value = ''
+	}
+
+	// ── Coller ou déposer une image (capture d'écran, fichier) ───────────────
+	// Avant : rien ne se passait. Une image SEULE dans le presse-papiers (capture) ou
+	// déposée est envoyée sur l'instance (/social/upload : vérifiée, convertie en webp),
+	// puis insérée. Un morceau de page web (texte + images) garde le collage normal.
+	let pasteUploading = $state(0)
+	let pasteError     = $state('')
+	const MAX_PASTED_IMAGES = 5
+	function imageFilesOf(dt: DataTransfer | null): File[] {
+		if (!dt) return []
+		return Array.from(dt.files ?? []).filter(f => f.type.startsWith('image/')).slice(0, MAX_PASTED_IMAGES)
+	}
+	function naturalWidth(file: File): Promise<number> {
+		return new Promise(resolve => {
+			const url = URL.createObjectURL(file)
+			const img = new Image()
+			img.onload  = () => { resolve(img.naturalWidth); URL.revokeObjectURL(url) }
+			img.onerror = () => { resolve(0); URL.revokeObjectURL(url) }
+			img.src = url
+		})
+	}
+	async function uploadAndInsertImages(files: File[], pos: number | null) {
+		pasteError = ''
+		for (const file of files) {
+			pasteUploading++
+			try {
+				const fd = new FormData()
+				fd.append('file', file)
+				const res = await apiFetch(fetch, '/social/upload', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd })
+				const j = await res.json().catch(() => ({}))
+				if (!res.ok || !j.url) { pasteError = tFn('editor.paste_failed', { reason: j.error ?? String(res.status) }); continue }
+				const attrs: Record<string, string> = { src: j.url, alt: '', class: 'mx-auto block', 'data-align': 'center', align: 'center' }
+				// Une petite image (icône, capture d'un bouton) garde sa taille : sans largeur,
+				// l'éditeur l'étire sur toute la ligne et elle devient floue. Même unité que les
+				// poignées de redimensionnement (pourcentage de la largeur de l'éditeur).
+				const natural = await naturalWidth(file)
+				const room = editorEl?.clientWidth ?? 0
+				if (natural && room && natural < room) attrs.width = `${Math.max(5, Math.round(natural / room * 100))}%`
+				if (pos !== null && editor) {
+					editor.chain().focus().insertContentAt(pos, { type: 'image', attrs }).run()
+				} else {
+					editor?.chain().focus().setImage(attrs).run()
+				}
+			} catch {
+				pasteError = tFn('editor.paste_failed', { reason: tFn('editor.paste_network') })
+			} finally {
+				pasteUploading--
+			}
+		}
+	}
+
+	async function uploadBlobToPosts(blob: Blob, filename: string): Promise<string | null> {
+		const fd = new FormData()
+		// Capa (imagem) vira asset Bulk; /social/upload só aceita áudio (trik_019).
+		const isImage = blob.type.startsWith('image/')
+		if (isImage) {
+			fd.append('name', filename.replace(/\.[^.]+$/, '').slice(0, 100) || 'cover')
+			fd.append('asset_type', 'bulk')
+		}
+		fd.append('file', new File([blob], filename, { type: blob.type }))
+		if (isImage) {
+			const res = await apiFetch(fetch, '/assets', {
+				method:  'POST',
+				headers: { Authorization: `Bearer ${token}` },
+				body:    fd,
+			})
+			if (!res.ok) {
+				const j = await res.json().catch(() => ({}))
+				audioError = j.error ?? tFn('editor.audio.err_upload', { status: res.status })
+				return null
+			}
+			return `/uploads/${(await res.json()).asset.file_path}`
+		}
+		const res = await apiFetch(fetch, '/social/upload', {
+			method:  'POST',
+			headers: { Authorization: `Bearer ${token}` },
+			body:    fd,
+		})
+		if (!res.ok) {
+			const j = await res.json().catch(() => ({}))
+			audioError = j.error ?? tFn('editor.audio.err_upload', { status: res.status })
+			return null
+		}
+		return (await res.json()).url as string
+	}
+
+	async function onAudioFileChange(e: Event) {
+		const file = (e.target as HTMLInputElement).files?.[0]
+		if (!file) return
+		audioError = ''
+		if (!file.type.startsWith('audio/')) {
+			audioError = tFn('editor.audio.err_format')
+			audioPickedFile = null
+			return
+		}
+		if (file.size > 8 * 1024 * 1024) {
+			audioError = 'Fichier trop lourd (max 8 Mo).'
+			audioPickedFile = null
+			return
+		}
+		audioPickedFile = file
+		// Default title = filename without extension
+		if (!audioTitle) audioTitle = file.name.replace(/\.[^.]+$/, '')
+
+		// Best-effort ID3 parse — only meaningful for mp3, gracefully no-op for others
+		try {
+			const { parseAudioMetadata } = await import('$lib/components/audio/id3')
+			const meta = await parseAudioMetadata(file)
+			if (meta.title  && !audioArtist) audioTitle  = meta.title
+			if (meta.artist) audioArtist = meta.artist
+			if (meta.cover && !audioCoverFile) {
+				audioCoverDetected = meta.cover
+				const blob = new Blob([meta.cover.bytes as BlobPart], { type: meta.cover.mime })
+				if (audioCoverPreview) { try { URL.revokeObjectURL(audioCoverPreview) } catch {} }
+				audioCoverPreview = URL.createObjectURL(blob)
+			}
+		} catch (err) {
+			// Silent: metadata extraction is best-effort, not a hard requirement
+			console.warn('[nodyx-audio] ID3 parse failed', err)
+		}
+	}
+
+	function onCoverFileChange(e: Event) {
+		const file = (e.target as HTMLInputElement).files?.[0]
+		if (!file) return
+		if (!file.type.startsWith('image/')) {
+			audioError = tFn('editor.audio.err_cover_format')
+			return
+		}
+		if (file.size > 8 * 1024 * 1024) {
+			audioError = 'Cover trop lourde (max 8 Mo).'
+			return
+		}
+		audioCoverFile = file
+		audioCoverDetected = null  // manual file overrides detected
+		if (audioCoverPreview) { try { URL.revokeObjectURL(audioCoverPreview) } catch {} }
+		audioCoverPreview = URL.createObjectURL(file)
+	}
+
+	function clearCover() {
+		audioCoverFile = null
+		audioCoverDetected = null
+		if (audioCoverPreview) { try { URL.revokeObjectURL(audioCoverPreview) } catch {} }
+		audioCoverPreview = null
+		if (audioCoverFileEl) audioCoverFileEl.value = ''
+	}
+
+	async function stageAudio() {
+		audioError = ''
+		if (!audioPickedFile) {
+			audioError = 'Choisis un fichier audio.'
+			return
+		}
+		if (!token) {
+			audioError = tFn('editor.audio.err_session')
+			return
+		}
+		audioUploading = true
+		try {
+			const audioUrl = await uploadBlobToPosts(audioPickedFile, audioPickedFile.name)
+			if (!audioUrl) return
+
+			let coverUrl = ''
+			if (audioCoverFile) {
+				const u = await uploadBlobToPosts(audioCoverFile, audioCoverFile.name)
+				if (u) coverUrl = u
+			} else if (audioCoverDetected) {
+				const ext = audioCoverDetected.mime === 'image/png' ? 'png' : 'jpg'
+				const blob = new Blob([audioCoverDetected.bytes as BlobPart], { type: audioCoverDetected.mime })
+				const u = await uploadBlobToPosts(blob, `cover.${ext}`)
+				if (u) coverUrl = u
+			}
+
+			audioStaged = [...audioStaged, {
+				src:    audioUrl,
+				title:  audioTitle.trim(),
+				artist: audioArtist.trim(),
+				cover:  coverUrl,
+			}]
+
+			// Clear current track form but keep the staged queue and download flag
+			audioPickedFile = null
+			audioTitle = ''
+			audioArtist = ''
+			audioCoverFile = null
+			audioCoverDetected = null
+			if (audioCoverPreview) { try { URL.revokeObjectURL(audioCoverPreview) } catch {} }
+			audioCoverPreview = null
+			if (audioFileEl) audioFileEl.value = ''
+			if (audioCoverFileEl) audioCoverFileEl.value = ''
+		} catch (err) {
+			audioError = tFn('editor.audio.err_network')
+		} finally {
+			audioUploading = false
+		}
+	}
+
+	function removeStaged(idx: number) {
+		audioStaged = audioStaged.filter((_, i) => i !== idx)
+	}
+
+	function insertStaged() {
+		if (audioStaged.length === 0) return
+		if (audioStaged.length === 1) {
+			const t = audioStaged[0]
+			const attrs: Record<string, string> = { src: t.src }
+			if (t.title)  attrs['track-title'] = t.title
+			if (t.artist) attrs.artist        = t.artist
+			if (t.cover)  attrs.cover         = t.cover
+			if (audioAllowDownload) attrs.download = '1'
+			;(editor?.chain().focus() as any).setNodyxAudio(attrs).run()
+		} else {
+			;(editor?.chain().focus() as any).setNodyxPlaylist({
+				tracks: audioStaged.map(t => ({ src: t.src, title: t.title, artist: t.artist, cover: t.cover })),
+				download: audioAllowDownload,
+			}).run()
+		}
+		audioStaged = []
+		showAudio = false
+		resetAudioForm()
+	}
+
+	function insertAudioFromUrl() {
+		const src = audioUrlExternal.trim()
+		if (!src) return
+		if (!src.startsWith('/uploads/')) {
+			audioError = tFn('editor.audio.err_local_only')
+			return
+		}
+		const attrs: Record<string, string> = { src }
+		if (audioTitle.trim())  attrs['track-title'] = audioTitle.trim()
+		if (audioArtist.trim()) attrs.artist        = audioArtist.trim()
+		if (audioAllowDownload) attrs.download      = '1'
+		;(editor?.chain().focus() as any).setNodyxAudio(attrs).run()
+		showAudio = false
+		resetAudioForm()
+	}
+
+	function insertCustomEmoji(shortcode: string) {
+		editor?.chain().focus().insertContent({ type: 'customEmoji', attrs: { shortcode } }).run()
+		showEmoji = false
+	}
+
+	function insertEmoji(e: string) {
+		editor?.chain().focus().insertContent(e).run()
+		showEmoji = false
+	}
+
+	function setColor(c: string) {
+		editor?.chain().focus().setColor(c).run()
+		showColor = false
+	}
+
+	function toggleAny(key: string) {
+		if (!editor) return
+		const chain = editor.chain().focus()
+		const actions: Record<string, () => any> = {
+			bold:      () => chain.toggleBold().run(),
+			italic:    () => chain.toggleItalic().run(),
+			underline: () => chain.toggleUnderline().run(),
+			strike:    () => chain.toggleStrike().run(),
+			scramble:  () => (chain as any).toggleScramble().run(),
+			spoiler:   () => (chain as any).toggleSpoiler().run(),
+			code:      () => chain.toggleCode().run(),
+			h1:        () => chain.toggleHeading({ level: 1 }).run(),
+			h2:        () => chain.toggleHeading({ level: 2 }).run(),
+			h3:        () => chain.toggleHeading({ level: 3 }).run(),
+			bullet:    () => chain.toggleBulletList().run(),
+			ordered:   () => chain.toggleOrderedList().run(),
+			quote:     () => chain.toggleBlockquote().run(),
+			codeBlock: () => chain.toggleCodeBlock().run(),
+			left:      () => chain.setTextAlign('left').run(),
+			center:    () => chain.setTextAlign('center').run(),
+			right:     () => chain.setTextAlign('right').run(),
+			justify:   () => chain.setTextAlign('justify').run(),
+			hr:        () => chain.setHorizontalRule().run(),
+			twoCols:   () => (chain as any).insertTwoCols().run(),
+			// Table
+			insertTable:  () => chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
+			addRowAfter:  () => chain.addRowAfter().run(),
+			addRowBefore: () => chain.addRowBefore().run(),
+			delRow:       () => chain.deleteRow().run(),
+			addColAfter:  () => chain.addColumnAfter().run(),
+			addColBefore: () => chain.addColumnBefore().run(),
+			delCol:       () => chain.deleteColumn().run(),
+			delTable:     () => chain.deleteTable().run(),
+		}
+		actions[key]?.()
+	}
+
+	// ── Sommaire automatique ──────────────────────────────────────────────────
+	// Scanne les titres h2/h3 du document, pose une ancre (id slugifié) sur
+	// ceux qui n'en ont pas, puis insère au curseur une boîte .toc (façon
+	// wiki, flottante à droite côté rendu) avec les liens vers chaque titre.
+	function slugifyHeading(s: string): string {
+		const slug = s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+			.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60)
+		return slug || 'section'
+	}
+
+	// id unique dans le document (évite les collisions d'ancres).
+	function uniqueHeadingId(text: string): string {
+		const base = slugifyHeading(text)
+		const used = new Set<string>()
+		editor.state.doc.descendants((node: any) => {
+			if (node.type.name === 'heading' && node.attrs.id) used.add(node.attrs.id)
+		})
+		if (!used.has(base)) return base
+		let i = 2
+		while (used.has(`${base}-${i}`)) i++
+		return `${base}-${i}`
+	}
+
+	// Bloc (titre ou paragraphe) qui contient la sélection.
+	function currentBlock(): { node: any; isAnchored: boolean } | null {
+		if (!editor) return null
+		const selFrom = editor.state.selection.$from
+		for (let d = selFrom.depth; d > 0; d--) {
+			const node = selFrom.node(d)
+			if (node.type.name === 'heading' || node.type.name === 'paragraph') {
+				return { node, isAnchored: node.type.name === 'heading' && !!node.attrs.id }
+			}
+		}
+		return null
+	}
+
+	// Action du bouton « Ancre » : la ligne devient un titre de section ancré
+	// (paragraphe -> h2 ; niveau h2/h3 conservé), et le menu est reconstruit.
+	function toggleAnchor(): void {
+		if (!editor) return
+		const info = currentBlock()
+		if (!info) return
+		const { node, isAnchored } = info
+		if (isAnchored) {
+			editor.chain().focus().updateAttributes('heading', { id: null }).run()
+		} else {
+			const text = node.textContent.trim() || 'section'
+			const id = uniqueHeadingId(text)
+			if (node.type.name === 'paragraph') {
+				editor.chain().focus().setNode('heading', { level: 2, id }).run()
+			} else {
+				editor.chain().focus().updateAttributes('heading', { id }).run()
+			}
+		}
+		rebuildToc()
+		syncBubble()
+	}
+
+	// Reconstruit la boîte .toc à partir des titres ancrés (id présent), dans
+	// l'ordre du document. Crée la boîte si besoin, la supprime s'il n'y a plus
+	// d'ancre. La boîte est dérivée : on ne la saisit pas à la main.
+	function rebuildToc(): void {
+		if (!editor) return
+		const entries: Array<{ id: string; text: string; level: number }> = []
+		editor.state.doc.descendants((node: any) => {
+			if (node.type.name !== 'heading') return
+			const level = node.attrs.level
+			if ((level !== 2 && level !== 3) || !node.attrs.id) return
+			const text = node.textContent.trim()
+			if (text) entries.push({ id: node.attrs.id, text, level })
+		})
+		let tocPos: number | null = null
+		let tocSize = 0
+		editor.state.doc.descendants((node: any, pos: number) => {
+			if (node.type.name === 'tocBox') { tocPos = pos; tocSize = node.nodeSize; return false }
+			return true
+		})
+		if (entries.length === 0) {
+			if (tocPos !== null) {
+				editor.chain().command(({ tr }: any) => { tr.delete(tocPos!, tocPos! + tocSize); return true }).run()
+			}
+			return
+		}
+		const links: any[] = []
+		entries.forEach((e, i) => {
+			if (i > 0) links.push({ type: 'hardBreak' })
+			links.push({ type: 'text', text: e.level === 3 ? '   ▸ ' : '▸ ' })
+			links.push({ type: 'text', text: e.text, marks: [{ type: 'link', attrs: { href: `#${e.id}`, target: null } }] })
+		})
+		const tocContent = {
+			type: 'tocBox',
+			content: [
+				{ type: 'paragraph', content: [{ type: 'text', text: 'Sommaire', marks: [{ type: 'bold' }] }] },
+				{ type: 'paragraph', content: links },
+			],
+		}
+
+		// API haut-niveau (robuste) : on retire l'ancienne boîte, puis on insère
+		// la nouvelle en tête (après le hero si présent).
+		try {
+			if (tocPos !== null) {
+				editor.chain().deleteRange({ from: tocPos, to: tocPos + tocSize }).run()
+			}
+			let insertPos = 0
+			const first = editor.state.doc.firstChild
+			if (first && first.type.name === 'image') insertPos = first.nodeSize
+			editor.chain().insertContentAt(insertPos, tocContent).run()
+		} catch (err) {
+			console.warn('[nodyx-editor] rebuildToc', err)
+			return
+		}
+		flashToc()
+	}
+
+	// Petit flash visuel sur la boîte sommaire après une mise à jour : montre
+	// clairement à l'auteur que son ancre a été prise en compte.
+	function flashToc(): void {
+		requestAnimationFrame(() => {
+			const el = editorEl?.querySelector('.toc') as HTMLElement | null
+			if (!el) return
+			el.classList.remove('toc-flash')
+			void el.offsetWidth   // reflow pour rejouer l'animation
+			el.classList.add('toc-flash')
+			setTimeout(() => el.classList.remove('toc-flash'), 1000)
+		})
+	}
+
+	// Position/visibilité de la barre flottante selon la sélection.
+	// Repositionnée aussi au scroll/resize (cf. effet plus bas) pour rester
+	// collée à la sélection, et basculée sous le texte si elle déborderait en
+	// haut (sinon elle passait sous la barre d'outils — effet « buggé »).
+	function syncBubble(): void {
+		if (!editor) { bubbleVisible = false; return }
+		const sel = editor.state.selection
+		const isTextSel = sel instanceof TextSelection
+		const parentIsTextblock = sel.$from.parent?.isTextblock
+		if (sel.empty || !isTextSel || !parentIsTextblock) { bubbleVisible = false; return }
+		const info = currentBlock()
+		blockIsAnchored = !!info?.isAnchored
+		try {
+			const a = editor.view.coordsAtPos(sel.from)
+			const b = editor.view.coordsAtPos(sel.to)
+			const topY = Math.min(a.top, b.top)
+			const botY = Math.max(a.bottom, b.bottom)
+			// Si trop près du haut de la fenêtre, on passe la barre sous la sélection.
+			bubbleBelow = topY < 64
+			bubbleTop  = bubbleBelow ? botY : topY
+			bubbleLeft = (a.left + b.left) / 2
+			bubbleVisible = true
+		} catch {
+			bubbleVisible = false
+		}
+	}
+
+	// ── « Nodyx relié » : coller un lien, et la bulle Carte | Lien simple | Texte brut ──
+	// Coller l'adresse d'un sujet, d'une réponse ou d'un événement l'insère en lien ;
+	// dès que sa carte est connue, le texte devient son titre, dans une étape d'annulation
+	// À PART : Ctrl+Z revient au lien tel qu'il a été collé. Toute transformation se
+	// défait (CDC E5) : la bulle propose Carte (par défaut), Lien simple (pas de carte,
+	// data-card="off") ou Texte brut (l'adresse en texte, sans lien).
+	let linkHit      = $state<LinkHit | null>(null)
+	let linkBubbleTop  = $state(0)
+	let linkBubbleLeft = $state(0)
+	let linkBubbleBelow = $state(false)
+
+	function syncLinkBubble(): void {
+		if (!editor) { linkHit = null; return }
+		const hit = internalLinkAt(editor.state, location.origin)
+		if (!hit) { linkHit = null; return }
+		try {
+			const a = editor.view.coordsAtPos(hit.from)
+			// Au-dessus du lien, sauf si elle recouvrirait la barre d'outils (lien sur la
+			// première ligne) ou le haut de la fenêtre : alors sous le lien.
+			const barBottom = wrapperEl?.querySelector('.nodyx-toolbar')?.getBoundingClientRect().bottom ?? 0
+			linkBubbleBelow = a.top - 44 < Math.max(64, barBottom)
+			linkBubbleTop  = linkBubbleBelow ? a.bottom : a.top
+			linkBubbleLeft = a.left
+			linkHit = hit
+		} catch { linkHit = null }
+	}
+
+	function pasteInternalLink(raw: string, path: string): void {
+		if (!editor) return
+		editor.chain().focus().insertContent({ type: 'text', text: raw, marks: [{ type: 'link', attrs: { href: raw } }] }).run()
+		let unsub: (() => void) | null = null
+		let done = false
+		unsub = cardFor(path, token ?? null).subscribe(st => {
+			if (done || st.status === 'loading') return
+			done = true
+			queueMicrotask(() => unsub?.())
+			if (st.status !== 'ready' || !st.card) return
+			const c = st.card
+			const title = c.type === 'post' ? c.thread.title : c.type === 'unavailable' ? null : c.title
+			if (title) retitleLink(raw, title)
+		})
+	}
+
+	/** Le lien collé (texte = adresse brute) prend le titre, dans une étape d'annulation à part. */
+	function retitleLink(raw: string, title: string): void {
+		if (!editor) return
+		const { state } = editor
+		const linkType = state.schema.marks.link
+		let target: { from: number; to: number; marks: readonly any[] } | null = null
+		state.doc.descendants((node: any, pos: number) => {
+			if (target || !node.isText || node.text !== raw) return
+			const m = node.marks.find((mm: any) => mm.type === linkType && mm.attrs.href === raw)
+			if (m) target = { from: pos, to: pos + node.nodeSize, marks: node.marks }
+		})
+		if (!target) return   // déjà retouché à la main : on ne touche à rien
+		const t = target as { from: number; to: number; marks: readonly any[] }
+		const tr = closeHistory(state.tr)
+		tr.replaceWith(t.from, t.to, state.schema.text(title, t.marks))
+		editor.view.dispatch(tr)
+	}
+
+	function setLinkView(view: 'card' | 'link' | 'raw'): void {
+		if (!editor || !linkHit) return
+		const { state } = editor
+		const { from, to, href, mark } = linkHit
+		const tr = state.tr
+		if (view === 'raw') tr.replaceWith(from, to, state.schema.text(href))
+		else tr.addMark(from, to, mark.type.create({ ...mark.attrs, card: view === 'link' ? 'off' : null }))
+		editor.view.dispatch(tr)
+		editor.view.focus()
+	}
+
+	// ── Mentions : « @ » propose les personnes (SPECS/NODYX_MENTIONS_CDC.md, D50) ─────
+	let mentionOpen   = $state(false)
+	let mentionItems  = $state<MentionSuggestion[]>([])
+	let mentionActive = $state(0)
+	let mentionQuery  = $state('')
+	let mentionTop    = $state(0)
+	let mentionLeft   = $state(0)
+	let mentionFrom = 0, mentionTo = 0, mentionSeq = 0
+	let mentionTimer: ReturnType<typeof setTimeout> | null = null
+	let mentionDismissedAt = -1
+
+	/** Le contexte « ici » : le salon du chat ou le sujet du forum de la page. */
+	function mentionContext(): { channelId?: string; threadId?: string } {
+		const u = page.url
+		if (u.pathname.startsWith('/chat')) return { channelId: u.searchParams.get('channel') ?? undefined }
+		const m = u.pathname.match(/^\/forum\/[^/]+\/([^/]+)$/)
+		return m ? { threadId: decodeURIComponent(m[1]) } : {}
+	}
+
+	function closeMention() { mentionOpen = false; mentionItems = []; mentionSeq++; mentionDismissedAt = mentionFrom }
+
+	function syncMention(): void {
+		if (!editor) return
+		const { state } = editor
+		const sel = state.selection
+		if (!sel.empty || editor.isActive('codeBlock') || !sel.$from.parent.isTextblock) { if (mentionOpen) closeMention(); else mentionSeq++; return }
+		const at = sel.$from
+		const before = at.parent.textBetween(Math.max(0, at.parentOffset - 40), at.parentOffset, undefined, '\ufffc')
+		const m = before.match(MENTION_TRIGGER)
+		// Plus de mention sous le curseur : on ferme ET on périme la recherche en vol.
+		// Sinon, en tapant vite, la réponse de la frappe d'avant arrivait APRÈS et
+		// rouvrait la liste sur une position périmée : choisir laissait un mot orphelin.
+		if (!m) { mentionOpen = false; mentionItems = []; mentionSeq++; mentionDismissedAt = -1; return }
+		const from = sel.from - m[1].length - 1
+		if (from === mentionDismissedAt) return        // fermée par Échap : on ne la rouvre pas sur la même mention
+		mentionFrom = from; mentionTo = sel.from; mentionQuery = m[1]
+		try {
+			const c = editor.view.coordsAtPos(from)
+			mentionTop = c.bottom + 6; mentionLeft = Math.min(c.left, window.innerWidth - 380)
+		} catch { /* position indisponible */ }
+		if (mentionTimer) clearTimeout(mentionTimer)
+		const seq = ++mentionSeq
+		mentionTimer = setTimeout(async () => {
+			const found = await suggestMentions(mentionQuery, token ?? null, mentionContext())
+			if (seq !== mentionSeq) return
+			mentionItems = found; mentionActive = 0; mentionOpen = found.length > 0
+		}, 120)
+	}
+
+	function pickMention(s: MentionSuggestion | undefined): void {
+		if (!editor || !s) return
+		editor.chain().focus().insertContentAt({ from: mentionFrom, to: mentionTo }, [
+			{ type: 'mention', attrs: { ref: refOf(s), label: insertLabel(s, tFn) } },
+			{ type: 'text', text: ' ' },
+		]).run()
+		mentionOpen = false; mentionItems = []; mentionSeq++
+	}
+
+	// ── « # » : propose les endroits (C5, même liste que le chat, D59) ─────────────
+	let placeOpen   = $state(false)
+	let placeItems  = $state<Place[]>([])
+	let placeActive = $state(0)
+	let placeQuery  = $state('')
+	let placeTop    = $state(0)
+	let placeLeft   = $state(0)
+	let placeFrom = 0, placeTo = 0, placeSeq = 0
+	let placeTimer: ReturnType<typeof setTimeout> | null = null
+	let placeDismissedAt = -1
+
+	function closePlace() { placeOpen = false; placeItems = []; placeSeq++; placeDismissedAt = placeFrom }
+
+	function syncPlace(): void {
+		if (!editor || !token) return
+		const sel = editor.state.selection
+		if (!sel.empty || editor.isActive('codeBlock') || editor.isActive('code') || !sel.$from.parent.isTextblock) { if (placeOpen) closePlace(); else placeSeq++; return }
+		const at = sel.$from
+		const before = at.parent.textBetween(Math.max(0, at.parentOffset - 60), at.parentOffset, undefined, '\ufffc')
+		const m = before.match(PLACE_TRIGGER)
+		if (!m) { placeOpen = false; placeItems = []; placeSeq++; placeDismissedAt = -1; return }   // même règle que les mentions
+		const from = sel.from - m[1].length - 1
+		if (from === placeDismissedAt) return        // fermée par Échap : on ne la rouvre pas au même endroit
+		placeFrom = from; placeTo = sel.from; placeQuery = m[1]
+		try {
+			const c = editor.view.coordsAtPos(from)
+			placeTop = c.bottom + 6; placeLeft = Math.min(c.left, window.innerWidth - 380)
+		} catch { /* position indisponible */ }
+		if (placeTimer) clearTimeout(placeTimer)
+		const seq = ++placeSeq
+		placeTimer = setTimeout(async () => {
+			const found = await suggestPlaces(placeQuery, token ?? null)
+			if (seq !== placeSeq) return
+			placeItems = found; placeActive = 0; placeOpen = found.length > 0
+		}, 150)
+	}
+
+	/**
+	 * Un texte de l'éditeur peut être lu de tous (forum, wiki, fil) : on n'y écrit le
+	 * vrai nom que d'un endroit lisible de tous (publicMark). Les membres voient le
+	 * vrai nom grâce aux puces, ici dans l'éditeur comme à la lecture.
+	 */
+	function pickPlace(p: Place | undefined): void {
+		if (!editor || !p) return
+		const mark = publicMark(p, k => tFn(`place.neutral_${k}`))
+		editor.chain().focus().insertContentAt({ from: placeFrom, to: placeTo }, [
+			{ type: 'place', attrs: { ref: p.ref, url: mark.url, label: mark.label } },
+			{ type: 'text', text: ' ' },
+		]).run()
+		placeOpen = false; placeItems = []; placeSeq++
+	}
+
+	/** Le « ? » sous l'éditeur : « Essayer » écrit la touche et ouvre sa liste. */
+	function tryTrigger(k: '@' | '#' | '/') {
+		if (!editor) return
+		const at = editor.state.selection.$from
+		const needSpace = at.parentOffset > 0 && !/\s$/.test(at.parent.textBetween(0, at.parentOffset, undefined, '\ufffc'))
+		editor.chain().focus().insertContent((needSpace ? ' ' : '') + k).run()
+	}
+
+	// ── D51 : avant l'envoi d'un formulaire, ce que les mentions vont faire ─────────
+	// Seulement dans un formulaire (forum, wiki, événement…). Un grand groupe retient
+	// l'envoi jusqu'à « Envoyer quand même » ; le cœur refait ses contrôles à l'envoi.
+	let mentionForm      = $state<HTMLFormElement | null>(null)
+	let mentionBlocked   = $state(false)
+	let mentionConfirmed = false
+	const mentionRefs = $derived(mentionForm ? refsIn(html) : [])
+	$effect(() => { void mentionRefs.join('|'); mentionConfirmed = false })
+
+	function setupMentionGate() {
+		const form = wrapperEl?.closest('form')
+		if (!form) return
+		mentionForm = form
+		// En capture : passe AVANT use:enhance et l'effacement du brouillon
+		form.addEventListener('submit', (e) => {
+			if (!mentionBlocked || mentionConfirmed) return
+			e.preventDefault()
+			e.stopImmediatePropagation()
+			wrapperEl?.querySelector('.mw')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+		}, { capture: true })
+	}
+
+	function confirmMentions() {
+		mentionConfirmed = true
+		mentionForm?.requestSubmit()
+	}
+
+	/** Les mentions de cette référence dans le texte, de la dernière à la première. */
+	function mentionPositions(ref: string): { pos: number; size: number }[] {
+		const out: { pos: number; size: number }[] = []
+		editor?.state.doc.descendants((node: any, pos: number) => {
+			if (node.type.name === 'mention' && node.attrs.ref === ref) out.push({ pos, size: node.nodeSize })
+		})
+		return out.reverse()
+	}
+	function removeMentionRef(ref: string) {
+		if (!editor) return
+		const tr = editor.state.tr
+		for (const m of mentionPositions(ref)) {
+			const after = tr.doc.textBetween(m.pos + m.size, Math.min(tr.doc.content.size, m.pos + m.size + 1))
+			tr.delete(m.pos, m.pos + m.size + (after === ' ' ? 1 : 0))
+		}
+		editor.view.dispatch(tr)
+	}
+	function replaceMentionRef(from: string, to: string, toLabel: string) {
+		if (!editor) return
+		const tr = editor.state.tr
+		for (const m of mentionPositions(from)) tr.setNodeMarkup(m.pos, undefined, { ref: to, label: toLabel })
+		editor.view.dispatch(tr)
+	}
+
+	// ── Preset colours & emoji ────────────────────────────────────────────────
+	const COLORS = [
+		'#ffffff','#d1d5db','#9ca3af','#6b7280','#374151','#111827',
+		'#ef4444','#f97316','#f59e0b','#84cc16','#22c55e','#10b981',
+		'#06b6d4','#3b82f6','#6366f1','#8b5cf6','#ec4899','#f43f5e',
+	]
+
+	const EMOJIS = [
+		// Visages
+		'😀','😃','😄','😁','😆','😅','😂','🤣','😊','😇','🥰','😍','🤩','😎','🥳','😏',
+		'😢','😭','😤','😡','🤔','🤨','😐','😑','😬','🙄','😴','🥱','🤯','😳',
+		// Mains & gestes
+		'👍','👎','👋','🙌','👏','🤝','🙏','💪','✌️','🤙','👌','🤞','☝️','👆','🫶',
+		// Symboles courants
+		'❤️','🔥','⭐','💯','✅','❌','⚠️','💡','📌','🎉','🏆','💎','🚀','💻','📱',
+		// Nature & animaux
+		'🐱','🐶','🦊','🦁','🐸','🐧','🦋','🌸','🌿','🍀','☀️','🌙','⛅','🌈','❄️',
+		// Divers
+		'🎮','🎵','🎨','📚','⚙️','🔧','🔮','🌍','🍕','☕','🍺','🎂','🎁','🏠','✈️',
+	]
+</script>
+
+<!-- ── Hidden form field ────────────────────────────────────────────────── -->
+<input type="hidden" {name} value={html} />
+
+<!-- ── Editor shell ────────────────────────────────────────────────────── -->
+<div bind:this={wrapperEl} class="nodyx-editor rounded-xl border border-gray-700 themed:border-[var(--nx-border)] bg-gray-900 themed:bg-[var(--nx-surface)] overflow-visible focus-within:border-indigo-600 transition-colors">
+
+	<!-- ── Toolbar ─────────────────────────────────────────────────────── -->
+	{#if editor}
+	<div class="nodyx-toolbar flex flex-wrap items-center gap-0.5 px-2 py-1.5 border-b border-gray-800 themed:border-[var(--nx-border)] bg-gray-900/95 themed:bg-[var(--nx-surface)]/95 backdrop-blur relative z-10 rounded-t-xl shrink-0 {moreOpen ? 'more-open' : ''}"
+		role="toolbar"
+		tabindex="0"
+		onmousedown={(e) => {
+			// Empêche l'éditeur de perdre le focus quand on clique sur la toolbar,
+			// SAUF si la cible est un input/textarea (qui ont besoin du focus natif)
+			const tag = (e.target as HTMLElement).tagName
+			if (tag !== 'INPUT' && tag !== 'TEXTAREA') e.preventDefault()
+		}}
+	>
+
+		<!-- Annuler / refaire : avant, seulement au clavier, donc rien sur téléphone -->
+		<div class="flex items-center gap-0.5">
+			<button type="button" onclick={() => editor?.chain().focus().undo().run()} disabled={!a.canUndo}
+				class="tb-btn disabled:opacity-30 disabled:cursor-default" title={tFn('editor.undo')} aria-label={tFn('editor.undo')}>
+				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 010 11H11"/></svg>
+			</button>
+			<button type="button" onclick={() => editor?.chain().focus().redo().run()} disabled={!a.canRedo}
+				class="tb-btn disabled:opacity-30 disabled:cursor-default" title={tFn('editor.redo')} aria-label={tFn('editor.redo')}>
+				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M15 14l5-5-5-5M20 9H9.5a5.5 5.5 0 000 11H13"/></svg>
+			</button>
+		</div>
+
+		<div class="tb-sep"></div>
+
+		<!-- Inline formatting -->
+		<div class="flex items-center gap-0.5">
+			<button type="button" onclick={() => toggleAny('bold')}      class="tb-btn {a.bold      ? 'active' : ''}" title={tFn('editor.bold')}>         <b>B</b></button>
+			<button type="button" onclick={() => toggleAny('italic')}    class="tb-btn {a.italic    ? 'active' : ''}" title={tFn('editor.italic')}>  <i>I</i></button>
+			<button type="button" onclick={() => toggleAny('underline')} class="tb-btn {a.underline ? 'active' : ''}" title={tFn('editor.underline')}>  <u>U</u></button>
+			<button type="button" onclick={() => toggleAny('strike')}    class="tb-btn tb-more {a.strike    ? 'active' : ''}" title={tFn('editor.strikethrough')}>               <s>S</s></button>
+			<button type="button" onclick={() => toggleAny('spoiler')}   class="tb-btn tb-more {a.spoiler   ? 'active' : ''}" title={tFn('editor.spoiler')}>               <span class="font-mono">||</span></button>
+			{#if scramble}
+			<button type="button" onclick={() => toggleAny('scramble')}  class="tb-btn tb-more {a.scramble  ? 'active' : ''}" title={tFn('editor.scramble')}>              <span class="font-mono">#?</span></button>
+			{/if}
+			<button type="button" onclick={() => toggleAny('code')}      class="tb-btn tb-more {a.code      ? 'active' : ''}" title={tFn('editor.code_inline')}>
+				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+			</button>
+		</div>
+
+		<div class="tb-sep tb-more"></div>
+
+		<!-- Headings -->
+		<div class="tb-more flex items-center gap-0.5">
+			<button type="button" onclick={() => toggleAny('h1')} class="tb-btn text-xs font-bold {a.h1 ? 'active' : ''}" title={tFn('editor.heading_1')}>H1</button>
+			<button type="button" onclick={() => toggleAny('h2')} class="tb-btn text-xs font-bold {a.h2 ? 'active' : ''}" title={tFn('editor.heading_2')}>H2</button>
+			<button type="button" onclick={() => toggleAny('h3')} class="tb-btn text-xs font-bold {a.h3 ? 'active' : ''}" title={tFn('editor.heading_3')}>H3</button>
+		</div>
+
+		<div class="tb-sep tb-more"></div>
+
+		<!-- Blocks -->
+		<div class="tb-more flex items-center gap-0.5">
+			<!-- Blockquote -->
+			<button type="button" onclick={() => toggleAny('quote')} class="tb-btn {a.quote ? 'active' : ''}" title={tFn('editor.blockquote')}>
+				<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983zm-14.017 0v-7.391c0-5.704 3.748-9.57 9-10.609l.996 2.151c-2.433.917-3.996 3.638-3.996 5.849h3.983v10h-9.983z"/></svg>
+			</button>
+			<!-- Code block -->
+			<button type="button" onclick={() => toggleAny('codeBlock')} class="tb-btn {a.codeBlock ? 'active' : ''}" title={tFn('editor.code_block')}>
+				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" stroke-width="2"/><path d="M9 9l-3 3 3 3M15 9l3 3-3 3M13 7l-2 10" stroke-width="2" stroke-linecap="round"/></svg>
+			</button>
+			<!-- HR -->
+			<button type="button" onclick={() => toggleAny('hr')} class="tb-btn" title={tFn('editor.hr')}>
+				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-width="2.5" d="M4 12h16"/></svg>
+			</button>
+		</div>
+
+		<div class="tb-sep tb-more"></div>
+
+		<!-- Lists -->
+		<div class="tb-more flex items-center gap-0.5">
+			<button type="button" onclick={() => toggleAny('bullet')}  class="tb-btn {a.bullet  ? 'active' : ''}" title={tFn('editor.bullet_list')}>
+				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="5" cy="7" r="1.5" fill="currentColor"/><circle cx="5" cy="12" r="1.5" fill="currentColor"/><circle cx="5" cy="17" r="1.5" fill="currentColor"/><path stroke-linecap="round" stroke-width="2" d="M9 7h11M9 12h11M9 17h11"/></svg>
+			</button>
+			<button type="button" onclick={() => toggleAny('ordered')} class="tb-btn {a.ordered ? 'active' : ''}" title={tFn('editor.ordered_list')}>
+				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-width="2" d="M9 7h11M9 12h11M9 17h11"/><text x="2" y="9" font-size="6" fill="currentColor">1.</text><text x="2" y="14" font-size="6" fill="currentColor">2.</text><text x="2" y="19" font-size="6" fill="currentColor">3.</text></svg>
+			</button>
+		</div>
+
+		<div class="tb-sep tb-more"></div>
+
+		<!-- Alignements -->
+		<div class="tb-more flex items-center gap-0.5">
+			<button type="button" onclick={() => toggleAny('left')}    class="tb-btn {a.left    ? 'active' : ''}" title={tFn('editor.align_left')}>
+				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-width="2" d="M3 6h18M3 10h12M3 14h18M3 18h12"/></svg>
+			</button>
+			<button type="button" onclick={() => toggleAny('center')}  class="tb-btn {a.center  ? 'active' : ''}" title={tFn('editor.align_center')}>
+				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-width="2" d="M3 6h18M6 10h12M3 14h18M6 18h12"/></svg>
+			</button>
+			<button type="button" onclick={() => toggleAny('right')}   class="tb-btn {a.right   ? 'active' : ''}" title={tFn('editor.align_right')}>
+				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-width="2" d="M3 6h18M9 10h12M3 14h18M9 18h12"/></svg>
+			</button>
+			<button type="button" onclick={() => toggleAny('justify')} class="tb-btn {a.justify ? 'active' : ''}" title={tFn('editor.align_justify')}>
+				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-width="2" d="M3 6h18M3 10h18M3 14h18M3 18h18"/></svg>
+			</button>
+		</div>
+
+		<div class="tb-sep tb-more"></div>
+
+		<!-- Couleur texte -->
+		<div class="tb-more relative">
+			<button type="button" onclick={() => { showColor = !showColor; showEmoji = showLink = showImage = showVideo = showAudio = showTable = false }} class="tb-btn" title={tFn('editor.text_color')}>
+				<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-width="2" d="M7 20h10M12 4l5 12H7L12 4z"/></svg>
+			</button>
+			{#if showColor}
+			<div class="popup w-48 grid grid-cols-6 gap-1 p-2" use:anchoredPopover>
+				<button type="button" onclick={() => editor?.chain().focus().unsetColor().run()} class="col-span-6 text-xs text-gray-400 themed:text-[var(--nx-text-muted)] hover:text-white themed:hover:text-[var(--nx-text)] text-left mb-1">{tFn('editor.color_reset')}</button>
+				{#each COLORS as c}
+					<button type="button" onclick={() => setColor(c)} class="w-6 h-6 rounded border border-gray-700 themed:border-[var(--nx-border)] hover:scale-110 transition-transform" style="background:{c}" title={c}></button>
+				{/each}
+			</div>
+			{/if}
+		</div>
+
+		<div class="tb-sep tb-more"></div>
+
+		<!-- Lien -->
+		<div class="relative">
+			<button type="button" onclick={() => { showLink = !showLink; showColor = showEmoji = showImage = showVideo = showAudio = showTable = false }} class="tb-btn {a.link ? 'active' : ''}" title={tFn('editor.insert_link')}>
+				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+			</button>
+			{#if showLink}
+			<div class="popup w-80 flex flex-col gap-2 p-3" use:anchoredPopover>
+				<input type="text" bind:value={linkUrl} oninput={onLinkInput} onkeydown={onLinkKey}
+					placeholder={tFn('editor.link.search_ph')} aria-label={tFn('editor.link.search_ph')}
+					class="popup-input" autocomplete="off"
+					role="combobox" aria-expanded={linkResults.length > 0} aria-controls="nx-link-results" />
+				{#if linkResults.length}
+				<ul id="nx-link-results" role="listbox" class="max-h-64 overflow-y-auto -mx-1">
+					{#each linkResults as r, i (r.type + r.url)}
+					<li role="option" aria-selected={i === linkActive}>
+						<button type="button" onclick={() => pickLink(r)} onmouseenter={() => linkActive = i}
+							class="link-opt w-full text-left px-2 py-1.5 rounded-md flex items-start gap-2 {i === linkActive ? 'active' : ''}">
+							<span class="link-badge shrink-0 mt-0.5 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded">{linkTypeLabel(r.type)}</span>
+							<span class="min-w-0">
+								<span class="block text-sm truncate">{r.title}</span>
+								{#if linkSubtitle(r)}<span class="link-sub block text-xs truncate">{linkSubtitle(r)}</span>{/if}
+							</span>
+						</button>
+					</li>
+					{/each}
+				</ul>
+				{:else if linkSearching}
+				<p class="link-note text-xs px-1">{tFn('editor.link.searching')}</p>
+				{:else if linkSearched}
+				<p class="link-note text-xs px-1">{tFn('editor.link.no_result')}</p>
+				{/if}
+				<div class="flex gap-2">
+					<button type="button" onclick={insertLink} class="flex-1 popup-btn-primary">{tFn('editor.insert')}</button>
+					{#if a.link}<button type="button" onclick={() => { editor?.chain().focus().unsetLink().run(); showLink = false }} class="popup-btn-danger">{tFn('editor.delete_link')}</button>{/if}
+				</div>
+			</div>
+			{/if}
+		</div>
+
+		<!-- Image -->
+		<div class="relative">
+			<button type="button" onclick={toggleImagePopup} class="tb-btn" title={tFn('editor.insert_image')}>
+				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" stroke-width="2"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" stroke="none"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 15l-5-5L5 21"/></svg>
+			</button>
+			{#if showImage}
+			<div class="popup w-80 flex flex-col gap-2 p-3" use:anchoredPopover>
+				{#if replaceImagePos !== null}
+					<div class="flex items-center gap-1.5 text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1">
+						<svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16 3h5v5M21 3l-7 7M8 21H3v-5M3 21l7-7"/></svg>
+						{tFn('editor.img.replacing')}
+					</div>
+				{/if}
+				<!-- Bouton médiathèque -->
+				<button type="button" onclick={openMediaPicker}
+					class="flex items-center justify-center gap-2 w-full px-3 py-2 rounded-lg border border-dashed border-indigo-700/60 bg-indigo-950/30 text-indigo-300 themed:text-[var(--nx-header-accent)] text-xs font-medium hover:bg-indigo-900/40 transition-colors">
+					<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/>
+					</svg>
+					{tFn('editor.img.choose_library')}
+				</button>
+				<div class="flex items-center gap-2 text-gray-600 themed:text-[var(--nx-text-muted)]">
+					<span class="flex-1 h-px bg-gray-800 themed:bg-[var(--nx-surface-raised)]"></span>
+					<span class="text-[10px]">ou</span>
+					<span class="flex-1 h-px bg-gray-800 themed:bg-[var(--nx-surface-raised)]"></span>
+				</div>
+				<input type="url" bind:value={imageUrl} placeholder={tFn('editor.image_url_placeholder')} class="popup-input" />
+				<input type="text" bind:value={imageAlt} placeholder={tFn('editor.image_alt_placeholder')} class="popup-input" />
+				<!-- `flex-wrap` : à cinq choix, les libellés traduits ne tiennent plus
+				     forcément sur une ligne. Sans lui, un libellé long écraserait les
+				     autres au lieu de passer dessous. -->
+				<div class="flex flex-wrap gap-1">
+					{#each [['left', tFn('editor.img_align_left')],['center', tFn('editor.img_align_center')],['right', tFn('editor.img_align_right')],['full', tFn('editor.img_align_full')],['inline', tFn('editor.img_align_inline')]] as [v, label]}
+						<button type="button" onclick={() => imageAlign = v as any}
+							class="flex-1 text-xs px-2 py-1 rounded border transition-colors {imageAlign === v ? 'border-indigo-500 bg-indigo-900/50 text-indigo-300 themed:text-[var(--nx-header-accent)]' : 'border-gray-700 themed:border-[var(--nx-border)] text-gray-500 themed:text-[var(--nx-text-muted)] hover:border-gray-500'}">
+							{label}
+						</button>
+					{/each}
+				</div>
+				<button type="button" onclick={insertImage} class="popup-btn-primary">{replaceImagePos !== null ? tFn('editor.replace') : tFn('editor.insert')}</button>
+			</div>
+			{/if}
+		</div>
+
+		<!-- Vidéo YouTube -->
+		<div class="tb-more relative">
+			<button type="button" onclick={() => { showVideo = !showVideo; showColor = showEmoji = showLink = showImage = showAudio = showTable = false }} class="tb-btn" title={tFn('editor.insert_video')}>
+				<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M19.615 3.184c-3.604-.246-11.631-.245-15.23 0-3.897.266-4.356 2.62-4.385 8.816.029 6.185.484 8.549 4.385 8.816 3.6.245 11.626.246 15.23 0 3.897-.266 4.356-2.62 4.385-8.816-.029-6.185-.484-8.549-4.385-8.816zm-10.615 12.816v-8l8 3.993-8 4.007z"/></svg>
+			</button>
+			{#if showVideo}
+			<div class="popup w-80 flex flex-col gap-2 p-3" use:anchoredPopover>
+				<p class="text-xs text-gray-500 themed:text-[var(--nx-text-muted)]">{tFn('editor.video_hint')}</p>
+				<input type="url" bind:value={videoUrl} placeholder={tFn('editor.video.url_ph')} class="popup-input" onkeydown={e => e.key === 'Enter' && insertVideo()} />
+				<button type="button" onclick={insertVideo} class="popup-btn-primary">{tFn('editor.embed_video')}</button>
+			</div>
+			{/if}
+		</div>
+
+		<!-- Audio (mp3 / ogg / wav / m4a / webm) -->
+		<div class="tb-more relative">
+			<button type="button" onclick={() => { showAudio = !showAudio; showColor = showEmoji = showLink = showImage = showVideo = showTable = false }} class="tb-btn" title={tFn('editor.audio.btn_title')}>
+				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19a3 3 0 11-6 0 3 3 0 016 0zm12-3a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+			</button>
+			{#if showAudio}
+			<div class="popup w-96 flex flex-col gap-2 p-3" use:anchoredPopover>
+				<p class="text-xs text-gray-500 themed:text-[var(--nx-text-muted)]">{tFn('editor.audio.hint')}</p>
+				<input
+					bind:this={audioFileEl}
+					type="file"
+					accept="audio/mpeg,audio/mp3,audio/ogg,audio/wav,audio/mp4,audio/webm,.mp3,.ogg,.wav,.m4a,.webm"
+					disabled={audioUploading}
+					onchange={onAudioFileChange}
+					class="popup-input text-xs file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:bg-indigo-700 file:text-white file:cursor-pointer disabled:opacity-50"
+				/>
+
+				{#if audioPickedFile}
+					<div class="flex gap-3 items-start mt-1">
+						<div class="shrink-0">
+							{#if audioCoverPreview}
+								<img src={audioCoverPreview} alt={tFn('editor.audio.cover_alt')} class="w-16 h-16 rounded object-cover border border-indigo-700/40" />
+							{:else}
+								<div class="w-16 h-16 rounded border border-dashed border-gray-700 themed:border-[var(--nx-border)] flex items-center justify-center text-gray-600 themed:text-[var(--nx-text-muted)] text-xs">aucune</div>
+							{/if}
+							<div class="flex gap-1 mt-1">
+								<button type="button" onclick={() => audioCoverFileEl?.click()} class="flex-1 text-[10px] px-1.5 py-0.5 rounded border border-gray-700 themed:border-[var(--nx-border)] text-gray-400 themed:text-[var(--nx-text-muted)] hover:border-indigo-500 hover:text-indigo-300 themed:hover:text-[var(--nx-header-accent)] transition-colors">{tFn('editor.audio.choose_cover')}</button>
+								{#if audioCoverPreview}
+									<button type="button" onclick={clearCover} class="text-[10px] px-1.5 py-0.5 rounded border border-gray-700 themed:border-[var(--nx-border)] text-red-400 hover:border-red-500 transition-colors" title={tFn('editor.audio.clear_cover')}>×</button>
+								{/if}
+							</div>
+							<input bind:this={audioCoverFileEl} type="file" accept="image/jpeg,image/png,image/webp,image/gif" class="hidden" onchange={onCoverFileChange} />
+						</div>
+						<div class="flex-1 flex flex-col gap-1.5 min-w-0">
+							<input type="text" bind:value={audioTitle}  placeholder={tFn('editor.audio.title_ph')} class="popup-input" />
+							<input type="text" bind:value={audioArtist} placeholder={tFn('editor.audio.artist_ph')} class="popup-input" />
+						</div>
+					</div>
+
+					<button type="button" onclick={stageAudio} class="popup-btn-primary mt-1" disabled={audioUploading}>
+						{audioUploading ? tFn('editor.audio.uploading') : (audioStaged.length === 0 ? tFn('editor.audio.add_track') : tFn('editor.audio.add_more'))}
+					</button>
+				{/if}
+
+				{#if audioStaged.length > 0}
+					<div class="mt-2 flex flex-col gap-1 max-h-40 overflow-y-auto border border-indigo-700/40 rounded p-1.5 bg-indigo-950/30">
+						<div class="text-[10px] text-indigo-300 themed:text-[var(--nx-header-accent)] uppercase tracking-wider px-1">{audioStaged.length === 1 ? tFn('editor.audio.queue_one', { count: audioStaged.length }) : tFn('editor.audio.queue_many', { count: audioStaged.length })}</div>
+						{#each audioStaged as t, i}
+							<div class="flex items-center gap-2 text-xs px-1 py-0.5 hover:bg-indigo-900/30 rounded">
+								<span class="text-indigo-400 themed:text-[var(--nx-header-accent)] font-mono">{i + 1}.</span>
+								{#if t.cover}
+									<img src={t.cover} alt="" class="w-6 h-6 rounded object-cover shrink-0" />
+								{:else}
+									<div class="w-6 h-6 rounded bg-indigo-900/40 shrink-0"></div>
+								{/if}
+								<div class="flex-1 min-w-0">
+									<div class="text-gray-200 themed:text-[var(--nx-text)] truncate">{t.title || t.src.split('/').pop()}</div>
+									{#if t.artist}<div class="text-gray-500 themed:text-[var(--nx-text-muted)] text-[10px] truncate">{t.artist}</div>{/if}
+								</div>
+								<button type="button" onclick={() => removeStaged(i)} class="text-red-400 hover:text-red-300 text-base leading-none px-1" title={tFn('editor.remove')}>×</button>
+							</div>
+						{/each}
+					</div>
+
+					<label class="flex items-center gap-2 text-xs text-gray-400 themed:text-[var(--nx-text-muted)] mt-1 cursor-pointer select-none">
+						<input type="checkbox" bind:checked={audioAllowDownload} class="accent-indigo-500" />
+						<span>{tFn('editor.audio.allow_download')}</span>
+					</label>
+
+					<button type="button" onclick={insertStaged} class="popup-btn-primary" disabled={audioUploading}>
+						{audioStaged.length === 1 ? tFn('editor.audio.insert_one') : tFn('editor.audio.insert_playlist', { count: audioStaged.length })}
+					</button>
+				{/if}
+
+				{#if audioError}
+					<p class="text-xs text-red-400">{audioError}</p>
+				{/if}
+
+				<div class="flex items-center gap-2 text-gray-600 themed:text-[var(--nx-text-muted)] mt-1">
+					<span class="flex-1 h-px bg-gray-800 themed:bg-[var(--nx-surface-raised)]"></span>
+					<span class="text-[10px]">ou URL /uploads/…</span>
+					<span class="flex-1 h-px bg-gray-800 themed:bg-[var(--nx-surface-raised)]"></span>
+				</div>
+				<input type="text" bind:value={audioUrlExternal} placeholder={tFn('editor.audio.url_ph')} class="popup-input" onkeydown={e => e.key === 'Enter' && insertAudioFromUrl()} />
+				<button type="button" onclick={insertAudioFromUrl} class="popup-btn-primary" disabled={audioUploading || !audioUrlExternal.trim()}>{tFn('editor.audio.insert_from_url')}</button>
+			</div>
+			{/if}
+		</div>
+
+		<!-- Emoji -->
+		<div class="relative">
+			<button type="button" onclick={() => { showEmoji = !showEmoji; if (customEmojis) loadCustomEmojis(); showColor = showLink = showImage = showVideo = showAudio = showTable = false }} class="tb-btn text-base" title={tFn('editor.insert_emoji')}>😊</button>
+			{#if showEmoji}
+			<div class="popup w-72 p-2 grid grid-cols-10 gap-0.5 max-h-48 overflow-y-auto" use:anchoredPopover>
+				{#if customEmojis && $customEmojisStore.length > 0}
+					{#each $customEmojisStore as ce (ce.shortcode)}
+						<button type="button" onclick={() => insertCustomEmoji(ce.shortcode)} title={`:${ce.shortcode}:`} class="p-1 rounded hover:bg-gray-700 themed:hover:bg-[var(--nx-border)] transition-colors leading-none">
+							<img src={ce.url} alt={`:${ce.shortcode}:`} class="w-5 h-5 object-contain" draggable="false" />
+						</button>
+					{/each}
+					<div class="col-span-10 my-1 border-t border-gray-700/60"></div>
+				{/if}
+				{#each EMOJIS as e}
+					<button type="button" onclick={() => insertEmoji(e)} class="text-base p-1 rounded hover:bg-gray-700 themed:hover:bg-[var(--nx-border)] transition-colors leading-none">{e}</button>
+				{/each}
+			</div>
+			{/if}
+		</div>
+
+		<div class="tb-sep tb-more"></div>
+
+		<!-- Deux colonnes -->
+		<button type="button" onclick={() => toggleAny('twoCols')} class="tb-btn tb-more" title={tFn('editor.two_cols')}>
+			<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="2" y="3" width="9" height="18" rx="1.5" stroke-width="2"/><rect x="13" y="3" width="9" height="18" rx="1.5" stroke-width="2"/></svg>
+		</button>
+
+		<div class="tb-sep tb-more"></div>
+
+		<!-- Table -->
+		<div class="tb-more relative">
+			<button type="button" onclick={() => { showTable = !showTable; showColor = showEmoji = showLink = showImage = showVideo = showAudio = false }} class="tb-btn {a.table ? 'active' : ''}" title={tFn('editor.table')}>
+				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" stroke-width="2"/><path stroke-width="1.5" d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+			</button>
+			{#if showTable}
+			<div class="popup w-52 p-2 flex flex-col gap-1" use:anchoredPopover>
+				{#if !a.table}
+					<button type="button" onclick={() => { toggleAny('insertTable'); showTable = false }} class="table-btn">{tFn('editor.insert_table')}</button>
+				{:else}
+					<p class="text-xs text-gray-500 themed:text-[var(--nx-text-muted)] px-1 mb-1">{tFn('editor.rows')}</p>
+					<button type="button" onclick={() => toggleAny('addRowBefore')} class="table-btn">{tFn('editor.add_row_before')}</button>
+					<button type="button" onclick={() => toggleAny('addRowAfter')}  class="table-btn">{tFn('editor.add_row_after')}</button>
+					<button type="button" onclick={() => toggleAny('delRow')}       class="table-btn danger">{tFn('editor.del_row')}</button>
+					<p class="text-xs text-gray-500 themed:text-[var(--nx-text-muted)] px-1 mt-1 mb-1">{tFn('editor.cols')}</p>
+					<button type="button" onclick={() => toggleAny('addColBefore')} class="table-btn">{tFn('editor.add_col_before')}</button>
+					<button type="button" onclick={() => toggleAny('addColAfter')}  class="table-btn">{tFn('editor.add_col_after')}</button>
+					<button type="button" onclick={() => toggleAny('delCol')}       class="table-btn danger">{tFn('editor.del_col')}</button>
+					<hr class="border-gray-700 themed:border-[var(--nx-border)] my-1"/>
+					<button type="button" onclick={() => { toggleAny('delTable'); showTable = false }} class="table-btn danger">{tFn('editor.del_table')}</button>
+				{/if}
+			</div>
+			{/if}
+		</div>
+
+		<!-- Mobile : tout ce qui n'est pas B/I/U, lien, image et emoji est replié
+		     derrière ce bouton. Invisible à partir de 640px (voir .tb-more-toggle). -->
+		<button type="button"
+			class="tb-btn tb-more-toggle {moreOpen ? 'active' : ''}"
+			aria-expanded={moreOpen}
+			onclick={() => (moreOpen = !moreOpen)}
+			title={moreOpen ? tFn('editor.less_options') : tFn('editor.more_options')}>
+			<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-width="3" d="M6 12h.01M12 12h.01M18 12h.01"/>
+			</svg>
+		</button>
+
+	</div>
+	{/if}
+
+	<!-- ── Media picker modal ───────────────────────────────────────────── -->
+	{#if showMediaPicker}
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<div class="fixed inset-0 z-[300] flex items-center justify-center bg-black/70 backdrop-blur-sm"
+	     role="presentation"
+	     onclick={(e) => { if (e.target === e.currentTarget) showMediaPicker = false }}>
+		<div class="bg-gray-900 themed:bg-[var(--nx-surface)] border border-gray-700 themed:border-[var(--nx-border)] rounded-2xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col overflow-hidden max-h-[80vh]"
+		     onclick={(e) => e.stopPropagation()}>
+			<!-- Header -->
+			<div class="flex items-center justify-between px-5 py-4 border-b border-gray-800 themed:border-[var(--nx-border)] shrink-0">
+				<h3 class="text-sm font-bold text-white themed:text-[var(--nx-text)]">{tFn('editor.library.title')}</h3>
+				<button type="button" onclick={() => showMediaPicker = false} class="text-gray-500 themed:text-[var(--nx-text-muted)] hover:text-white themed:hover:text-[var(--nx-text)] transition-colors">
+					<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+					</svg>
+				</button>
+			</div>
+			<!-- Grid -->
+			<div class="overflow-y-auto p-4 flex-1">
+				{#if mediaLoading}
+					<div class="flex items-center justify-center py-12 text-gray-500 themed:text-[var(--nx-text-muted)] text-sm">{tFn('editor.loading')}</div>
+				{:else if mediaImages.length === 0}
+					<div class="flex flex-col items-center justify-center py-12 gap-2 text-gray-600 themed:text-[var(--nx-text-muted)]">
+						<svg class="w-8 h-8 opacity-40" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909"/>
+						</svg>
+						<p class="text-sm">{tFn('editor.library.empty')}</p>
+						<a href="/library" target="_blank" class="text-xs text-indigo-400 themed:text-[var(--nx-header-accent)] hover:underline">{tFn('editor.library.open')}</a>
+					</div>
+				{:else}
+					<div class="grid grid-cols-3 sm:grid-cols-4 gap-3">
+						{#each mediaImages as asset (asset.id)}
+						<button type="button" onclick={() => pickMedia(asset)}
+							class="group relative aspect-square rounded-xl overflow-hidden border-2 border-transparent hover:border-indigo-500 bg-gray-800 themed:bg-[var(--nx-surface-raised)] transition-all focus:outline-none focus:border-indigo-400">
+							<img src="/uploads/{asset.file_path}" alt={asset.name}
+							     class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"/>
+							{#if asset.asset_type === 'staff'}
+								<span class="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-violet-900/80 text-violet-200 text-[10px] font-medium" title={tFn('library.type.staff_tip')}>🛡️ {tFn('library.type.staff')}</span>
+							{:else if asset.asset_type === 'bulk'}
+								<span class="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-gray-900/80 text-gray-200 text-[10px] font-medium" title={tFn('library.type.bulk_tip')}>📦 {tFn('library.type.bulk')}</span>
+							{:else if asset.asset_type === 'au'}
+								<span class="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-indigo-900/80 text-indigo-200 text-[10px] font-medium">🌀 {tFn('library.type.au')}</span>
+							{/if}
+							<div class="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-end">
+								<p class="w-full px-2 py-1.5 text-[10px] text-white themed:text-[var(--nx-text)] font-medium truncate opacity-0 group-hover:opacity-100 transition-opacity"
+								   style="background: linear-gradient(transparent, rgba(0,0,0,0.7))">{asset.name}</p>
+							</div>
+						</button>
+						{/each}
+					</div>
+				{/if}
+			</div>
+			<!-- Footer -->
+			<div class="px-5 py-3 border-t border-gray-800 themed:border-[var(--nx-border)] shrink-0 flex items-center justify-between">
+				<a href="/admin/media" target="_blank" class="text-xs text-indigo-400 themed:text-[var(--nx-header-accent)] hover:underline">{tFn('editor.library.manage')}</a>
+				<button type="button" onclick={() => showMediaPicker = false}
+					class="px-3 py-1.5 rounded-lg bg-gray-800 themed:bg-[var(--nx-surface-raised)] text-gray-400 themed:text-[var(--nx-text-muted)] text-xs hover:bg-gray-700 themed:hover:bg-[var(--nx-border)] transition-colors">{tFn('editor.cancel')}</button>
+			</div>
+		</div>
+	</div>
+	{/if}
+
+	<!-- ── Brouillon trouvé : proposé, jamais imposé ──────────────────────── -->
+	{#if draftOffer}
+	<div class="px-4 py-2 border-b border-gray-800 themed:border-[var(--nx-border)] text-xs flex flex-wrap items-center gap-2 bg-[color-mix(in_srgb,var(--nx-header-accent)_8%,transparent)]" role="status">
+		<span class="text-[var(--nx-text)]">{tFn('editor.draft_offer', { when: draftWhen })}</span>
+		<span class="ml-auto flex gap-2">
+			<button type="button" onclick={restoreDraft} class="px-2.5 py-1 rounded-md bg-[var(--nx-header-accent)] text-white font-medium">{tFn('editor.draft_restore')}</button>
+			<button type="button" onclick={discardDraft} class="px-2.5 py-1 rounded-md border border-[var(--nx-border)] text-[var(--nx-text-muted)]">{tFn('editor.draft_discard')}</button>
+		</span>
+	</div>
+	{/if}
+
+	<!-- ── Tiptap content area ──────────────────────────────────────────── -->
+	<div
+		bind:this={editorEl}
+		class="nodyx-content px-4 {compact ? 'min-h-[120px] max-h-[55vh]' : 'min-h-[320px] max-h-[65vh]'} overflow-y-auto py-4"
+	></div>
+	{#if pasteUploading > 0 || pasteError}
+		<p class="px-4 pb-2 text-xs {pasteError ? 'text-red-400' : 'text-gray-400 themed:text-[var(--nx-text-muted)]'}" aria-live="polite">
+			{pasteError || tFn('editor.paste_uploading')}
+		</p>
+	{/if}
+
+	<!-- ── Autocomplete de @menção ───────────────────────────────────────── -->
+	<!-- `position: fixed` ancorado no caret (coordsAtPos): a área de conteúdo
+	     tem overflow-y-auto, e um dropdown absoluto dentro dela seria cortado
+	     justamente quando o caret está no fim do texto. -->
+	<!-- ── Barre flottante (quickbar) sur la sélection ──────────────────── -->
+	{#if bubbleVisible}
+	<div bind:this={bubbleEl} class="nodyx-bubble {bubbleBelow ? 'below' : ''}" style="top:{bubbleTop}px; left:{bubbleLeft}px;" role="toolbar" aria-label={tFn('editor.bubble.aria')}>
+		<button type="button" class="nb-btn {a.bold ? 'active' : ''}" title={tFn('editor.bold')}
+			onmousedown={(e) => e.preventDefault()} onclick={() => editor?.chain().focus().toggleBold().run()}><b>B</b></button>
+		<button type="button" class="nb-btn {a.italic ? 'active' : ''}" title={tFn('editor.italic')}
+			onmousedown={(e) => e.preventDefault()} onclick={() => editor?.chain().focus().toggleItalic().run()}><i>I</i></button>
+		<span class="nb-sep"></span>
+		<button type="button" class="nb-btn nb-anchor {blockIsAnchored ? 'active' : ''}"
+			title={blockIsAnchored ? tFn('editor.anchor.remove_title') : tFn('editor.anchor.add_title')}
+			onmousedown={(e) => e.preventDefault()} onclick={toggleAnchor}>
+			<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="5" r="2.4"/><line x1="12" y1="22" x2="12" y2="8"/><path d="M5 12a7 7 0 0014 0"/><line x1="3" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="21" y2="12"/></svg>
+			<span>{blockIsAnchored ? tFn('editor.anchor.anchored') : tFn('editor.anchor.anchor')}</span>
+		</button>
+	</div>
+	{/if}
+
+	<!-- ── Mentions : liste des propositions sous le « @ » ──────────────────── -->
+	{#if placeOpen && placeItems.length}
+	<div class="nx-mention-pop" style="top:{placeTop}px; left:{placeLeft}px;">
+		<PlaceList items={placeItems} active={placeActive} query={placeQuery} id="{name}-place-list" onpick={pickPlace} />
+	</div>
+	{/if}
+
+	{#snippet trikList(offset: number, active: number)}
+		{#each trikItems as m, i}
+			<button
+				type="button"
+				role="option"
+				aria-selected={i + offset === active}
+				class="nodyx-mention-item {i + offset === active ? 'is-active' : ''}"
+				onmouseenter={() => { if (offset) mentionActive = i + offset; else trikIdx = i }}
+				onmousedown={(e) => e.preventDefault()}
+				onclick={() => escolherMention(m)}
+			>
+				<span class="nodyx-mention-ini">{(m.alias ?? m.username).charAt(0).toUpperCase()}</span>
+				{#if m.alias}
+					<!-- Validação combinada: quem escolhe vê o personagem E o jogador
+					     por trás. É o que desfaz dois "Kaelen" de jogadores diferentes,
+					     sem o servidor precisar adivinhar. -->
+					<span class="nodyx-mention-lbl">
+						{m.alias}<span class="nodyx-mention-sub"> · {m.playerName ?? m.username}</span>
+					</span>
+				{:else}
+					<span class="nodyx-mention-lbl">@{m.username}</span>
+				{/if}
+			</button>
+		{/each}
+	{/snippet}
+
+	<!-- RPG (trik) sem pessoas na lista (ex.: @npcc:, @npc:) : lista própria -->
+	{#if trikOpen && trikItems.length > 0 && !(mentionOpen && mentionItems.length)}
+		<div class="nodyx-mention-pop" style="top:{trikTop}px; left:{trikLeft}px;" role="listbox" aria-label={tFn('editor.mention.aria')}>
+			{@render trikList(0, trikIdx)}
+		</div>
+	{/if}
+
+	{#if mentionOpen && mentionItems.length}
+	<div class="nx-mention-pop" style="top:{mentionTop}px; left:{mentionLeft}px;">
+		<MentionList items={mentionItems} active={mentionActive < mentionItems.length ? mentionActive : -1} query={mentionQuery} id="{name}-mention-list"
+			context={mentionContext().threadId ? 'thread' : 'channel'} onpick={pickMention} />
+		{#if trikOpen && trikItems.length > 0}
+			<!-- Aliases de personagem (trik), logo abaixo das pessoas -->
+			<div class="nodyx-mention-pop nodyx-mention-pop--inline" role="listbox" aria-label={tFn('editor.mention.aria')}>
+				{@render trikList(mentionItems.length, mentionActive)}
+			</div>
+		{/if}
+	</div>
+	{/if}
+
+	<!-- ── Bulle d'un lien Nodyx : Carte | Lien simple | Texte brut ──────────── -->
+	{#if linkHit}
+	<div class="nodyx-bubble nx-link-bubble {linkBubbleBelow ? 'below' : ''}" style="top:{linkBubbleTop}px; left:{linkBubbleLeft}px;" role="group" aria-label={tFn('editor.link_view.aria')}>
+		<button type="button" class="nb-btn {!linkHit.off ? 'active' : ''}" aria-pressed={!linkHit.off}
+			onmousedown={(e) => e.preventDefault()} onclick={() => setLinkView('card')}>
+			<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><line x1="7" y1="10" x2="17" y2="10"/><line x1="7" y1="14" x2="13" y2="14"/></svg>
+			<span>{tFn('editor.link_view.card')}</span>
+		</button>
+		<button type="button" class="nb-btn {linkHit.off ? 'active' : ''}" aria-pressed={linkHit.off}
+			onmousedown={(e) => e.preventDefault()} onclick={() => setLinkView('link')}>
+			<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+			<span>{tFn('editor.link_view.link')}</span>
+		</button>
+		<button type="button" class="nb-btn" aria-pressed="false"
+			onmousedown={(e) => e.preventDefault()} onclick={() => setLinkView('raw')}>
+			<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+			<span>{tFn('editor.link_view.raw')}</span>
+		</button>
+		<span class="nb-hint">{tFn('editor.link_view.undo_hint')}</span>
+	</div>
+	{/if}
+
+	<!-- ── D51 : avertissements des mentions, dans un formulaire ─────────────── -->
+	{#if mentionForm && mentionRefs.length}
+	<div class="px-4 pt-2">
+		<MentionWarnings refs={mentionRefs} token={token ?? null} onremove={removeMentionRef} onreplace={replaceMentionRef}
+			onconfirm={confirmMentions} ongate={(b) => (mentionBlocked = b)} />
+	</div>
+	{/if}
+
+	<!-- ── Envoi d'une image collée ou déposée ─────────────────────────────── -->
+	{#if pasteUploading > 0 || pasteError}
+	<div class="px-4 py-1.5 border-t border-gray-800 themed:border-[var(--nx-border)] text-xs flex items-center gap-2" role="status" aria-live="polite">
+		{#if pasteUploading > 0}
+			<span class="text-[var(--nx-text-muted)]">{tFn('editor.paste_uploading')}</span>
+		{:else}
+			<span class="text-[var(--nx-bad)]">{pasteError}</span>
+			<button type="button" class="ml-auto text-[var(--nx-text-muted)] hover:underline" onclick={() => pasteError = ''}>{tFn('editor.paste_dismiss')}</button>
+		{/if}
+	</div>
+	{/if}
+
+	<!-- ── Footer: character count ─────────────────────────────────────── -->
+	{#if editor && !compact}
+	<div class="px-4 py-1.5 border-t border-gray-800 themed:border-[var(--nx-border)] flex items-center gap-3">
+		{#if token}
+		<div class="min-w-0 flex-1"><CommandHelp empty={charCount === 0} triggers={['@', '#']} ontry={tryTrigger} id="{name}-cmd-help" /></div>
+		{/if}
+		<span class="ml-auto shrink-0 text-xs text-gray-600 themed:text-[var(--nx-text-muted)]">{tFn(charCount > 1 ? 'editor.char_count_plural' : 'editor.char_count', { n: String(charCount) })}</span>
+	</div>
+	{/if}
+</div>
+
+<style>
+	/* ── Barre flottante (quickbar) ────────────────────────────────────── */
+	:global(.nodyx-bubble) {
+		position: fixed;
+		z-index: 60;
+		transform: translate(-50%, calc(-100% - 8px));
+		display: flex;
+		align-items: center;
+		gap: 0.15rem;
+		padding: 0.2rem;
+		background: rgb(17 24 39);
+		border: 1px solid rgb(55 65 81);
+		border-radius: 0.5rem;
+		box-shadow: 0 10px 30px -8px rgb(0 0 0 / 0.7);
+		animation: nb-pop 120ms ease-out;
+	}
+	:global(.nodyx-bubble.below) {
+		transform: translate(-50%, 8px);
+	}
+	/* Liste des mentions : sous le « @ », au-dessus de tout */
+	:global(.nx-mention-pop) { position: fixed; z-index: 70; }
+	/* Une mention dans l'éditeur : la même puce qu'à l'affichage */
+	:global(.nodyx-content .tiptap .nx-mention) { display: inline; padding: 0 5px; border-radius: 6px; font-weight: 600;
+		background: color-mix(in srgb, var(--nx-info, #3b82f6) 15%, transparent); color: color-mix(in srgb, var(--nx-info, #3b82f6) 80%, var(--nx-text, #fff)); }
+	/* Bulle d'un lien Nodyx : alignée sur le DÉBUT du lien, pas centrée */
+	:global(.nodyx-bubble.nx-link-bubble)       { transform: translate(0, calc(-100% - 8px)); }
+	:global(.nodyx-bubble.nx-link-bubble.below) { transform: translate(0, 8px); }
+	:global(.nb-hint) { font-size: 0.7rem; color: rgb(156 163 175); padding: 0 0.5rem 0 0.35rem; white-space: nowrap; }
+	@media (max-width: 520px) { :global(.nb-hint) { display: none; } }
+	/* Aperçu des cartes sous la ligne : ni cliquable ni éditable (ce n'est qu'un aperçu) */
+	:global(.nx-ed-cards) { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 4px; pointer-events: none; user-select: none; white-space: normal; }
+	/* Plus précis que « .nodyx-content .tiptap a » (app.css), qui soulignerait le titre */
+	:global(.nodyx-content .tiptap .nx-ed-cards a.lc-title) { text-decoration: none; color: var(--nx-text, inherit); }
+	:global(.nodyx-content .tiptap .nx-ed-cards a.lc-go) { color: var(--nx-header-accent, #f59e0b); }
+	/* Pas de bouton dans l'aperçu : on n'agit pas sur une carte pendant qu'on écrit */
+	:global(.nx-ed-cards .lc-btn) { display: none; }
+	:global(.nx-ed-card.active .lc-card) { outline: 2px solid var(--nx-header-accent, #f59e0b); outline-offset: 2px; }
+	@keyframes nb-pop {
+		from { opacity: 0; }
+		to   { opacity: 1; }
+	}
+	:global(.nb-btn) {
+		display: flex; align-items: center; gap: 0.3rem;
+		height: 1.6rem; padding: 0 0.45rem;
+		border-radius: 0.3rem;
+		color: rgb(209 213 219);
+		font-size: 0.8rem; cursor: pointer; user-select: none;
+		transition: color 120ms, background-color 120ms;
+	}
+	:global(.nb-btn:hover)  { background: rgb(55 65 81); color: white; }
+	:global(.nb-btn.active) { background: rgb(49 46 129 / 0.8); color: rgb(165 180 252); }
+	:global(.nb-anchor) {
+		font-weight: 600; font-size: 0.72rem; letter-spacing: 0.02em;
+		color: rgb(196 181 253);
+	}
+	:global(.nb-anchor:hover) { background: rgb(76 29 149 / 0.5); color: white; }
+	:global(.nb-anchor.active) { background: rgb(124 58 237 / 0.55); color: white; }
+	:global(.nb-sep) { width: 1px; height: 1.1rem; background: rgb(55 65 81); margin: 0 0.15rem; }
+
+	/* ── Toolbar button ────────────────────────────────────────────────── */
+	:global(.tb-btn) {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.75rem;
+		height: 1.75rem;
+		border-radius: 0.25rem;
+		color: rgb(156 163 175);
+		font-size: 0.875rem;
+		font-weight: 500;
+		cursor: pointer;
+		user-select: none;
+		transition: color 150ms, background-color 150ms;
+	}
+	:global(.tb-btn:hover) {
+		color: white;
+		background-color: rgb(55 65 81);
+	}
+	:global(.tb-btn.active) {
+		background-color: rgb(49 46 129 / 0.7);
+		color: rgb(165 180 252);
+	}
+	:global(.tb-sep) {
+		width: 1px;
+		height: 1.25rem;
+		background-color: rgb(55 65 81);
+		margin-left: 0.25rem;
+		margin-right: 0.25rem;
+		flex-shrink: 0;
+	}
+
+	/* ── Barre compacte sur mobile ─────────────────────────────────
+	   Vingt-cinq boutons + `flex-wrap` : sur un téléphone la barre s'étale sur
+	   plusieurs rangées et mange la hauteur de la zone de saisie. Sous 640px (le
+	   `sm` de Tailwind) on ne garde que B/I/U, lien, image et emoji ; le reste
+	   porte .tb-more et attend derrière le bouton « ⋯ ».
+
+	   Le découpage est purement CSS, sans mesure de viewport côté client :
+	   celle-ci ferait diverger le HTML du SSR et le premier rendu (mismatch
+	   d'hydratation). L'ordre du DOM ne bouge pas non plus — en masquant les
+	   .tb-more, `flex-wrap` remonte simplement les boutons restants sur une
+	   seule ligne. */
+	@media (max-width: 639px) {
+		:global(.nodyx-toolbar:not(.more-open) .tb-more) { display: none; }
+	}
+	@media (min-width: 640px) {
+		:global(.tb-more-toggle) { display: none; }
+	}
+
+	/* ── Popups ────────────────────────────────────────────────────────── */
+	:global(.popup) {
+		position: fixed;        /* échappe au clipping des overflow ancêtres ; placée par use:anchoredPopover */
+		z-index: 1000;          /* au-dessus des modals (chat z-400, tâches…) */
+		max-width: calc(100vw - 16px);   /* jamais plus large que l'écran (mobile) */
+		background-color: rgb(31 41 55);
+		border: 1px solid rgb(55 65 81);
+		border-radius: 0.75rem;
+		box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.4), 0 8px 10px -6px rgb(0 0 0 / 0.4);
+	}
+	:global(.popup-input) {
+		width: 100%;
+		border-radius: 0.5rem;
+		background-color: rgb(17 24 39);
+		border: 1px solid rgb(75 85 99);
+		padding: 0.375rem 0.75rem;
+		font-size: 0.875rem;
+		color: rgb(229 231 235);
+		transition: border-color 150ms;
+	}
+	:global(.popup-input::placeholder) { color: rgb(75 85 99); }
+	:global(.popup-input:focus) {
+		outline: none;
+		border-color: rgb(99 102 241);
+	}
+	:global(.popup-btn-primary) {
+		border-radius: 0.5rem;
+		background-color: rgb(79 70 229);
+		padding: 0.375rem 0.75rem;
+		font-size: 0.875rem;
+		font-weight: 600;
+		color: white;
+		transition: background-color 150ms;
+	}
+	:global(.popup-btn-primary:hover) { background-color: rgb(99 102 241); }
+	:global(.popup-btn-danger) {
+		border-radius: 0.5rem;
+		background-color: rgb(127 29 29 / 0.6);
+		padding: 0.375rem 0.75rem;
+		font-size: 0.875rem;
+		font-weight: 500;
+		color: rgb(248 113 113);
+		transition: background-color 150ms, color 150ms;
+	}
+	:global(.popup-btn-danger:hover) {
+		background-color: rgb(127 29 29);
+		color: rgb(252 165 165);
+	}
+	:global(.table-btn) {
+		display: block;
+		width: 100%;
+		text-align: left;
+		font-size: 0.875rem;
+		color: rgb(209 213 219);
+		border-radius: 0.5rem;
+		padding: 0.375rem 0.5rem;
+		transition: color 150ms, background-color 150ms;
+	}
+	:global(.table-btn:hover) {
+		color: white;
+		background-color: rgb(55 65 81);
+	}
+	:global(.table-btn.danger) { color: rgb(239 68 68); }
+	:global(.table-btn.danger:hover) {
+		color: rgb(248 113 113);
+		background-color: rgb(127 29 29 / 0.2);
+	}
+
+	/* Styles éditeur spécifiques à la toolbar (boutons, popups)
+	   Les styles prose sont dans app.css (.nodyx-prose / .nodyx-content .tiptap) */
+
+/* ── Autocomplete de @menção ─────────────────────────────────────────────────
+   z-index acima da barra flutuante da seleção (nodyx-bubble), senão ela cobre
+   a lista quando há texto selecionado. */
+.nodyx-mention-pop {
+	position: fixed;
+	z-index: 60;
+	min-width: 15rem;
+	max-width: 22rem;
+	max-height: 14rem;
+	overflow-y: auto;
+	background: var(--p-bg, #111827);
+	border: 1px solid var(--p-card-border, #374151);
+	border-radius: 0.5rem;
+	box-shadow: 0 10px 30px rgb(0 0 0 / 0.45);
+	padding: 0.25rem;
+}
+.nodyx-mention-pop--inline {
+	position: static;
+	margin-top: 0.25rem;
+}
+.nodyx-mention-item {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	width: 100%;
+	padding: 0.375rem 0.5rem;
+	border-radius: 0.375rem;
+	font-size: 0.8125rem;
+	color: rgb(209 213 219);
+	text-align: left;
+	background: none;
+	border: 0;
+	cursor: pointer;
+}
+.nodyx-mention-item.is-active {
+	background: rgb(var(--nx-accent-rgb, 99 102 241) / 0.9);
+	color: #fff;
+}
+.nodyx-mention-ini {
+	flex: 0 0 auto;
+	width: 1.25rem;
+	height: 1.25rem;
+	border-radius: 9999px;
+	background: rgb(var(--nx-accent-rgb, 99 102 241) / 0.6);
+	color: #fff;
+	font-size: 0.625rem;
+	font-weight: 700;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+.nodyx-mention-lbl { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nodyx-mention-sub { opacity: 0.6; }
+	/* ── Dans une page migrée (.nx-themed, cf. app.css) ───────────────────
+	   L'éditeur sert aussi au wiki, à l'agenda, aux tâches, encore sombres :
+	   ses couleurs historiques restent la valeur par défaut, et ne suivent le
+	   thème que sous une racine .nx-themed (le forum). */
+	:global(.nx-themed .nodyx-bubble),
+	:global(.nx-themed .popup) {
+		background: var(--nx-surface-raised);
+		border-color: var(--nx-border);
+	}
+	/* Résultats de la fenêtre Lien : lisibles sur la fenêtre sombre par défaut, et aux
+	   couleurs du thème dans une page migrée (.nx-themed). Vu sur capture le 13/11 : avec
+	   les seules variables du thème, le texte était sombre sur sombre. */
+	.link-opt { color: rgb(229 231 235); }
+	.link-opt.active { background-color: rgb(55 65 81); }
+	.link-sub, .link-note { color: rgb(156 163 175); }
+	.link-badge { background-color: rgb(55 65 81); color: rgb(229 231 235); }
+	.link-opt.active .link-badge { background-color: rgb(75 85 99); }
+	:global(.nx-themed) .link-opt { color: var(--nx-text); }
+	:global(.nx-themed) .link-opt.active { background-color: color-mix(in srgb, var(--nx-header-accent) 14%, transparent); }
+	:global(.nx-themed) .link-sub, :global(.nx-themed) .link-note { color: var(--nx-text-muted); }
+	:global(.nx-themed) .link-badge { background-color: color-mix(in srgb, var(--nx-header-accent) 18%, transparent); color: var(--nx-header-accent); }
+	:global(.nx-themed .nb-btn),
+	:global(.nx-themed .tb-btn),
+	:global(.nx-themed .table-btn) { color: var(--nx-text-muted); }
+	:global(.nx-themed .nb-btn:hover),
+	:global(.nx-themed .tb-btn:hover),
+	:global(.nx-themed .table-btn:hover) {
+		color: var(--nx-text);
+		background-color: color-mix(in srgb, var(--nx-text) 8%, transparent);
+	}
+	:global(.nx-themed .nb-btn.active),
+	:global(.nx-themed .tb-btn.active) {
+		background-color: rgb(var(--nx-accent-rgb) / 0.14);
+		color: var(--nx-header-accent);
+	}
+	:global(.nx-themed .nb-anchor) { color: var(--nx-header-accent); }
+	:global(.nx-themed .nb-sep),
+	:global(.nx-themed .tb-sep) { background-color: var(--nx-border); }
+	:global(.nx-themed .popup-input) {
+		background-color: var(--nx-surface);
+		border-color: var(--nx-border);
+		color: var(--nx-text);
+	}
+	:global(.nx-themed .popup-input::placeholder) { color: var(--nx-text-faint); }
+	:global(.nx-themed .popup-btn-danger),
+	:global(.nx-themed .table-btn.danger) { color: var(--nx-bad); }
+</style>

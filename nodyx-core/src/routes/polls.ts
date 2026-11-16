@@ -13,12 +13,14 @@
  * POST   /:id/close      — fermer manuellement (créateur ou admin)
  */
 
+import { moderateText, blockedBody } from '../services/octoguard/moderate'
 import { FastifyInstance } from 'fastify'
 import { db } from '../config/database'
 import { requireAuth } from '../middleware/auth'
 import { rateLimit } from '../middleware/rateLimit'
 import { io } from '../socket/io'
 import * as ChannelModel from '../models/channel'
+import { announcePoll } from '../services/webhooks/announce'
 
 // ── Community helper (same pattern as chat.ts) ────────────────────────────────
 
@@ -246,6 +248,12 @@ export default async function pollRoutes(app: FastifyInstance) {
       }
     }
 
+    // OctoGuard (sondages) : titre, description, libellés des options. Le cran
+    // « signaler » n'ouvre pas de dossier ici (un sondage n'est pas une cible
+    // de signalement) : il reste visible au journal d'OctoGuard.
+    const ogPoll = await moderateText(userId, 'poll', [title, description, ...options.map(o => o.label), ...options.map(o => o.description)])
+    if (ogPoll.blocked) return reply.code(422).send(blockedBody(ogPoll))
+
     // Créer le sondage dans une transaction
     const client = await (db as any).connect()
     try {
@@ -310,6 +318,7 @@ export default async function pollRoutes(app: FastifyInstance) {
 
       await client.query('COMMIT')
 
+      announcePoll(poll.id, userId)
       return reply.code(201).send({ poll: { ...poll, is_open: true } })
     } catch (err) {
       await client.query('ROLLBACK')

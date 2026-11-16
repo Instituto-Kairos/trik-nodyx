@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
-	import type { SubmitFunction } from '@sveltejs/kit';
+	import type { SubmitFunction } from '$app/forms';
 	import type { PageData, ActionData } from './$types';
 	import { describeEffect, type TrikEffect, type CatalogItem } from '$lib/trik/effects';
 

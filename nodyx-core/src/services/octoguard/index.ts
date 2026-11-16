@@ -39,13 +39,25 @@ export type { WebhookPayload } from './webhook'
 import { reloadRules, getRules } from './cache'
 import { hasRE2 } from './matchers'
 import { startMutePurgeWorker } from './mutes'
+import { startBanExpiryWorker } from './bans'
+import { startHeldExpiryWorker } from './held'
+import { ensureBaseProfile } from './profile'
 import { ensureOctoGuardBotUser } from './welcome'
 import { migrateEnvPatternsToDB } from './envMigration'
-import { startWebhookWorker } from './webhook'
+import { startWebhookDispatcher } from '../webhooks/dispatch'
 
-/** Vrai si OctoGuard est activé via env. Par défaut false. */
+/**
+ * Vrai si OctoGuard est allumé. L'interrupteur (OCTOGUARD_ENABLED) se règle
+ * depuis l'écran d'OctoGuard ou les Paramètres, effet immédiat.
+ * D24 : le serveur garde un verrou. OCTOGUARD_FORCE_OFF=true dans le .env
+ * éteint OctoGuard quoi que dise l'écran. Cette variable n'est PAS dans le
+ * registre des réglages : aucun écran ne peut la modifier.
+ */
+export function isOctoGuardLockedOff(): boolean {
+  return process.env.OCTOGUARD_FORCE_OFF === 'true'
+}
 export function isOctoGuardEnabled(): boolean {
-  return process.env.OCTOGUARD_ENABLED === 'true'
+  return !isOctoGuardLockedOff() && process.env.OCTOGUARD_ENABLED === 'true'
 }
 
 /**
@@ -58,16 +70,32 @@ export function isOctoGuardEnabled(): boolean {
  *   (table vide) plutôt que de crasher le backend entier.
  */
 export async function initOctoGuard(): Promise<void> {
+  // Ces deux nettoyages tournent TOUJOURS : sourdines et bannissements
+  // temporaires sont aussi posés à la main par l'équipe, OctoGuard allumé ou
+  // non (depuis E3, une sourdine s'applique même OctoGuard éteint).
+  startMutePurgeWorker()
+  startBanExpiryWorker()
+  // Contenus retenus sans décision : refusés au bout de 72 h (D17), toujours
+  startHeldExpiryWorker()
+  // Le facteur des webhooks de la communauté (migration 139) : TOUJOURS, car un
+  // nouvel article ou un morceau s'annoncent même OctoGuard éteint
+  startWebhookDispatcher()
+
+  // État de la protection contre les expressions piégées, affiché dans tous les cas
+  console.log(hasRE2()
+    ? '[octoguard] regex DoS protection: re2 native engine active'
+    : '[octoguard] re2 NOT installed: regex rules cannot be enabled (see SPECS/NODYX_OCTOGUARD_V2_CDC.md)')
+
+  // Profil de base (CDC OctoGuard 2, E4b) : semé une fois, même OctoGuard
+  // éteint, pour que l'admin trouve ses règles prêtes dans l'interface.
+  const base = await ensureBaseProfile()
+  if (base.seeded || base.updated) console.log(`[octoguard] base profile: ${base.seeded} rule(s) seeded, ${base.updated} updated`)
+
   if (!isOctoGuardEnabled()) {
     console.log('[octoguard] disabled (OCTOGUARD_ENABLED!=true)')
     return
   }
 
-  if (hasRE2()) {
-    console.log('[octoguard] regex DoS protection: re2 native engine active')
-  } else {
-    console.warn('[octoguard] re2 not installed, falling back to native RegExp + safe-regex admission check. Regex DoS protection is reduced.')
-  }
 
   try {
     await reloadRules()
@@ -89,9 +117,6 @@ export async function initOctoGuard(): Promise<void> {
     console.warn('[octoguard] envMigration failed (non-fatal):', err)
   }
 
-  // Démarrer le worker de purge des mutes expirés (Module 6).
-  // Le worker est non-blocking grâce à unref().
-  startMutePurgeWorker()
 
   // Pré-créer le user fantôme OctoGuard pour qu'il soit prêt quand le
   // premier welcome est déclenché (Module 2).
@@ -99,7 +124,4 @@ export async function initOctoGuard(): Promise<void> {
     console.warn('[octoguard] ensureOctoGuardBotUser at boot failed (non-fatal):', err)
   )
 
-  // Démarrer le worker webhook out (Module 5). Tick toutes les 5s,
-  // batch jusqu'à 20 events/tick, fire-and-forget POST signé HMAC.
-  startWebhookWorker()
 }

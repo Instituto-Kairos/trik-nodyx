@@ -2,10 +2,13 @@
 	import { t } from '$lib/i18n';
 	const tFn = $derived($t);
 	import { enhance } from '$app/forms';
-	import { PUBLIC_API_URL } from '$env/static/public';
+	import { PUBLIC_API_URL } from '$app/env/public';
 	import NodyxEditor from '$lib/components/editor/NodyxEditor.svelte';
-	import DateInput from '$lib/components/DateInput.svelte';
-	import { isoToValue, valueToIso } from '$lib/dateMask';
+	import LocationFinder from '$lib/components/LocationFinder.svelte';
+	import { defaultLocal, inputValue, sendIso, browserZone } from '$lib/eventTime';
+	import { page } from '$app/state';
+	import { readStartParam, readTitleParam } from '$lib/eventCommand';
+	import { onMount } from 'svelte';
 	import type { PageData, ActionData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -15,18 +18,25 @@
 	let coverUrl      = $state('');
 	let uploadingCover = $state(false);
 
-	// Date par défaut = demain à 18h
-	const tomorrow = new Date();
-	tomorrow.setDate(tomorrow.getDate() + 1);
-	tomorrow.setHours(18, 0, 0, 0);
-	// `isoToValue` e não `toISOString().slice(0, 16)`: o segundo devolve UTC
-	// num campo que lê hora local, então num fuso UTC-4 as 18h viravam 22h na
-	// tela e outras 4 horas de deriva ao salvar.
-	const defaultStart = isoToValue(tomorrow, 'datetime');
-	const defaultEnd   = isoToValue(new Date(tomorrow.getTime() + 2 * 3600_000), 'datetime');
+	// Date par défaut = demain à 18 h, À L'HEURE DU MEMBRE (toISOString donnait l'heure UTC : 17:00 en France)
+	// « /événement Pizza vendredi 20h » arrive ici avec ?title= et ?start= (lot C3) : on
+	// préremplit seulement ce qui est sûr (readTitleParam / readStartParam : format strict,
+	// jour réel, pas dans le passé). Jamais d'envoi : la personne vérifie et publie.
+	const preTitle = readTitleParam(page.url.searchParams.get('title'));
+	const preStart = readStartParam(page.url.searchParams.get('start'));
+	function plusHours(date: string, time: string, h: number): string {
+		const [y, m, d] = date.split('-').map(Number);
+		const [hh, mi] = time.split(':').map(Number);
+		return inputValue(new Date(y, m - 1, d, hh + h, mi).toISOString(), false);
+	}
+	const defaultStart = preStart ? `${preStart.date}T${preStart.time ?? '18:00'}` : defaultLocal(18);
+	const defaultEnd   = preStart ? plusHours(preStart.date, preStart.time ?? '18:00', 2) : defaultLocal(18, 2);
 
-	let startVal    = $state(defaultStart);
-	let endVal      = $state(defaultEnd);
+	// Le fuseau de l'organisateur (« Europe/Paris »), donné par son navigateur : chaque
+	// lecteur verra l'heure dans le sien, et « 20:00 à Paris, heure de l'organisateur ».
+	let organizerZone = $state('');
+	onMount(() => { organizerZone = browserZone() ?? ''; });
+
 	let isAllDay    = $state(false);
 	let rsvpEnabled = $state(false);
 	let isPublic    = $state(true);
@@ -37,6 +47,8 @@
 	let locationText = $state('');
 	let lat = $state('');
 	let lng = $state('');
+	// Le lieu choisi par « Trouver sur la carte » (affiché tant qu'il est retenu)
+	let pickedPlace = $state<string | null>(null);
 
 	// Construction URL embed OSM pour prévisualisation
 	const osmPreviewUrl = $derived(() => {
@@ -105,7 +117,8 @@
 	<title>{tFn('event.new_page_title')}</title>
 </svelte:head>
 
-<div class="max-w-3xl mx-auto">
+<!-- `/calendar` est dans le groupe SANS marge du layout : chaque page pose la sienne -->
+<div class="max-w-3xl mx-auto px-4 sm:px-6 py-8">
 	<a href="/calendar" class="text-[var(--nx-text-muted)] hover:text-[var(--nx-text)] text-sm flex items-center gap-1.5 mb-5">
 		<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
 			<path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
@@ -116,8 +129,8 @@
 	<h1 class="text-2xl font-bold text-[var(--nx-text)] mb-1">{tFn('event.new_page_title')}</h1>
 	<p class="text-[var(--nx-text-muted)] text-sm mb-7">{tFn('event.new_sub')}</p>
 
-	{#if form?.error}
-		<div class="mb-6 rounded-xl border border-[color-mix(in_srgb,var(--nx-bad)_40%,transparent)] bg-red-950/30 px-4 py-3 text-[var(--nx-bad)] text-sm">{form.error}</div>
+	{#if form?.errorKey || form?.error}
+		<div class="mb-6 rounded-xl border border-[color-mix(in_srgb,var(--nx-bad)_40%,transparent)] bg-red-950/30 px-4 py-3 text-[var(--nx-bad)] text-sm">{form?.errorKey ? tFn(form.errorKey) : form?.error}</div>
 	{/if}
 
 	<form method="POST" use:enhance={() => {
@@ -149,13 +162,14 @@
 								<svg class="w-8 h-8 text-[var(--nx-text-muted)] group-hover:text-[var(--nx-ok)] transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
 									<path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M13.5 12a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zM4.5 19.5h15"/>
 								</svg>
-								<span class="text-[var(--nx-text-muted)] text-xs group-hover:text-[var(--nx-text)] transition-colors">Cliquez ou glissez une image (PNG, JPG, WebP)</span>
+								<span class="text-[var(--nx-text-muted)] text-xs group-hover:text-[var(--nx-text)] transition-colors">{tFn('event.cover_dropzone_formats')}</span>
 							{/if}
 						</div>
 					{/if}
 					<input type="file" accept="image/*" onchange={onCoverChange} class="sr-only"/>
 				</label>
 				<!-- Champ caché envoyé au serveur -->
+				<input type="hidden" name="timezone" value={organizerZone}/>
 				<input type="hidden" name="cover_url" value={coverUrl}/>
 			</div>
 		</section>
@@ -167,47 +181,27 @@
 			<!-- Titre -->
 			<div>
 				<label for="title" class="block text-sm font-medium text-[var(--nx-text)] mb-1.5">Titre <span class="text-[var(--nx-bad)]">*</span></label>
-				<input id="title" name="title" type="text" required
+				<input id="title" name="title" type="text" required value={preTitle}
 				       placeholder={tFn('event.title_placeholder')}
 				       class="w-full bg-[var(--nx-surface-raised)]/80 border border-[var(--nx-border)] rounded-xl px-4 py-3 text-[var(--nx-text)] placeholder-[var(--nx-text-muted)] text-sm
 				              focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/40 transition-colors"/>
 			</div>
 
-			<!-- A conversão para ISO é feita aqui, no navegador, e não na action:
-			     só o navegador conhece o fuso de quem digitou. Ver `valueToIso`. -->
-			<input type="hidden" name="starts_at" value={valueToIso(startVal, isAllDay ? 'date' : 'datetime')}/>
-			<input type="hidden" name="ends_at"   value={valueToIso(endVal,   isAllDay ? 'date' : 'datetime')}/>
-
 			<!-- Dates -->
 			<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 				<div>
 					<label for="starts_at" class="block text-sm font-medium text-[var(--nx-text)] mb-1.5">{tFn('event.field_start')} <span class="text-[var(--nx-bad)]">*</span></label>
-
-					<DateInput id="starts_at" required
-
-					       mode={isAllDay ? 'date' : 'datetime'}
-
-					       bind:value={startVal}
-
+					<input id="starts_at" name="starts_at" use:sendIso type="{isAllDay ? 'date' : 'datetime-local'}" required
+					       value={isAllDay ? defaultStart.slice(0,10) : defaultStart}
 					       class="w-full bg-[var(--nx-surface-raised)]/80 border border-[var(--nx-border)] rounded-xl px-4 py-3 text-[var(--nx-text)] text-sm
-
-					              focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/40 transition-colors [color-scheme:dark]" />
-
+					              focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/40 transition-colors [color-scheme:dark]"/>
 				</div>
-
 				<div>
-
 					<label for="ends_at" class="block text-sm font-medium text-[var(--nx-text)] mb-1.5">Fin <span class="text-[var(--nx-text-muted)] text-xs font-normal">(optionnel)</span></label>
-
-					<DateInput id="ends_at"
-
-					       mode={isAllDay ? 'date' : 'datetime'}
-
-					       bind:value={endVal}
-
+					<input id="ends_at" name="ends_at" use:sendIso type="{isAllDay ? 'date' : 'datetime-local'}"
+					       value={isAllDay ? defaultEnd.slice(0,10) : defaultEnd}
 					       class="w-full bg-[var(--nx-surface-raised)]/80 border border-[var(--nx-border)] rounded-xl px-4 py-3 text-[var(--nx-text)] text-sm
-
-					              focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/40 transition-colors [color-scheme:dark]" />
+					              focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/40 transition-colors [color-scheme:dark]"/>
 				</div>
 			</div>
 
@@ -245,18 +239,30 @@
 
 		<!-- ── LIEU & CARTE ───────────────────────────────────────────────────── -->
 		<section class="space-y-4">
-			<h2 class="text-sm font-semibold text-[var(--nx-text)] uppercase tracking-wider">Lieu</h2>
+			<h2 class="text-sm font-semibold text-[var(--nx-text)] uppercase tracking-wider">{tFn('event.location_heading')}</h2>
 
 			<div>
-				<label for="location" class="block text-sm font-medium text-[var(--nx-text)] mb-1.5">Adresse / nom du lieu <span class="text-[var(--nx-text-muted)] text-xs font-normal">(optionnel)</span></label>
+				<label for="location" class="block text-sm font-medium text-[var(--nx-text)] mb-1.5">{tFn('event.field_location')} <span class="text-[var(--nx-text-muted)] text-xs font-normal">{tFn('event.optional')}</span></label>
 				<input id="location" name="location" type="text" bind:value={locationText}
 				       placeholder={tFn('cal_form.location_ph')}
 				       class="w-full bg-[var(--nx-surface-raised)]/80 border border-[var(--nx-border)] rounded-xl px-4 py-3 text-[var(--nx-text)] placeholder-[var(--nx-text-muted)] text-sm
 				              focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/40 transition-colors"/>
 			</div>
 
-			<!-- Coordonnées OSM -->
-			<div class="rounded-xl border border-[var(--nx-border)] bg-[var(--nx-surface)]/40 p-4 space-y-3">
+			<!-- Trouver sur la carte : pont vers OpenStreetMap, PAR le serveur Nodyx -->
+			<LocationFinder query={locationText} token={data.token ?? null} picked={pickedPlace}
+				onpick={(r) => { lat = String(r.lat); lng = String(r.lng); pickedPlace = r.label; }} />
+
+			<!-- L'aperçu reste visible : c'est la preuve que la carte est au bon endroit -->
+			{#if osmPreviewUrl()}
+				<div class="rounded-xl overflow-hidden border border-[var(--nx-border)] h-52">
+					<iframe src={osmPreviewUrl()} class="w-full h-full border-0" title={tFn('event.map_preview_title')} loading="lazy"></iframe>
+				</div>
+			{/if}
+
+			<details class="rounded-xl border border-[var(--nx-border)] bg-[var(--nx-surface)]/40 px-4 py-3">
+				<summary class="cursor-pointer text-xs font-medium text-[var(--nx-text-muted)]">{tFn('event.geo_manual')}</summary>
+				<div class="space-y-3 mt-3">
 				<div class="flex items-center justify-between">
 					<p class="text-xs font-medium text-[var(--nx-text-muted)]">{tFn('event.gps_coords')} <span class="text-[var(--nx-text-muted)]">{tFn('event.gps_display_hint')}</span></p>
 					<div class="flex gap-2">
@@ -265,12 +271,12 @@
 							<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
 								<path stroke-linecap="round" stroke-linejoin="round" d="M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zM2 13h2M20 13h2M13 2v2M13 20v2"/>
 							</svg>
-							Ma position
+							{tFn('event.my_position')}
 						</button>
 						{#if locationText}
 							<a href={osmSearchUrl()} target="_blank" rel="noopener"
 							   class="text-xs px-3 py-1.5 rounded-lg border border-[color-mix(in_srgb,var(--nx-ok)_40%,transparent)] text-[var(--nx-ok)] hover:bg-emerald-950/30 transition-colors">
-								Chercher sur OSM →
+								{tFn('event.search_osm')}
 							</a>
 						{/if}
 					</div>
@@ -278,35 +284,22 @@
 
 				<div class="grid grid-cols-2 gap-3">
 					<div>
-						<label for="new-location-lat" class="block text-xs text-[var(--nx-text-muted)] mb-1">Latitude</label>
+						<label for="new-location-lat" class="block text-xs text-[var(--nx-text-muted)] mb-1">{tFn('event.lat')}</label>
 						<input id="new-location-lat" type="number" name="location_lat" bind:value={lat} step="any"
 						       placeholder="48.8584"
 						       class="w-full bg-[var(--nx-surface-raised)] border border-[var(--nx-border)] rounded-lg px-3 py-2 text-[var(--nx-text)] text-sm
 						              focus:outline-none focus:border-emerald-500 transition-colors"/>
 					</div>
 					<div>
-						<label for="new-location-lng" class="block text-xs text-[var(--nx-text-muted)] mb-1">Longitude</label>
+						<label for="new-location-lng" class="block text-xs text-[var(--nx-text-muted)] mb-1">{tFn('event.lng')}</label>
 						<input id="new-location-lng" type="number" name="location_lng" bind:value={lng} step="any"
 						       placeholder="2.2945"
 						       class="w-full bg-[var(--nx-surface-raised)] border border-[var(--nx-border)] rounded-lg px-3 py-2 text-[var(--nx-text)] text-sm
 						              focus:outline-none focus:border-emerald-500 transition-colors"/>
 					</div>
 				</div>
-
-				<!-- Preview carte OSM -->
-				{#if osmPreviewUrl()}
-					<div class="rounded-lg overflow-hidden border border-[var(--nx-border)] h-44">
-						<iframe
-							src={osmPreviewUrl()}
-							class="w-full h-full border-0"
-							title={tFn('event.map_preview_title')}
-							loading="lazy"
-						></iframe>
-					</div>
-				{:else}
-					<p class="text-xs text-[var(--nx-text-muted)]">{tFn('event.gps_hint')}</p>
-				{/if}
 			</div>
+			</details>
 		</section>
 
 		<!-- ── BILLETTERIE ────────────────────────────────────────────────────── -->

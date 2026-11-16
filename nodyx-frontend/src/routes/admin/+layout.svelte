@@ -3,6 +3,10 @@
 	import type { LayoutData } from './$types'
 	import NodyxVersionBadge from '$lib/components/NodyxVersionBadge.svelte'
 	import { t } from '$lib/i18n'
+	import { isAdminThemed } from '$lib/adminTheme'
+	import { mayOpenAdmin } from '$lib/adminAccess'
+	import { OG_NAV, OG_ICON } from '$lib/octoguard/nav'
+	import './admin-kit.css'
 
 	const tFn = $derived($t)
 
@@ -20,9 +24,11 @@
 			items: [
 				{ href: '/admin',             labelKey: 'anav.lbl_dashboard',    exact: true, iconPath: 'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z' },
 				{ href: '/admin/members',     labelKey: 'anav.lbl_members',      iconPath: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z' },
+				{ href: '/admin/octoguard/reports', labelKey: 'anav.lbl_reports',      iconPath: 'M4 21V4m0 0h11l-1.5 4L15 12H4' },
 				{ href: '/admin/grades',      labelKey: 'anav.lbl_grades',       iconPath: 'M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z' },
 				{ href: '/admin/categories',  labelKey: 'anav.lbl_categories',   iconPath: 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z' },
 				{ href: '/admin/moderation',  labelKey: 'anav.lbl_moderation',   iconPath: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
+				{ href: '/admin/mentions',    labelKey: 'anav.lbl_mentions',     iconPath: 'M16 12a4 4 0 10-8 0 4 4 0 008 0zm0 0v1.5a2.5 2.5 0 005 0V12a9 9 0 10-9 9m4.5-1.206a8.959 8.959 0 01-4.5 1.207' },
 				{ href: '/admin/octoguard',   labelKey: 'anav.lbl_octoguard',    iconPath: 'M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z' },
 				{ href: '/admin/trik/channels', labelKey: 'anav.lbl_trik',       iconPath: 'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z' },
 				{ href: '/admin/tags',        labelKey: 'anav.lbl_tags',         iconPath: 'M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z' },
@@ -61,6 +67,7 @@
 			sectionKey: 'anav.sec_integrations',
 			items: [
 				{ href: '/admin/streamer-hub', labelKey: 'anav.lbl_streamer_hub', iconPath: 'M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z' },
+				{ href: '/admin/webhooks',     labelKey: 'anav.lbl_webhooks',     iconPath: 'M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1 M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1' },
 			],
 		},
 		{
@@ -75,17 +82,66 @@
 		},
 	]
 
-	const visibleNav = $derived(data.auNarrator
-		? nav.flatMap((g) => {
-			const items = g.items.filter((i) => i.labelKey === 'anav.lbl_trik').map((i) => ({ ...i, href: '/admin/trik/au' }))
-			return items.length ? [{ ...g, items }] : []
-		})
-		: nav)
+	// Seulement les pages des droits de l'utilisateur (D3) : un admin voit tout,
+	// un modérateur ses pages de modération. OctoGuard : sans manage_octoguard
+	// mais avec moderate_members, l'entrée mène directement aux sourdines.
+	const visibleNav = $derived.by(() => {
+		const access = (data as any).access
+		// Narrador de AU (trik_015): só a aba do RPG, apontando para /admin/trik/au.
+		if ((data as any).auNarrator) {
+			return nav.flatMap((g) => {
+				const items = g.items.filter((i) => i.labelKey === 'anav.lbl_trik').map((i) => ({ ...i, href: '/admin/trik/au' }))
+				return items.length ? [{ ...g, items }] : []
+			})
+		}
+		return nav
+			.map((g) => ({
+				...g,
+				items: g.items
+					.map((i) =>
+						i.href === '/admin/octoguard' && !mayOpenAdmin(i.href, access) && mayOpenAdmin('/admin/octoguard/mutes', access)
+							? { ...i, href: '/admin/octoguard/mutes' }
+							: i,
+					)
+					.filter((i) => mayOpenAdmin(i.href, access)),
+			}))
+			.filter((g) => g.items.length > 0)
+	})
+
+	// OctoGuard a son propre menu : il REMPLACE celui de l'administration (même
+	// colonne, même largeur) au lieu de s'y ajouter. « Administration » en tête
+	// le fait revenir sans quitter la page en cours.
+	const inOctoguard = $derived(page.url.pathname.startsWith('/admin/octoguard'))
+	let adminPeek = $state(false)
+	$effect(() => {
+		void page.url.pathname
+		adminPeek = false
+	})
+	const ogMenu = $derived(inOctoguard && !adminPeek)
+	const visibleOgNav = $derived.by(() => {
+		const access = (data as any).access
+		return OG_NAV
+			.map((g) => ({ ...g, items: g.items.filter((i) => mayOpenAdmin(i.href, access)) }))
+			.filter((g) => g.items.length > 0)
+	})
+
+	// Dossiers de signalement en attente (GET /admin/me) : compteur du menu
+	const openReports = $derived(((data as any).access?.open_reports as number | null) ?? 0)
 
 	const isActive = (href: string, exact = false) =>
 		exact
 			? page.url.pathname === href
 			: page.url.pathname.startsWith(href)
+
+	// Refonte par lots : page migrée => l'admin suit le thème ; sinon elle reste sombre
+	// comme avant (.nx-on-dark force les jetons sombres sur la coque ET le contenu).
+	const themed = $derived(isAdminThemed(page.url.pathname))
+	// Entrée de navigation de la page courante : titre de la barre mobile.
+	const current = $derived(
+		(inOctoguard ? visibleOgNav : visibleNav).flatMap((g) => g.items as Array<{ href: string; labelKey: string; exact?: boolean }>)
+			.filter((i) => isActive(i.href, i.exact))
+			.sort((a, b) => b.href.length - a.href.length)[0]
+	)
 
 	// TIROIR MOBILE. Mesure du 17/08 a 390px : la barre laterale `w-56` (224px)
 	// restait affichee, il ne restait donc que 166px pour le contenu. Le titre de
@@ -101,7 +157,7 @@
 	})
 </script>
 
-<div class="flex flex-1 min-h-0">
+<div class="adm-shell flex flex-1 min-h-0 {themed ? '' : 'nx-on-dark'}">
 
 	<!-- Voile, sous `lg` uniquement : le tiroir se ferme au clic a cote. -->
 	{#if menuOuvert}
@@ -112,76 +168,105 @@
 		     aria-label={tFn('anav.close_menu')}></div>
 	{/if}
 
-	<!-- ── Sidebar ──────────────────────────────────────────────────────────── -->
-	<aside class="w-56 shrink-0 border-r border-zinc-800/80 bg-zinc-950 flex flex-col
+	<!-- ── Navigation ───────────────────────────────────────────────────────── -->
+	<aside class="adm-side w-60 shrink-0 flex flex-col
 	               max-lg:fixed max-lg:inset-y-0 max-lg:left-0 max-lg:z-40 max-lg:overflow-y-auto
 	               max-lg:transition-transform max-lg:duration-200
 	               {menuOuvert ? 'max-lg:translate-x-0' : 'max-lg:-translate-x-full'}">
 
-		<!-- Header -->
-		<div class="h-14 flex items-center gap-2.5 px-4 border-b border-zinc-800/80">
-			<div class="w-6 h-6 rounded-md bg-indigo-600 flex items-center justify-center shrink-0">
-				<svg class="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
-					<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"/>
+		{#if ogMenu}
+			<!-- OctoGuard : son menu prend la place de celui de l'administration. -->
+			<div class="adm-side-head">
+				<div class="adm-side-logo" aria-hidden="true">
+					<svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d={OG_ICON}/></svg>
+				</div>
+				<div class="min-w-0">
+					<div class="adm-side-title">OctoGuard</div>
+					{#if (page.data as any).ogStatus}
+						{@const st = (page.data as any).ogStatus}
+						<div class="adm-side-sub"><span class="adm-og-dot" style="background:{st.enabled ? 'var(--nx-ok)' : 'var(--nx-text-muted)'}"></span>{tFn(st.enabled ? 'og2.side_on' : 'og2.side_off', { n: st.active })}</div>
+					{:else}
+						<div class="adm-side-sub">{tFn('og2.side_sub')}</div>
+					{/if}
+				</div>
+			</div>
+			<button type="button" class="adm-side-back" onclick={() => (adminPeek = true)}>
+				<svg fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true">
+					<path d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
 				</svg>
+				<span>{tFn('anav.admin_title')}</span>
+			</button>
+			<nav class="flex-1 overflow-y-auto px-2.5 pb-3" aria-label={tFn('og2.nav_aria')}>
+				{#each visibleOgNav as group}
+					{#if group.sectionKey}<p class="adm-side-group">{tFn(group.sectionKey)}</p>{:else}<div class="h-1"></div>{/if}
+					{#each group.items as item}
+						{@const active = isActive(item.href, item.exact) && current?.href === item.href}
+						<a href={item.href} class="adm-side-link" aria-current={active ? 'page' : undefined}>
+							<svg fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true">
+								<path d={item.iconPath}/>
+							</svg>
+							<span class="adm-side-label">{tFn(item.labelKey)}</span>
+							{#if item.reports && openReports > 0}
+								<span class="adm-side-badge" aria-label={tFn('areports.badge_label', { n: openReports })}>{openReports}</span>
+							{/if}
+						</a>
+					{/each}
+				{/each}
+			</nav>
+		{:else}
+		<div class="adm-side-head">
+				<div class="adm-side-logo" aria-hidden="true">
+					<svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+						<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"/>
+					</svg>
+				</div>
+				<div class="min-w-0">
+					<div class="adm-side-title">{tFn('anav.admin_title')}</div>
+					<div class="adm-side-sub">{data.communityName ?? 'Nodyx'}</div>
+				</div>
 			</div>
-			<div class="min-w-0">
-				<div class="text-[13px] font-semibold text-zinc-100 truncate leading-tight">{tFn('anav.admin_title')}</div>
-				<div class="text-[11px] text-zinc-500 truncate leading-tight">{data.communityName ?? 'Nodyx'}</div>
-			</div>
-		</div>
-
-		<!-- Retour au forum : en tête de sidebar, pas en pied. Une sidebar longue
-		     (beaucoup de sections) pousse le pied de page hors champ, il faut
-		     dérouler toute la page pour l'atteindre (retour Jonathan, 2026-08-08). -->
-		<div class="p-2 border-b border-zinc-800/80">
-			<a
-				href="/"
-				class="flex items-center gap-2.5 px-2.5 py-[7px] rounded-md text-[13px] text-zinc-500
-				       hover:text-zinc-100 hover:bg-zinc-900 transition-colors"
-			>
-				<svg class="w-4 h-4 text-zinc-600" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+	
+			<!-- Retour au forum : en tête de sidebar, pas en pied. Une sidebar longue
+			     (beaucoup de sections) pousse le pied de page hors champ, il faut
+			     dérouler toute la page pour l'atteindre (retour Jonathan, 2026-08-08). -->
+			<a href="/" class="adm-side-back">
+				<svg fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true">
 					<path d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
 				</svg>
 				<span>{tFn('anav.back_to_forum')}</span>
 			</a>
-		</div>
-
-		<!-- Nav -->
-		<nav class="flex-1 overflow-y-auto py-3 px-2">
-			{#each visibleNav as group}
-				<div class="mb-3.5">
-					<p class="px-2.5 mb-1 text-[10px] font-semibold text-zinc-600 uppercase tracking-[0.08em]">
-						{tFn(group.sectionKey)}
-					</p>
+	
+			<nav class="flex-1 overflow-y-auto px-2.5 pb-3" aria-label={tFn('anav.admin_title')}>
+				{#each visibleNav as group}
+					<p class="adm-side-group">{tFn(group.sectionKey)}</p>
 					{#each group.items as item}
-						{@const active = isActive(item.href, item.exact)}
+						{@const active = isActive(item.href, item.exact) && current?.href === item.href}
 						<a
 							href={item.href}
-							class="relative flex items-center gap-2.5 px-2.5 py-[7px] rounded-md text-[13px] transition-colors mb-px
-							       {active
-							         ? 'bg-zinc-800/80 text-zinc-100'
-							         : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900'}
-							       {item.soon ? 'opacity-60 pointer-events-none' : ''}"
+							onclick={() => { if (item.href.startsWith('/admin/octoguard')) adminPeek = false }}
+							class="adm-side-link {item.soon ? 'opacity-60 pointer-events-none' : ''}"
+							aria-current={active ? 'page' : undefined}
 						>
-							{#if active}
-								<span class="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-4 rounded-full bg-indigo-400"></span>
-							{/if}
-							<svg class="w-4 h-4 shrink-0 {active ? 'text-indigo-300' : 'text-zinc-500'}" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+							<svg fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true">
 								<path d={item.iconPath}/>
 							</svg>
-							<span class="flex-1 truncate">{tFn(item.labelKey)}</span>
+							<span class="adm-side-label">{tFn(item.labelKey)}</span>
+							{#if item.href === '/admin/octoguard'}
+								<svg class="adm-side-chev" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+							{/if}
+							{#if item.href === '/admin/octoguard/reports' && openReports > 0}
+								<span class="adm-side-badge" aria-label={tFn('areports.badge_label', { n: openReports })}>{openReports}</span>
+							{/if}
 							{#if item.soon}
-								<span class="text-[10px] text-zinc-600 font-medium shrink-0">{tFn('anav.soon')}</span>
+								<span class="adm-side-soon">{tFn('anav.soon')}</span>
 							{/if}
 						</a>
 					{/each}
-				</div>
-			{/each}
-		</nav>
+				{/each}
+			</nav>
+		{/if}
 
-		<!-- Footer -->
-		<div class="border-t border-zinc-800/80 p-2">
+		<div class="adm-side-foot">
 			<NodyxVersionBadge
 				version={data.updateCheck?.current_version ?? (data as any).nodyxVersion ?? 'unknown'}
 				variant="admin"
@@ -189,54 +274,109 @@
 		</div>
 	</aside>
 
-	<!-- ── Main content ─────────────────────────────────────────────────────── -->
+	<!-- ── Contenu ──────────────────────────────────────────────────────────── -->
 	<div class="flex-1 flex flex-col min-w-0">
 
-		<!-- Update banner -->
 		{#if data.updateCheck?.has_update}
-			<div class="bg-zinc-900 border-b border-zinc-800 px-6 py-2 flex items-center justify-between gap-4 shrink-0">
-				<div class="flex items-center gap-2.5 text-[13px]">
-					<span class="w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0"></span>
-					<span class="text-zinc-200 font-medium">{tFn('anav.update_available')}</span>
-					<span class="text-zinc-500 tabular-nums">v{data.updateCheck.current_version} → v{data.updateCheck.latest_version}</span>
+			<div class="adm-update">
+				<div class="flex items-center gap-2.5 min-w-0">
+					<span class="adm-update-dot" aria-hidden="true"></span>
+					<span class="font-medium">{tFn('anav.update_available')}</span>
+					<span class="adm-muted tabular-nums">v{data.updateCheck.current_version} → v{data.updateCheck.latest_version}</span>
 				</div>
 				{#if data.updateCheck.release_url}
-					<a
-						href={data.updateCheck.release_url}
-						target="_blank"
-						rel="noopener noreferrer"
-						class="text-xs font-medium text-zinc-200 hover:text-white border border-zinc-700 hover:border-zinc-500 px-2.5 py-1 rounded-md transition-colors shrink-0"
-					>
+					<a href={data.updateCheck.release_url} target="_blank" rel="noopener noreferrer" class="adm-btn adm-btn--sm">
 						{tFn('anav.release_notes')}
 					</a>
 				{/if}
 			</div>
 		{/if}
 
-		<!-- Top bar -->
-		<header class="h-14 border-b border-zinc-800/80 bg-zinc-950/60 flex items-center justify-between px-4 lg:px-6 shrink-0 gap-2">
-			<button type="button" onclick={() => (menuOuvert = true)}
-			        class="lg:hidden shrink-0 -ml-2 w-11 h-11 flex items-center justify-center rounded-lg
-			               text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
-			        aria-label={tFn('anav.open_menu')}>
-				<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24">
+		<!-- Barre mobile seulement : le fil d'Ariane du bureau est déjà dans la barre
+		     du haut de l'app (il était affiché deux fois, l'un sous l'autre). -->
+		<div class="adm-mobilebar lg:hidden">
+			<button type="button" onclick={() => (menuOuvert = true)} class="adm-btn adm-btn--icon"
+			        aria-label={tFn('anav.open_menu')} aria-expanded={menuOuvert}>
+				<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24" aria-hidden="true">
 					<path d="M4 6h16M4 12h16M4 18h16"/>
 				</svg>
 			</button>
-			<nav class="text-[13px] text-zinc-500 flex items-center gap-1.5 min-w-0">
-				<a href="/" class="hover:text-zinc-300 transition-colors">{tFn('anav.forum')}</a>
-				<svg class="w-3 h-3 text-zinc-700" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>
-				<span class="text-zinc-300">{tFn('anav.admin_title')}</span>
-			</nav>
-			<div class="flex items-center gap-2 text-xs">
-				<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-				<span class="text-zinc-400"><span class="text-zinc-200 font-medium tabular-nums">{data.stats?.online ?? 0}</span> {tFn('anav.online')}</span>
-			</div>
-		</header>
+			<span class="adm-mobilebar-title">{current ? tFn(current.labelKey) : tFn('anav.admin_title')}</span>
+		</div>
 
-		<!-- Page content -->
-		<main class="flex-1 overflow-auto p-6">
+		<main class="adm-main flex-1 overflow-auto">
 			{@render children()}
 		</main>
 	</div>
 </div>
+
+<style>
+	.adm-shell { color: var(--nx-text); }
+	/* Les pages pas encore migrées comptent sur le fond sombre d'autrefois. */
+	.adm-shell.nx-on-dark { background: var(--nx-bg); }
+	.adm-side {
+		border-right: 1px solid var(--nx-border);
+		background: color-mix(in srgb, var(--nx-text) 2.5%, var(--nx-surface));
+	}
+	.adm-side-head { display: flex; align-items: center; gap: 0.65rem; padding: 1rem 1rem 0.75rem; }
+	.adm-side-logo {
+		width: 1.75rem; height: 1.75rem; flex: none; border-radius: 8px;
+		display: flex; align-items: center; justify-content: center;
+		background: var(--nx-header-accent); color: var(--nx-on-accent, #fff);
+	}
+	.adm-side-logo svg { width: 0.95rem; height: 0.95rem; }
+	.adm-side-title { font-size: 0.8125rem; font-weight: 650; line-height: 1.2; }
+	.adm-side-sub { font-size: 0.6875rem; color: var(--nx-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	.adm-side-back {
+		display: flex; align-items: center; gap: 0.55rem; margin: 0 0.6rem 0.5rem;
+		padding: 0.45rem 0.6rem; border-radius: 8px; font-size: 0.8125rem;
+		color: var(--nx-text-muted); text-decoration: none;
+		border: 1px solid var(--nx-border);
+	}
+	.adm-side-back:hover { color: var(--nx-text); background: color-mix(in srgb, var(--nx-text) 5%, transparent); }
+	.adm-side-back svg { width: 0.95rem; height: 0.95rem; }
+	.adm-side-group {
+		margin: 1rem 0.6rem 0.3rem; font-size: 0.625rem; font-weight: 650;
+		letter-spacing: 0.08em; text-transform: uppercase; color: var(--nx-text-muted);
+	}
+	.adm-side-link {
+		position: relative; display: flex; align-items: center; gap: 0.6rem;
+		padding: 0.42rem 0.6rem; margin-bottom: 1px; border-radius: 8px;
+		font-size: 0.8125rem; color: var(--nx-text-muted); text-decoration: none;
+		transition: background-color 0.12s, color 0.12s;
+	}
+	.adm-side-link svg { width: 1rem; height: 1rem; flex: none; }
+	/* Une langue longue passe sur deux lignes plutôt que d'être coupée (test +40 %). */
+	.adm-og-dot { display: inline-block; width: 0.45rem; height: 0.45rem; border-radius: 99px; margin-right: 0.35rem; vertical-align: 1px; }
+	.adm-side-label { flex: 1; min-width: 0; line-height: 1.3; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+	.adm-side-link svg.adm-side-chev { width: 0.85rem; height: 0.85rem; color: var(--nx-text-muted); opacity: .7; }
+	button.adm-side-back { width: calc(100% - 1.2rem); text-align: left; background: transparent; cursor: pointer; font: inherit; }
+	.adm-side-link:hover { color: var(--nx-text); background: color-mix(in srgb, var(--nx-text) 5%, transparent); }
+	.adm-side-link[aria-current='page'] {
+		color: var(--nx-text); font-weight: 550;
+		background: color-mix(in srgb, var(--nx-header-accent) 12%, transparent);
+	}
+	.adm-side-link[aria-current='page'] svg { color: var(--nx-header-accent); }
+	.adm-side-link[aria-current='page']::before {
+		content: ''; position: absolute; left: -0.45rem; top: 50%; translate: 0 -50%;
+		width: 3px; height: 1rem; border-radius: 999px; background: var(--nx-header-accent);
+	}
+	.adm-side-soon { font-size: 0.625rem; color: var(--nx-text-muted); }
+	.adm-side-foot { border-top: 1px solid var(--nx-border); padding: 0.5rem; }
+	.adm-update {
+		display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+		padding: 0.5rem 1.5rem; font-size: 0.8125rem;
+		border-bottom: 1px solid var(--nx-border);
+		background: color-mix(in srgb, var(--nx-header-accent) 8%, transparent);
+	}
+	.adm-update-dot { width: 0.4rem; height: 0.4rem; border-radius: 999px; background: var(--nx-header-accent); flex: none; }
+	.adm-mobilebar {
+		/* display: none au-delà de 1024px : posé ici (la règle display: flex écrasait lg:hidden) */
+		display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 1rem;
+		border-bottom: 1px solid var(--nx-border);
+	}
+	.adm-mobilebar-title { font-size: 0.9375rem; font-weight: 600; }
+	@media (min-width: 1024px) { .adm-mobilebar { display: none; } }
+	.adm-main { padding: 1.75rem 2rem 2.5rem; }
+	@media (max-width: 1023px) { .adm-main { padding: 1.25rem 1rem 2rem; } }
+</style>

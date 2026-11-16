@@ -2,7 +2,7 @@
 	import { enhance } from '$app/forms'
 	import { invalidateAll } from '$app/navigation'
 	import { apiFetch } from '$lib/api'
-	import { PUBLIC_API_URL } from '$env/static/public'
+	import { PUBLIC_API_URL } from '$app/env/public'
 	import { t } from '$lib/i18n'
 
 	const tFn = $derived($t)

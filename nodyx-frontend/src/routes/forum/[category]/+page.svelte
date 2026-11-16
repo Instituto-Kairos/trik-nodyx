@@ -3,9 +3,10 @@
 	import { fly, fade } from 'svelte/transition';
 	import type { FlyParams, FadeParams } from 'svelte/transition';
 	import { page } from '$app/state';
-	import { t } from '$lib/i18n';
+	import { inkOn } from '$lib/adminTheme';
+	import { t, locale } from '$lib/i18n';
 	import { tagBadgeStyle } from '$lib/tagStyle';
-	import { replyCount, isUnanswered } from '$lib/forumCounts';
+	import { replyCount, isUnanswered, isOne } from '$lib/forumCounts';
 	import Breadcrumb, { type Crumb } from '$lib/components/Breadcrumb.svelte';
 
 	const tFn = $derived($t)
@@ -14,6 +15,8 @@
 
 	// ── Données typées ────────────────────────────────────────────────
 	const threads = $derived(data.threads as Thread[] || []);
+	const categoryTags = $derived(data.categoryTags ?? []);
+	const activeTag = $derived(data.activeTag ?? null);
 	// Use slug for URLs if available (SEO), fall back to UUID
 	const categoryId = $derived((data.category?.slug ?? data.categoryId) as string);
 	const subcategories = $derived((data.category?.children ?? []) as any[]);
@@ -38,6 +41,17 @@
 	// Si pas de catégorie, on utilise un nom générique
 	tFn('forum.category_fallback')
 ); // À remplacer quand l'API fournira la catégorie
+
+	const absUrl = (u: string) => (/^https?:\/\//.test(u) ? u : page.url.origin + (u.startsWith('/') ? u : '/' + u));
+	const seoDescription = $derived(
+		(data.category?.description ?? '').replace(/<[^<>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300)
+		|| tFn('seo.desc_category', { category: categoryName, name: page.data.communityName ?? 'Nodyx' })
+	);
+	const seoCanonical = $derived.by(() => {
+		const n = page.url.searchParams.get('page');
+		return page.url.origin + page.url.pathname + (n && /^\d+$/.test(n) && n !== '1' ? `?page=${n}` : '');
+	});
+	const seoImage = $derived(absUrl(page.data.communityBannerUrl ?? page.data.communityLogoUrl ?? '/og-image.jpg'));
 
 	// ── Types ──────────────────────────────────────────────────────────
 	type Tag = {
@@ -97,6 +111,8 @@
 
 	// ── État pour la pagination ───────────────────────────────────────
 	let currentPage = $state(1);
+	// Changer de tag ramène à la première page
+	$effect(() => { activeTag; currentPage = 1 });
 	let itemsPerPage = $state(20);
 	let pageInputValue = $state('1');
 
@@ -271,14 +287,19 @@
 
 <svelte:head>
 	<title>{categoryName} · {page.data.communityName ?? 'Nodyx'}</title>
-	<meta name="description" content="Discussions dans {categoryName}, forum {page.data.communityName ?? 'Nodyx'}" />
-	<link rel="canonical" href={page.url.href} />
+	<!-- Référencement (revu le 14/11) : la description de la catégorie quand elle existe ;
+	     une adresse canonique SANS ?tag= ni autres paramètres (sinon autant de doublons que
+	     de filtres) ; une image en adresse complète (un chemin relatif ne s'affiche dans
+	     aucun aperçu), et plus « default-og-image.png », qui n'a jamais existé. -->
+	<meta name="description" content={seoDescription} />
+	<link rel="canonical" href={seoCanonical} />
 	<meta property="og:title"       content="{categoryName} · {page.data.communityName ?? 'Nodyx'}" />
-	<meta property="og:description" content="Discussions dans {categoryName}, forum {page.data.communityName ?? 'Nodyx'}" />
+	<meta property="og:description" content={seoDescription} />
 	<meta property="og:type"        content="website" />
-	<meta property="og:url"         content={page.url.href} />
-	<meta property="og:image"       content={page.data.communityBannerUrl ?? page.data.communityLogoUrl ?? `${page.url.origin}/og-image.jpg`} />
+	<meta property="og:url"         content={seoCanonical} />
+	<meta property="og:image"       content={seoImage} />
 	<meta property="og:site_name"   content={page.data.communityName ?? 'Nodyx'} />
+	<meta name="twitter:image"      content={seoImage} />
 </svelte:head>
 
 <!-- EN-TÊTE DE CATÉGORIE -->
@@ -571,6 +592,22 @@
 	</div>
 {/if}
 
+<!-- FILTRER PAR TAG : seulement les tags portés par des sujets de cette catégorie -->
+{#if categoryTags.length > 0 || activeTag}
+	<nav class="tag-bar" aria-label={tFn('forum.tags_filter')}>
+		<span class="tag-bar-label">{tFn('forum.tags_filter')}</span>
+		<a href={page.url.pathname} class="tag-chip" aria-current={!activeTag ? 'true' : undefined} data-sveltekit-noscroll>{tFn('forum.tags_all')}</a>
+		{#each categoryTags as tag (tag.id)}
+			<a href="?tag={tag.slug}" class="tag-chip" style="--tc:{tag.color}; --ink:{inkOn(tag.color)}" aria-current={activeTag === tag.slug ? 'true' : undefined} data-sveltekit-noscroll>
+				{tag.name}<span class="tag-chip-n">{tag.thread_count}</span>
+			</a>
+		{/each}
+		{#if activeTag && !categoryTags.some((t) => t.slug === activeTag)}
+			<span class="tag-chip" aria-current="true">{activeTag}</span>
+		{/if}
+	</nav>
+{/if}
+
 <!-- LISTE DES SUJETS -->
 {#if paginatedThreads.length === 0}
 	<div class="flex flex-col items-center justify-center py-20 px-4 border border-dashed border-[var(--nx-border)] bg-[var(--nx-surface)]/50">
@@ -580,7 +617,7 @@
 			</svg>
 		</div>
 		<h3 class="text-xl font-semibold text-[var(--nx-text)] mb-2">
-			{#if searchQuery}
+			{#if searchQuery || activeTag}
 				{tFn('forum.no_filter_results')}
 			{:else if filterBy !== 'all'}
 				{tFn('forum.no_filter_results')}
@@ -591,11 +628,13 @@
 		<p class="text-sm text-[var(--nx-text-muted)] text-center max-w-sm mb-6">
 			{#if searchQuery}
 				{tFn('forum.try_keywords')}
+			{:else if activeTag}
+				{tFn('forum.tags_empty')} <a href={page.url.pathname} class="underline">{tFn('forum.tags_all')}</a>
 			{:else}
 				{tFn('forum.empty_cta')}
 			{/if}
 		</p>
-		{#if user && !searchQuery}
+		{#if user && !searchQuery && !activeTag}
 			<a href="/forum/{categoryId}/new" class="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors">
 				{tFn('forum.create_first')}
 			</a>
@@ -711,7 +750,7 @@
 								<path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
 								<path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
 							</svg>
-							<span>{thread.views || 0} {tFn('forum.views')}</span>
+							<span>{thread.views || 0} {tFn(isOne(thread.views || 0, $locale) ? 'forum.views_one' : 'forum.views')}</span>
 						</div>
 					</div>
 				</div>
@@ -721,7 +760,7 @@
 					<!-- Compteur de réponses -->
 					<div class="flex flex-col items-center px-3 py-1.5 border border-[color-mix(in_srgb,var(--nx-text)_6%,transparent)] group-hover:border-indigo-700/50 transition-colors min-w-[60px] text-center">
 						<span class="text-lg font-bold text-[var(--nx-header-accent)] leading-none">{replyCount(thread.post_count)}</span>
-						<span class="text-[11px] text-[var(--nx-text-muted)] uppercase tracking-wider">{tFn('forum.replies_label')}</span>
+						<span class="text-[11px] text-[var(--nx-text-muted)] uppercase tracking-wider">{tFn(isOne(replyCount(thread.post_count), $locale) ? 'forum.replies_one' : 'forum.replies_label')}</span>
 					</div>
 
 					<!-- Dernier posteur -->
@@ -822,3 +861,14 @@
 		</div>
 	</div>
 {/if}
+
+<style>
+	.tag-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.375rem; margin-bottom: 1rem; }
+	.tag-bar-label { font-size: 0.75rem; font-weight: 600; color: var(--nx-text-muted); margin-right: 0.25rem; }
+	.tag-chip { --tc: var(--nx-header-accent); display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.2rem 0.625rem; font-size: 0.75rem; font-weight: 600; color: var(--tc); border: 1px solid color-mix(in srgb, var(--tc) 35%, transparent); background: color-mix(in srgb, var(--tc) 8%, transparent); text-decoration: none; transition: background 0.15s, border-color 0.15s; }
+	.tag-chip:hover { background: color-mix(in srgb, var(--tc) 16%, transparent); }
+	.tag-chip[aria-current='true'] { background: var(--tc); border-color: var(--tc); color: var(--ink, #fff); }
+	.tag-chip:first-of-type:not([style]) { --tc: var(--nx-text-muted); }
+	.tag-chip:first-of-type[aria-current='true']:not([style]) { --tc: var(--nx-header-accent); color: #16120c; }
+	.tag-chip-n { font-weight: 500; opacity: 0.75; font-variant-numeric: tabular-nums; }
+</style>

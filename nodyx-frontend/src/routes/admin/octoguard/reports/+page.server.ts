@@ -1,30 +1,39 @@
-import type { PageServerLoad, Actions } from './$types'
+import type { PageServerLoad } from './$types'
 import { apiFetch } from '$lib/api'
-import { fail } from '@sveltejs/kit'
+
+// Signalements dans OctoGuard : une seule file pour ceux des membres, ceux
+// d'OctoGuard et les contenus retenus à relire (CDC E4h, lots 2 et 3).
+const TABS = ['open', 'held', 'appeals', 'done'] as const
+export type Tab = (typeof TABS)[number]
 
 export const load: PageServerLoad = async ({ fetch, cookies, url }) => {
 	const token = cookies.get('token')
-	const headers: Record<string, string> = {}
-	if (token) headers.Authorization = `Bearer ${token}`
-	const status = url.searchParams.get('status') ?? 'open'
-	const res = await apiFetch(fetch, `/admin/octoguard/reports?status=${encodeURIComponent(status)}`, { headers })
-	const reports = res.ok ? (await res.json()).reports ?? [] : []
-	return { reports, status }
-}
-
-export const actions: Actions = {
-	patch: async ({ fetch, request, cookies }) => {
-		const token = cookies.get('token')!
-		const form = await request.formData()
-		const id = String(form.get('id') ?? '')
-		const status = String(form.get('status') ?? '') as 'reviewed' | 'dismissed' | 'actioned'
-		const resolution = String(form.get('resolution') ?? '') || undefined
-		const res = await apiFetch(fetch, `/admin/octoguard/reports/${id}`, {
-			method:  'PATCH',
-			headers: { Authorization: `Bearer ${token}` },
-			body:    JSON.stringify({ status, resolution }),
-		})
-		if (!res.ok) return fail(res.status, { error: 'Erreur mise à jour' })
-		return { ok: true }
-	},
+	const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
+	const asked = url.searchParams.get('tab') ?? 'open'
+	const tab: Tab = (TABS as readonly string[]).includes(asked) ? (asked as Tab) : 'open'
+	const get = async (path: string) => {
+		try { const r = await apiFetch(fetch, path, { headers }); return r.ok ? await r.json() : null } catch { return null }
+	}
+	// Les compteurs des onglets viennent toujours, la liste seulement pour l'onglet ouvert
+	// Lot 8 : les contestations, à trancher (ou tranchées avec ?done=1)
+	const appealsDone = tab === 'appeals' && url.searchParams.get('done') === '1'
+	const [reports, held, appeals] = await Promise.all([
+		get(tab === 'done' ? '/admin/octoguard/reports?limit=200' : '/admin/octoguard/reports?status=open&limit=200'),
+		get('/admin/octoguard/held'),
+		get(appealsDone ? '/admin/octoguard/appeals?status=done' : '/admin/octoguard/appeals'),
+	])
+	const counts = (reports?.counts ?? {}) as Record<string, number>
+	return {
+		tab,
+		failed: !reports || !held || !appeals,
+		reports: ((reports?.reports ?? []) as Array<{ status: string }>).filter((r) => (tab === 'done' ? r.status !== 'open' : tab === 'open')),
+		held: tab === 'held' ? (held?.held ?? []) : [],
+		appeals: tab === 'appeals' ? (appeals?.appeals ?? []) : [],
+		appealsDone,
+		appealCount: (appeals?.open_count as number) ?? 0,
+		heldCount: (held?.count as number) ?? 0,
+		expiryHours: (held?.expiry_hours as number) ?? 72,
+		openCount: counts.open ?? 0,
+		doneCount: (counts.actioned ?? 0) + (counts.dismissed ?? 0) + (counts.reviewed ?? 0),
+	}
 }

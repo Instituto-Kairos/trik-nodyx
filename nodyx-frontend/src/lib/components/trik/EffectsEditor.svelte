@@ -9,7 +9,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { describeEffect, type TrikEffect, type CatalogItem } from '$lib/trik/effects';
-	import type { SubmitFunction } from '@sveltejs/kit';
+	import type { SubmitFunction } from '$app/forms';
 
 	let {
 		ownerKind,

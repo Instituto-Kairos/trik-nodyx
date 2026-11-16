@@ -7,6 +7,12 @@
 	import NodyxEditor from '$lib/components/editor/NodyxEditor.svelte'
 	import { socket as socketStore } from '$lib/socket'
 	import type { Socket } from 'socket.io-client'
+	import LinkCards from '$lib/components/LinkCards.svelte'
+	import { toInternalPath } from '$lib/linkCards'
+	import { createSoleSet } from '$lib/linkCardsSole.svelte'
+	import { mentionChips } from '$lib/actions/mentionChips'
+	import { placeChips } from '$lib/actions/placeChips'
+	const sole = createSoleSet() // D40 : messages réduits à leur carte
 
 	const tFn = $derived($t)
 
@@ -497,7 +503,8 @@
 									</div>
 
 									{#if post.content}
-										<div class="post-text prose-feed">{@html post.content}</div>
+										<div class="post-text prose-feed" hidden={sole.has(post.id)} use:mentionChips={{ html: post.content ?? '', token: token ?? null, me: (page.data as any)?.user?.id ?? null }} use:placeChips={{ html: post.content ?? '', token: token ?? null }}>{@html post.content}</div>
+										<LinkCards html={post.content} {token} onsole={(v) => sole.set(post.id, v)} />
 									{/if}
 
 									{#if post.media_url}
@@ -506,7 +513,7 @@
 										</div>
 									{/if}
 
-									{#if post.link_preview}{@render linkCard(post.link_preview)}{/if}
+									{#if post.link_preview && !toInternalPath(post.link_preview.url, page.url.origin)}{@render linkCard(post.link_preview)}{/if}
 
 									{#if post.reshared}{@render quotedPost(post.reshared)}{/if}
 
@@ -627,13 +634,14 @@
 													</button>
 												{/if}
 											</div>
-											<div class="post-text prose-feed">{@html reply.content}</div>
+											<div class="post-text prose-feed" hidden={sole.has(reply.id)} use:mentionChips={{ html: reply.content ?? '', token: token ?? null, me: (page.data as any)?.user?.id ?? null }} use:placeChips={{ html: reply.content ?? '', token: token ?? null }}>{@html reply.content}</div>
+											<LinkCards html={reply.content ?? ''} {token} onsole={(v) => sole.set(reply.id, v)} />
 											{#if reply.media_url}
 												<div class="post-media">
 													<img src={reply.media_url} alt="" class="post-media-img" loading="lazy" />
 												</div>
 											{/if}
-											{#if reply.link_preview}{@render linkCard(reply.link_preview)}{/if}
+											{#if reply.link_preview && !toInternalPath(reply.link_preview.url, page.url.origin)}{@render linkCard(reply.link_preview)}{/if}
 											<div class="post-actions" style="margin-top: 0.5rem;">
 												<button
 													onclick={() => { replyTo = reply; replyToRoot = effId(post); composing = true; window.scrollTo({ top: 0, behavior: 'smooth' }) }}

@@ -1,18 +1,20 @@
 <script lang="ts">
 	import '../app.css';
 	import { onMount, tick } from 'svelte';
+	import { viewerZone, browserZone } from '$lib/eventTime';
 	import { fade, fly, scale } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import type { LayoutData } from './$types';
 	import { page } from '$app/state';
-	import { browser } from '$app/environment';
+	import { browser } from '$app/env';
 	import { goto, beforeNavigate } from '$app/navigation';
 	import { initSocket, unreadCountStore, chatMentionStore, dmUnreadStore, onlineMembersStore, channelsStore, getSocket } from '$lib/socket';
 	import StreamerNotifListener from '$lib/components/streamer/StreamerNotifListener.svelte';
 	import TrikBotCard from '$lib/components/trik/TrikBotCard.svelte';
 	import { tryAutoConnect } from '$lib/socket';
 	import type { UserStatus, LayoutChannel } from '$lib/socket';
-	import { resolveTheme, themeToVars } from '$lib/profileThemes';
+	import { resolveTheme, themeToVars, isPersonalTheme } from '$lib/profileThemes';
+	import { isAdminThemed } from '$lib/adminTheme';
 	import { buildNameStyle, buildAnimClass, ensureFontLoaded, GOOGLE_FONTS_URL } from '$lib/nameEffects';
 	import VoicePanel from '$lib/components/VoicePanel.svelte';
 	import StageView from '$lib/components/StageView.svelte';
@@ -37,6 +39,7 @@
 	import ChannelSidebar from '$lib/components/layout/ChannelSidebar.svelte';
 	import MemberSidebar from '$lib/components/layout/MemberSidebar.svelte';
 	import { get } from 'svelte/store';
+	import { isInVoice } from '$lib/voice';
 	import { voiceStore, voiceChannelMembersStore, voiceEventsStore, screenShareStore, remoteScreenStore } from '$lib/voice';
 	import { locale, t, LOCALES, type Locale } from '$lib/i18n';
 	import { filAriane } from '$lib/filAriane';
@@ -46,6 +49,8 @@
 	import { unreadCountsStore, flashChannelIdStore } from '$lib/unreadStore';
 	import { activeCommunityNameStore, panelCollapsedStore, membersCollapsedStore } from '$lib/communityStore';
 	import { playMention, playDm } from '$lib/sounds';
+	import ReportDialog from '$lib/components/ReportDialog.svelte';
+	import HelpOverlay from '$lib/components/HelpOverlay.svelte';
 	const tFn = $derived($t)
 
 	let { children, data }: { children: any; data: LayoutData } = $props();
@@ -63,6 +68,34 @@
 		'/musique/[slug]',
 	]);
 	const ownsOgImage = $derived(PAGES_WITH_OWN_OG.has(page.route.id ?? ''));
+
+	// ── Référencement : ce que chaque page dit aux moteurs et aux assistants ──────
+	// Pages qui posent DÉJÀ leur adresse canonique (deux canoniques = aucune).
+	const PAGES_WITH_OWN_CANONICAL = new Set([
+		'/forum/[category]/[thread]',
+		'/forum/[category]',
+		'/users/[username]/card',
+		'/musique',
+		'/musique/[slug]',
+		'/musique/playlists/rock-alternatif-2000s',
+	]);
+	// Rien à indexer : comptes, réglages, espaces réservés aux membres, recherche.
+	// (robots.txt les écarte déjà de l'exploration ; noindex couvre un lien venu d'ailleurs.)
+	const NOINDEX = /^\/(admin|auth|login|register|reset-password|settings|notifications|dm|chat|search|overlay|banned|whisper|canvas)(\/|$)/;
+	const noindex = $derived(NOINDEX.test(page.url.pathname));
+	// L'adresse canonique : le chemin, sans les paramètres de suivi ou d'état
+	// (seul le numéro de page d'une liste change vraiment le contenu).
+	const canonicalUrl = $derived.by(() => {
+		const n = page.url.searchParams.get('page');
+		return page.url.origin + page.url.pathname + (n && /^\d+$/.test(n) && n !== '1' ? `?page=${n}` : '');
+	});
+	// Pages publiques qui n'avaient pas de description (les moteurs en inventaient une)
+	const ROUTE_DESCRIPTIONS: Record<string, string> = {
+		'/forum': 'seo.desc_forum',
+		'/calendar': 'seo.desc_calendar',
+		'/help': 'seo.desc_help',
+	};
+	const routeDescription = $derived(ROUTE_DESCRIPTIONS[page.route.id ?? ''] ?? null);
 
 	const user            = $derived(data.user);
 	const isBanned        = $derived(data.user?.is_banned === true);
@@ -182,6 +215,10 @@
 
 	// App-wide theme — cascade : défaut → thème d'INSTANCE (owner, son univers) → thème du MEMBRE (override perso)
 	const appVars = $derived(themeToVars(resolveTheme((data as any).appTheme, (data as any).instanceTheme)))
+	// La chrome mobile (barre du bas) suit le thème du site, sauf si l'owner a posé une
+	// palette d'instance ou si le visiteur s'est donné un thème perso (même règle que les
+	// profils, #918). Avant, elle gardait le « Défaut » sombre même en thème clair.
+	const chromeFollowsSite = $derived(!(data as any).instanceTheme && !isPersonalTheme((data as any).appTheme))
 	// Effet de fond posé par l'owner (ex 'matrix' = pluie de caractères derrière le contenu)
 	const hasMatrix = $derived((data as any).instanceEffect === 'matrix')
 
@@ -209,6 +246,19 @@
 	// figée.
 	let swUpdateReady = false;
 	let swReloading   = false;
+
+	/**
+	 * Un appel vocal, un partage d'écran ou un son en cours : un rechargement le
+	 * couperait net. On attend que ce soit fini (la navigation suivante recharge).
+	 */
+	function occupeAvecUnMedia(): boolean {
+		if (get(isInVoice)) return true;
+		return [...document.querySelectorAll<HTMLMediaElement>('audio, video')].some((m) => !m.paused && !m.ended);
+	}
+	// Le fuseau du lecteur, pour les heures d'événement (lib/eventTime) : connu dès que
+	// la page est chargée ; avant, on affiche l'heure de l'organisateur en le disant.
+	onMount(() => { viewerZone.set(browserZone()); });
+
 	onMount(() => {
 		if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
 
@@ -225,7 +275,7 @@
 			// et un rechargement en boucle serait pire que le bug d'origine.
 			if (swReloading) return;
 			swUpdateReady = true;
-			if (enTrainDEcrire()) return;   // le beforeNavigate ci-dessous prendra le relais
+			if (enTrainDEcrire() || occupeAvecUnMedia()) return;   // le beforeNavigate ci-dessous prendra le relais
 			swReloading = true;
 			window.location.reload();
 		}
@@ -239,7 +289,31 @@
 		const onControllerChange = () => signal(navigator.serviceWorker.controller);
 		navigator.serviceWorker.addEventListener('message', onMessage);
 		navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
+
+		// Un onglet resté ouvert ne découvre une nouvelle version que lorsque le
+		// navigateur revérifie le service worker : à une navigation COMPLÈTE, ou
+		// au bout de 24 h. Or une application SvelteKit ne fait que des navigations
+		// internes : l'onglet du salon ouvert le matin tournait encore l'ancien
+		// JavaScript le soir, et la nouveauté du jour « ne marchait pas » (vécu
+		// le 14/11 avec « # »). On demande donc au navigateur de revérifier
+		// toutes les 5 minutes, et dès que l'onglet redevient visible (au plus
+		// une fois par minute). Le fichier du service worker porte la version du
+		// build : s'il a changé, le nouveau s'installe, prend la main, et la
+		// chaîne ci-dessus recharge la page (en épargnant un texte en cours, un
+		// appel vocal ou un son qui joue : voir occupeAvecUnMedia).
+		let derniereVerif = Date.now();
+		const verifier = () => {
+			derniereVerif = Date.now();
+			navigator.serviceWorker.getRegistration().then((r) => r?.update()).catch(() => {});
+		};
+		const minuterie = setInterval(verifier, 5 * 60_000);
+		const onVisible = () => {
+			if (document.visibilityState === 'visible' && Date.now() - derniereVerif > 60_000) verifier();
+		};
+		document.addEventListener('visibilitychange', onVisible);
 		return () => {
+			clearInterval(minuterie);
+			document.removeEventListener('visibilitychange', onVisible);
 			navigator.serviceWorker.removeEventListener('message', onMessage);
 			navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
 		};
@@ -247,7 +321,7 @@
 	beforeNavigate((nav) => {
 		// Navigation interne vers une URL connue : on force un rechargement complet
 		// pour basculer sur la nouvelle version (assets + SSR frais).
-		if (swUpdateReady && nav.to?.url && nav.type !== 'leave') {
+		if (swUpdateReady && nav.to?.url && nav.type !== 'leave' && !occupeAvecUnMedia()) {
 			nav.cancel();
 			window.location.href = nav.to.url.href;
 		}
@@ -351,7 +425,7 @@
 		// Fetch full member list for the offline sidebar section + refresh channels client-side
 		if (data.user) {
 			try {
-				const { PUBLIC_API_URL } = await import('$env/static/public')
+				const { PUBLIC_API_URL } = await import('$app/env/public')
 				const [membersRes, channelsRes] = await Promise.all([
 					fetch(`${PUBLIC_API_URL}/api/v1/instance/members`),
 					data.token
@@ -585,8 +659,15 @@
 	// Une page qui peignait son propre fond les masquait (vieuxlooters, 29/10).
 	// main porte aussi .nx-themed : contenu rédigé, éditeur et menus déroulants
 	// de la page suivent le thème (variables --prose-*, variante themed:, app.css).
-	const SHEET_THEMED = ['/feed', '/members', '/forum', '/wiki', '/calendar', '/tasks']
-	const sheetThemed = $derived(SHEET_THEMED.some(p => page.url.pathname === p || page.url.pathname.startsWith(p + '/')))
+	const SHEET_THEMED = ['/feed', '/help', '/members', '/forum', '/wiki', '/calendar', '/tasks', '/dm', '/musique', '/garden', '/auth/login', '/auth/register', '/notifications', '/search', '/polls', '/library', '/discover', '/users', '/settings', '/canvas', '/about', '/communities', '/reputation', '/status']
+	// Exclusions : sous-routes pas encore migrées d'un préfixe thémé (éditeur de profil).
+	const SHEET_NOT_THEMED: string[] = []
+	const sheetThemed = $derived(
+		isAdminThemed(page.url.pathname) || (
+			SHEET_THEMED.some(p => page.url.pathname === p || page.url.pathname.startsWith(p + '/')) &&
+			!SHEET_NOT_THEMED.some(p => page.url.pathname === p || page.url.pathname.startsWith(p + '/'))
+		)
+	)
 
 	const showChannelSidebar = $derived(
 		!isBanned &&
@@ -778,6 +859,19 @@
 	     (community identity) prevents an uploaded square logo from being
 	     stretched into a 16×16 tab icon. -->
 	<meta property="og:site_name" content={communityName} />
+	{#if noindex}
+		<meta name="robots" content="noindex, nofollow" />
+	{:else if !PAGES_WITH_OWN_CANONICAL.has(page.route.id ?? '')}
+		<link rel="canonical" href={canonicalUrl} />
+		<meta property="og:url" content={canonicalUrl} />
+	{/if}
+	{#if !ownsOgImage}
+		<meta property="og:type" content="website" />
+	{/if}
+	{#if routeDescription}
+		<meta name="description" content={tFn(routeDescription, { name: communityName })} />
+		<meta property="og:description" content={tFn(routeDescription, { name: communityName })} />
+	{/if}
 	<!-- og:image en URL ABSOLUE : Discord/Twitter/Facebook ne résolvent pas
 	     les chemins relatifs (l'ancien /og-image.jpg de app.html ne
 	     s'affichait jamais dans les partages). Les pages qui définissent
@@ -789,7 +883,6 @@
 		<meta name="twitter:image" content="{page.url.origin}/og-image.jpg" />
 	{/if}
 	<meta name="twitter:card" content="summary_large_image" />
-	<meta name="theme-color" content="var(--nx-accent)" />
 	<!-- Preload all Google Font presets (avatar/username effects) -->
 	<link rel="preconnect" href="https://fonts.googleapis.com" />
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
@@ -1054,11 +1147,11 @@
 	     dessus les icônes. `--p-bg` est opaque sur les sept thèmes.
 	     Gardé par tests/responsive/bottom-nav.spec.ts. -->
 	<nav class="lg:hidden fixed bottom-0 left-0 right-0 z-45 border-t border-gray-800 flex items-stretch"
-	     style="background: var(--p-bg); border-color: var(--p-card-border); padding-bottom: env(safe-area-inset-bottom, 0px)">
+	     style="background: {chromeFollowsSite ? 'var(--nx-bg)' : 'var(--p-bg)'}; border-color: {chromeFollowsSite ? 'var(--nx-border)' : 'var(--p-card-border)'}; padding-bottom: env(safe-area-inset-bottom, 0px)">
 
 		<!-- Fil d'actu (si connecté) -->
 		{#if user}
-		<a href="/feed" class="flex-1 flex flex-col items-center justify-center py-2 min-h-14 gap-0.5 {isActive('/feed') ? 'text-indigo-400' : 'text-gray-500'}">
+		<a href="/feed" class="flex-1 flex flex-col items-center justify-center py-2 min-h-14 gap-0.5 {isActive('/feed') ? 'text-[var(--nx-header-accent)]' : 'text-gray-500'}">
 			<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" d="M3 12h18M3 6h18M3 18h12"/>
 			</svg>
@@ -1067,7 +1160,7 @@
 		{/if}
 
 		<!-- Forum -->
-		<a href="/forum" class="flex-1 flex flex-col items-center justify-center py-2 min-h-14 gap-0.5 {isActive('/forum') ? 'text-indigo-400' : 'text-gray-500'}">
+		<a href="/forum" class="flex-1 flex flex-col items-center justify-center py-2 min-h-14 gap-0.5 {isActive('/forum') ? 'text-[var(--nx-header-accent)]' : 'text-gray-500'}">
 			<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
 				<polyline stroke-linecap="round" stroke-linejoin="round" points="9 22 9 12 15 12 15 22"/>
@@ -1077,7 +1170,7 @@
 
 		<!-- Chat (si connecté) -->
 		{#if user}
-		<a href="/chat" class="flex-1 flex flex-col items-center justify-center py-2 min-h-14 gap-0.5 relative {isActive('/chat') ? 'text-indigo-400' : 'text-gray-500'}">
+		<a href="/chat" class="flex-1 flex flex-col items-center justify-center py-2 min-h-14 gap-0.5 relative {isActive('/chat') ? 'text-[var(--nx-header-accent)]' : 'text-gray-500'}">
 			<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
 			</svg>
@@ -1092,7 +1185,7 @@
 
 		<!-- Messages privés (si connecté) -->
 		{#if user}
-		<a href="/galeria" class="flex-1 flex flex-col items-center justify-center py-2 min-h-14 gap-0.5 relative {isActive('/galeria') ? 'text-indigo-400' : 'text-gray-500'}">
+		<a href="/galeria" class="flex-1 flex flex-col items-center justify-center py-2 min-h-14 gap-0.5 relative {isActive('/galeria') ? 'text-[var(--nx-header-accent)]' : 'text-gray-500'}">
 			<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
 			</svg>
@@ -1104,7 +1197,7 @@
 		<!-- Profil / Connexion -->
 		{#if user}
 		<a href="/users/{user.username}"
-		   class="flex-1 flex flex-col items-center justify-center py-2 min-h-14 gap-0.5 {page.url.pathname.startsWith('/users/') ? 'text-indigo-400' : 'text-gray-500'}">
+		   class="flex-1 flex flex-col items-center justify-center py-2 min-h-14 gap-0.5 {page.url.pathname.startsWith('/users/') ? 'text-[var(--nx-header-accent)]' : 'text-gray-500'}">
 			{#if user.avatar}
 				<img src={user.avatar} class="w-5 h-5 rounded-full object-cover" alt="" />
 			{:else}
@@ -1263,6 +1356,9 @@
 	onClose={() => paletteOpen = false}
 />
 
+<!-- ── Aide « Tout ce que tu peux taper », par-dessus la page (lib/helpOverlay.ts) ── -->
+<HelpOverlay />
+
 <!-- ── Screen share hover preview ────────────────────────────────────────── -->
 {#if screenPreview}
 	<MemberScreenPreview {...screenPreview} />
@@ -1275,6 +1371,11 @@
 		anchorEl={botPopupAnchor}
 		onclose={() => { botPopupOpen = false; botPopupAnchor = null; }}
 	/>
+{/if}
+
+<!-- Fenêtre « Signaler », une pour tout le site (lib/report.ts) -->
+{#if user}
+	<ReportDialog />
 {/if}
 
 <style>
@@ -1293,9 +1394,24 @@
 /* Page migrée sur le thème (sheetThemed) : la feuille prend le fond du thème,
    à toutes les largeurs. Seule la COULEUR change : l'image de zone posée par
    la règle de bureau ci-dessous (background-image) reste en place. Plus
-   spécifique que :global(main.app-shell-main), donc gagne quel que soit l'ordre. */
+   spécifique que :global(main.app-shell-main), donc gagne quel que soit l'ordre.
+   Le texte aussi : un titre sans couleur propre héritait du gris très clair de
+   la coque et disparaissait en thème clair (/polls, 31/10). */
 :global(main.app-shell-main.sheet-themed) {
   background-color: var(--nx-sheet-bg, var(--nx-bg));
+  color: var(--nx-text);
+}
+/* Sur mobile, la coque garde son fond historique sombre (--shell-bg = --p-bg) : les
+   pages pas encore migrées en dépendent. Une feuille thémée TRANSLUCIDE (opacité de
+   zone de l'Apparence, 49 % sur vieuxlooters) le laissait voir : gris moyen sous un
+   texte foncé, illisible en thème clair sur toutes les pages migrées (31/10). La
+   feuille se pose donc sur le fond du site. Opaque (nodyx.org) : rien ne change.
+   Pas d'image de zone sur mobile (règle de bureau), le background-image est libre. */
+@media (max-width: 1023px) {
+  :global(main.app-shell-main.sheet-themed) {
+    background-color: var(--nx-bg);
+    background-image: linear-gradient(var(--nx-sheet-bg, var(--nx-bg)), var(--nx-sheet-bg, var(--nx-bg)));
+  }
 }
 
 .layout-dragging :global(main.app-shell-main) {

@@ -31,7 +31,7 @@ function directive(source: string, nom: string): string {
 	return header ? header[1] : ''
 }
 
-const CONFIG_APP = readFileSync(join(FRONT, 'svelte.config.js'), 'utf8')
+const CONFIG_APP = readFileSync(join(FRONT, 'sveltekit.config.js'), 'utf8')
 
 // Ce dont les effets de pseudo ont besoin : la feuille vient de googleapis,
 // les woff2 de gstatic. Il faut les DEUX, elles se bloquent en série.

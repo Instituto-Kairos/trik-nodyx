@@ -3,7 +3,7 @@
 	import { enhance } from '$app/forms'
 	import { invalidateAll, goto } from '$app/navigation'
 	import { apiFetch } from '$lib/api'
-	import { PUBLIC_API_URL } from '$env/static/public'
+	import { PUBLIC_API_URL } from '$app/env/public'
 
 	import { t } from '$lib/i18n'
 
@@ -20,7 +20,7 @@
 	const FILTERS = ['', ...IMAGE_TYPES, 'sound', 'video']
 
 	function setFilter(type: string) {
-		goto(type ? `?type=${type}` : '?', { noScroll: true })
+		goto(type ? `?type=${type}` : '?', { reset: false })
 	}
 
 	async function changeType(asset: { id: string; asset_type: string }, next: string) {

@@ -16,9 +16,17 @@ import { awardPoints, REPUTATION } from '../models/reputation'
 import { sanitize, stripScramble } from '../utils/sanitize'
 import { getNarratorUserId } from '../models/trikNarrador'
 import { resolveMentions } from '../utils/mentions'
+import { notifyMentions } from '../services/mentionNotify'
+import { recordGhost } from '../services/mentionGhosts'
 import { db, redis } from '../config/database'
 import { checkHtmlContent } from '../services/contentFilter'
 import { io } from '../socket/io'
+import { can, getAccess, communityOfThread, outranks, rankOf } from '../services/permissions'
+import { isUserMuted } from '../services/octoguard'
+import { moderateText, textForModeration, blockedBody, heldBody } from '../services/octoguard/moderate'
+import { holdContent, holdRefusal } from '../services/octoguard/held'
+import { fileAutoReport } from '../services/octoguard/autoReport'
+import { announceThread } from '../services/webhooks/announce'
 import * as TrikModel from '../models/trik'
 import { processScenePost, revertScenePost, revertThreadScenes } from '../services/trik/xp'
 
@@ -31,24 +39,10 @@ function stripTitleTags(title: string): string {
   return title.replace(/<[^>]*>/g, '').trim()
 }
 
-// ── Notificação de menção num conteúdo de fórum ──────────────────────────────
-//
-// O MESMO bloco existia só na resposta (POST /posts). Faltava nos outros dois
-// lugares onde se escreve um texto de fórum, e a ausência era invisível:
-//
-//   · abertura de tópico (POST /threads) — e o autocomplete de menção está
-//     LIGADO nessa tela (forum/[category]/new passa `mentions` ao NodyxEditor),
-//     então o usuário escolhia a pessoa numa lista e ela nunca era avisada;
-//   · edição de post (PUT /posts/:id) — um `@` acrescentado ao editar não
-//     avisava ninguém.
-//
-// `jaNotificados` existe para a edição: sem isso, cada salvamento re-notificaria
-// todo mundo que já estava citado no texto antigo, e corrigir uma vírgula
-// mandaria a notificação de novo. Quem entrou AGORA no texto é notificado; quem
-// já estava, não.
-//
-// Nenhum dos dois derruba a requisição: os chamadores rodam isto fora do
-// caminho da resposta.
+// Menções em texto de fórum (trik): o aviso em si é o notifyMentions do
+// upstream (pessoas, grupos, preferências). O fork acrescenta duas coisas:
+//   · edição de post avisa só quem entrou AGORA no texto (skip = citados antes);
+//   · o aviso de categoria do RPG não duplica quem já recebeu menção.
 
 // Quem um texto de fórum menciona, resolvido na comunidade DO TÓPICO.
 //
@@ -66,38 +60,6 @@ async function mencionadosEm(html: string, threadId: string): Promise<string[]> 
   )
   if (!rows[0]) return []
   return resolveMentions(html, rows[0].community_id)
-}
-
-// Devolve quem foi notificado, para notificarCategoria() não mandar uma
-// segunda notificação do mesmo post a essas pessoas.
-async function notificarMencoes(opts: {
-  html:        string
-  actorId:     string
-  threadId:    string
-  postId:      string
-  jaNotificados?: string[]
-}): Promise<string[]> {
-  const anteriores = new Set(opts.jaNotificados ?? [])
-  const mencionados = await mencionadosEm(opts.html, opts.threadId)
-  const notificados: string[] = []
-
-  for (const mentionedId of mencionados) {
-    if (mentionedId === opts.actorId) continue
-    if (anteriores.has(mentionedId)) continue
-    await NotificationModel.create({
-      user_id:   mentionedId,
-      type:      'mention',
-      actor_id:  opts.actorId,
-      thread_id: opts.threadId,
-      post_id:   opts.postId,
-    })
-    notificados.push(mentionedId)
-    if (io) {
-      const count = await NotificationModel.getUnreadCount(mentionedId)
-      io.to(`user:${mentionedId}`).emit('notification:new', { unreadCount: count })
-    }
-  }
-  return notificados
 }
 
 // Módulo RPG (trik): categoria marcada em /admin/trik/notificacoes avisa todos
@@ -123,41 +85,24 @@ async function notificarCategoria(opts: {
   }
 }
 
-// Check if userId is owner/admin/moderator in the community that owns a thread
 // Texto ofuscado só sobrevive em post cujo AUTOR é o Narrador.
 async function scrambleGate(html: string, authorId: string): Promise<string> {
   if (!html.includes('scramble')) return html
   return (await getNarratorUserId()) === authorId ? html : stripScramble(html)
 }
 
-async function isMod(userId: string, threadId: string): Promise<boolean> {
-  const { rows } = await db.query<{ role: string }>(
-    `SELECT cm.role
-     FROM community_members cm
-     JOIN categories cat ON cat.community_id = cm.community_id
-     JOIN threads t ON t.category_id = cat.id
-     WHERE t.id = $1 AND cm.user_id = $2
-     LIMIT 1`,
-    [threadId, userId]
-  )
-  const role = rows[0]?.role
-  return role === 'owner' || role === 'admin' || role === 'moderator'
-}
-
-// Check if userId is owner or admin (not moderator) in the community that owns a thread
-// Used for privileged operations: lock thread, pin thread
-async function isAdmin(userId: string, threadId: string): Promise<boolean> {
-  const { rows } = await db.query<{ role: string }>(
-    `SELECT cm.role
-     FROM community_members cm
-     JOIN categories cat ON cat.community_id = cm.community_id
-     JOIN threads t ON t.category_id = cat.id
-     WHERE t.id = $1 AND cm.user_id = $2
-     LIMIT 1`,
-    [threadId, userId]
-  )
-  const role = rows[0]?.role
-  return role === 'owner' || role === 'admin'
+// Droit de modérer le contenu d'un fil (permission moderate_content dans la
+// communauté du fil, socle du rôle + grade), avec le garde-fou de rang : un
+// membre de l'équipe ne modère pas le contenu de quelqu'un de rang égal ou
+// supérieur, sauf s'il est admin ou propriétaire.
+async function canModerateThreadContent(userId: string, threadId: string, authorId: string | null): Promise<boolean> {
+  const communityId = await communityOfThread(threadId)
+  if (!communityId) return false
+  const actor = await getAccess(communityId, userId)
+  if (!actor.permissions.includes('moderate_content')) return false
+  if (actor.rank >= rankOf('admin') || !authorId) return true
+  const author = await getAccess(communityId, authorId)
+  return outranks(actor, author.role)
 }
 
 // `is_featured` pilote la vitrine PUBLIQUE de l'instance (GET
@@ -177,6 +122,13 @@ async function isInstanceAdmin(userId: string): Promise<boolean> {
   )
   const role = rows[0]?.role
   return role === 'owner' || role === 'admin'
+}
+
+// Sourdine globale active ? Renvoie le corps de la réponse 403, sinon null.
+async function globalMute(userId: string): Promise<{ error: string; code: string; expires_at: string | null } | null> {
+  const state = await isUserMuted(userId)
+  if (!state.muted || state.channel_id) return null
+  return { error: 'You are muted', code: 'MUTED', expires_at: state.expires_at ?? null }
 }
 
 // Ordre des rôles communautaires. Un rôle inconnu (non membre) vaut -1, donc
@@ -211,6 +163,8 @@ const ThreadsQuery = z.object({
   category_id: z.string().min(1), // accepts UUID or slug — resolved server-side
   limit:       z.coerce.number().int().min(1).max(100).optional(),
   offset:      z.coerce.number().int().min(0).optional(),
+  // Filtrer par tag (son slug) : seuls les sujets qui le portent
+  tag:         z.string().max(60).regex(/^[a-z0-9-]+$/).optional(),
 })
 
 const CreateThreadBody = z.object({
@@ -258,9 +212,8 @@ export default async function forumRoutes(app: FastifyInstance) {
       return reply.code(404).send({ error: 'Community not found', code: 'NOT_FOUND' })
     }
 
-    const member = await CommunityModel.getMember(community.id, request.user!.userId)
-    if (!member || member.role === 'member') {
-      return reply.code(403).send({ error: 'Only moderators and owners can create categories', code: 'FORBIDDEN' })
+    if (!(await can(community.id, request.user!.userId, 'manage_categories'))) {
+      return reply.code(403).send({ error: 'Missing permission: manage_categories', code: 'FORBIDDEN' })
     }
 
     const category = await CommunityModel.createCategory(data)
@@ -271,7 +224,7 @@ export default async function forumRoutes(app: FastifyInstance) {
 app.get('/threads', {
   preHandler: [rateLimit, validate({ query: ThreadsQuery })],
 }, async (request, reply) => {
-  const { category_id: rawCatId, limit, offset } = request.query as z.infer<typeof ThreadsQuery>
+  const { category_id: rawCatId, limit, offset, tag } = request.query as z.infer<typeof ThreadsQuery>
 
   // Resolve slug → UUID if needed
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawCatId)
@@ -297,6 +250,9 @@ app.get('/threads', {
     LEFT JOIN categories c ON t.category_id = c.id
     LEFT JOIN users u ON t.author_id = u.id
     WHERE t.category_id = $1
+      AND ($4::text IS NULL OR EXISTS (
+        SELECT 1 FROM thread_tags tt JOIN tags g ON g.id = tt.tag_id
+         WHERE tt.thread_id = t.id AND g.slug = $4))
     ORDER BY
       t.is_pinned DESC,
       COALESCE(
@@ -304,7 +260,19 @@ app.get('/threads', {
         t.created_at
       ) DESC
     LIMIT $2 OFFSET $3
-  `, [category_id, limit || 50, offset || 0])
+  `, [category_id, limit || 50, offset || 0, tag ?? null])
+
+  // Les tags portés par les sujets de CETTE catégorie, avec leur nombre :
+  // la barre « Filtrer par tag » ne propose que ce qui donne un résultat.
+  const { rows: categoryTags } = await db.query(`
+    SELECT g.id, g.name, g.slug, g.color, COUNT(*)::int AS thread_count
+      FROM thread_tags tt
+      JOIN tags g ON g.id = tt.tag_id
+      JOIN threads t ON t.id = tt.thread_id
+     WHERE t.category_id = $1
+     GROUP BY g.id, g.name, g.slug, g.color
+     ORDER BY thread_count DESC, g.name ASC
+  `, [category_id])
 
   const threadIds = rows.map(t => t.id)
   const tagsMap = await TagModel.getTagsForThreads(threadIds)
@@ -323,7 +291,8 @@ app.get('/threads', {
 
   return reply.send({
     threads: enriched,
-    category: categoryInfo
+    category: categoryInfo,
+    tags: categoryTags,
   })
 })
 
@@ -361,6 +330,11 @@ app.get('/threads', {
         return reply.code(403).send({ error: 'You are banned from this community', code: 'BANNED' })
       }
 
+      // Sourdine globale (posée par l'équipe, sans salon précis) : vaut aussi
+      // pour le forum. Une sourdine limitée à un salon du chat ne bloque pas ici.
+      const muteThread = await globalMute(request.user!.userId)
+      if (muteThread) return reply.code(403).send(muteThread)
+
       // Catégorie restreinte : vérifier que le rôle de l'auteur est suffisant.
       // 'member' (défaut) laisse tout le monde poster — aucun coût si la
       // catégorie n'est pas restreinte.
@@ -376,6 +350,26 @@ app.get('/threads', {
           })
         }
       }
+    }
+
+    // OctoGuard (forum) : examiné AVANT de créer quoi que ce soit
+    const ogThread = await moderateText(request.user!.userId, 'forum', [title, textForModeration(content)], { mentionTexts: [title, content] })
+    if (ogThread.blocked) return reply.code(422).send(blockedBody(ogThread))
+
+    // Cran « retenir » : le fil n'est PAS créé. Le contenu, nettoyé comme pour
+    // une publication, attend la relecture de l'équipe (CDC E4h, lot 2).
+    if (ogThread.hold) {
+      const rehostHeld = await rehostExternalImages(content)
+      const heldContent = sanitize(rehostHeld.html)
+      const heldCheck = checkHtmlContent(heldContent)
+      if (!heldCheck.ok) return reply.code(422).send({ error: heldCheck.reason, code: 'CONTENT_BLOCKED' })
+      const titleHeldCheck = checkHtmlContent(title)
+      if (!titleHeldCheck.ok) return reply.code(422).send({ error: titleHeldCheck.reason, code: 'CONTENT_BLOCKED' })
+      const held = await holdContent({
+        kind: 'thread', authorId: request.user!.userId, categoryId: category_id,
+        payload: { content: heldContent, title, tag_ids: tag_ids ?? [] }, rule: ogThread.hold,
+      })
+      return held.ok ? reply.code(202).send(heldBody(held.row)) : reply.code(422).send(holdRefusal(held.code))
     }
 
     const thread = await ThreadModel.create({
@@ -419,12 +413,14 @@ app.get('/threads', {
     // falha de notificação não derruba a criação do tópico.
     ;(async () => {
       try {
-        const mencionados = await notificarMencoes({
-          html:     sanitizedContent,
-          actorId:  request.user!.userId,
-          threadId: thread.id,
-          postId:   post.id,
-        })
+        const mencionados: string[] = []
+        if (catRows[0]) {
+          await notifyMentions({
+            html: sanitizedContent, communityId: catRows[0].community_id, actorId: request.user!.userId, actorName: '',
+            where: { kind: 'forum', threadId: thread.id, postId: post.id },
+            notified: mencionados,
+          })
+        }
         await notificarCategoria({
           threadId: thread.id,
           postId:   post.id,
@@ -441,7 +437,11 @@ app.get('/threads', {
       await TagModel.setThreadTags(thread.id, tag_ids)
     }
 
+    if (ogThread.report) void fileAutoReport({ targetType: 'thread', targetId: thread.id, ruleName: ogThread.report.rule_name, excerpt: ogThread.report.excerpt })
+
     const tags = await TagModel.getTagsForThread(thread.id)
+    // Webhooks : l'article est publié (pas retenu) ; il s'annonce aux destinations qui l'ont demandé
+    announceThread(thread.id)
     return reply.code(201).send({
       thread: { ...thread, tags },
       post,
@@ -519,6 +519,8 @@ app.get('/threads', {
     if (reply_to_id && replyTarget?.thread_id !== resolvedThreadId) {
       return reply.code(422).send({ error: 'Reply target not found in this thread', code: 'REPLY_TARGET_INVALID' })
     }
+    const mutePost = await globalMute(userId)
+    if (mutePost) return reply.code(403).send(mutePost)
 
     // Rehost les <img> externes avant sanitize (cf POST /threads).
     const rehostReply = await rehostExternalImages(content)
@@ -528,12 +530,20 @@ app.get('/threads', {
       return reply.code(422).send({ error: replyContentCheck.reason, code: 'CONTENT_BLOCKED' })
     }
 
+    const ogPost = await moderateText(userId, 'forum', [textForModeration(sanitized)], { mentionTexts: [sanitized] })
+    if (ogPost.blocked) return reply.code(422).send(blockedBody(ogPost))
+    if (ogPost.hold) {
+      const held = await holdContent({ kind: 'post', authorId: userId, threadId: resolvedThreadId, payload: { content: sanitized }, rule: ogPost.hold })
+      return held.ok ? reply.code(202).send(heldBody(held.row)) : reply.code(422).send(holdRefusal(held.code))
+    }
+
     const post = await PostModel.create({
       thread_id:   resolvedThreadId,
       author_id:   userId,
       content:     sanitized,
       reply_to_id: replyTarget?.id ?? null,
     })
+    if (ogPost.report) void fileAutoReport({ targetType: 'post', targetId: post.id, ruleName: ogPost.report.rule_name, excerpt: ogPost.report.excerpt })
     bumpThreadsCache()
     // Réputation : répondre = +2
     await awardPoints(userId, REPUTATION.REPLY)
@@ -574,15 +584,20 @@ app.get('/threads', {
             io.to(`user:${a.user}`).emit('notification:new', { unreadCount: count })
           }
         }
-        // Notify mentioned users (scopé à la communauté du fil : cf resolveMentions)
-        // Quem já foi avisado acima não recebe uma menção duplicada.
-        const mencionados = await notificarMencoes({
-          html:     sanitized,
-          actorId:  userId,
-          threadId: thread.id,
-          postId:   post.id,
-          jaNotificados: avisar.map(a => a.user),
-        })
+        // Menções (pessoas e grupos), pelo serviço do upstream. Quem já foi
+        // avisado acima (thread_reply/post_reply) não recebe menção duplicada.
+        const mencionados: string[] = []
+        const { rows: catRows2 } = await db.query<{ community_id: string }>(
+          `SELECT community_id FROM categories WHERE id = $1`, [thread.category_id]
+        )
+        if (catRows2[0]) {
+          await notifyMentions({
+            html: sanitized, communityId: catRows2[0].community_id, actorId: userId, actorName: '',
+            where: { kind: 'forum', threadId: thread.id, postId: post.id },
+            skip: avisar.map(a => a.user),
+            notified: mencionados,
+          })
+        }
         // Categoria marcada no módulo RPG: todos os membros. O autor do tópico
         // já recebeu thread_reply, o continuado post_reply e os citados,
         // mention — não duplica.
@@ -620,7 +635,7 @@ app.get('/threads', {
 
     const userId = request.user!.userId
     const isAuthor = existing.author_id === userId
-    const modAccess = !isAuthor && await isMod(userId, existing.thread_id)
+    const modAccess = !isAuthor && await canModerateThreadContent(userId, existing.thread_id, existing.author_id)
 
     if (!isAuthor && !modAccess) {
       return reply.code(403).send({ error: 'Forbidden', code: 'FORBIDDEN' })
@@ -635,7 +650,18 @@ app.get('/threads', {
       return reply.code(422).send({ error: editCheck.reason, code: 'CONTENT_BLOCKED' })
     }
 
-    const post = await PostModel.updateContent(id, editSanitized)
+    // La modification passe par OctoGuard comme la publication (sinon : publier
+    // propre, puis modifier pour contourner)
+    const ogEdit = await moderateText(userId, 'forum', [textForModeration(editSanitized)], { mentionTexts: [editSanitized] })
+    if (ogEdit.blocked) return reply.code(422).send(blockedBody(ogEdit))
+    // Modification retenue : l'ancien texte reste en ligne jusqu'à la décision
+    if (ogEdit.hold) {
+      const held = await holdContent({ kind: 'post_edit', authorId: userId, threadId: existing.thread_id, postId: id, payload: { content: editSanitized }, rule: ogEdit.hold })
+      return held.ok ? reply.code(202).send(heldBody(held.row)) : reply.code(422).send(holdRefusal(held.code))
+    }
+
+    const post = await PostModel.updateContent(id, editSanitized, userId)
+    if (ogEdit.report) void fileAutoReport({ targetType: 'post', targetId: id, ruleName: ogEdit.report.rule_name, excerpt: ogEdit.report.excerpt })
     bumpThreadsCache()
     // Módulo RPG (trik, Fase 2) : desfaz o xp bruto do post antigo e
     // reprocessa contra o conteúdo editado — nunca desfaz level já aplicado.
@@ -654,12 +680,12 @@ app.get('/threads', {
     // O ator é quem EDITA (pode ser um moderador), não o autor do post.
     ;(async () => {
       try {
-        await notificarMencoes({
-          html:          editSanitized,
-          actorId:       userId,
-          threadId:      existing.thread_id,
-          postId:        id,
-          jaNotificados: await mencionadosEm(existing.content, existing.thread_id),
+        const communityId = await communityOfThread(existing.thread_id)
+        if (!communityId) return
+        await notifyMentions({
+          html: editSanitized, communityId, actorId: userId, actorName: '',
+          where: { kind: 'forum', threadId: existing.thread_id, postId: id },
+          skip: await mencionadosEm(existing.content, existing.thread_id),
         })
       } catch {
         // Never block the response for notification failures
@@ -685,12 +711,23 @@ app.get('/threads', {
 
     const userId = request.user!.userId
     const isAuthor = existing.author_id === userId
-    const modAccess = !isAuthor && await isMod(userId, existing.thread_id)
+    const modAccess = !isAuthor && await canModerateThreadContent(userId, existing.thread_id, existing.author_id)
 
     if (!isAuthor && !modAccess) {
       return reply.code(403).send({ error: 'Forbidden', code: 'FORBIDDEN' })
     }
 
+    // Fantôme (D53) : l'auteur efface lui-même, dans les 10 minutes, une réponse qui
+    // mentionnait quelqu'un. AVANT l'effacement : ses notifications partiraient avec elle.
+    if (isAuthor) {
+      const { rows: g } = await db.query<{ content: string; created_at: string; community_id: string }>(
+        `SELECT p.content, p.created_at, c.community_id FROM posts p
+         JOIN threads t ON t.id = p.thread_id JOIN categories c ON c.id = t.category_id WHERE p.id = $1`, [id])
+      if (g[0]) {
+        await recordGhost({ source: 'forum', messageId: id, authorId: userId, communityId: g[0].community_id,
+          html: g[0].content, createdAt: g[0].created_at, threadId: existing.thread_id }).catch(() => false)
+      }
+    }
     // Módulo RPG (trik, Fase 2) : desfaz o xp bruto que esse post tinha gerado —
     // ANTES de apagar: trik_scene_awards tem ON DELETE CASCADE em posts(id), então
     // com o post já removido o prêmio some junto e não há mais o que reverter
@@ -727,7 +764,7 @@ app.get('/threads', {
 
     const userId    = request.user!.userId
     const isAuthor  = thread.author_id === userId
-    const modAccess = await isMod(userId, threadId)
+    const modAccess = await canModerateThreadContent(userId, threadId, isAuthor ? null : thread.author_id)
 
     if (!isAuthor && !modAccess) {
       return reply.code(403).send({ error: 'Forbidden', code: 'FORBIDDEN' })
@@ -744,15 +781,39 @@ app.get('/threads', {
       return reply.send({ thread: updated })
     }
 
-    // Pin / lock / XP-eligibility (trik) : restreint à owner/admin DE LA
-    // COMMUNAUTÉ DU FIL (une action de modération locale a du sens dans
-    // n'importe quelle communauté).
-    if (body.is_pinned !== undefined || body.is_locked !== undefined || body.is_xp_enabled !== undefined) {
-      const adminAccess = await isAdmin(userId, threadId)
-      if (!adminAccess) {
-        return reply.code(403).send({ error: 'Only admins and owners can pin, lock or mark this thread', code: 'FORBIDDEN' })
+    // Les tags d'un sujet, changés par l'équipe : vérifiés AVANT toute écriture.
+    // Un tag inconnu est refusé avec un code clair au lieu d'être ignoré en
+    // silence (setThreadTags, atomique, ne poserait que les tags existants).
+    let tagIds: string[] | undefined
+    if (body.tag_ids !== undefined) {
+      const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+      if (!Array.isArray(body.tag_ids) || !body.tag_ids.every((t) => typeof t === 'string' && uuid.test(t))) {
+        return reply.code(400).send({ error: 'tag_ids must be a list of tag ids', code: 'THREAD_TAGS_INVALID' })
+      }
+      tagIds = [...new Set(body.tag_ids.map((t) => t.toLowerCase()))]
+      if (tagIds.length > 5) {
+        return reply.code(400).send({ error: 'A thread has at most 5 tags', code: 'THREAD_TAGS_TOO_MANY' })
+      }
+      if (tagIds.length) {
+        const { rows } = await db.query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM tags WHERE id = ANY($1::uuid[])`, [tagIds])
+        if ((rows[0]?.n ?? 0) !== tagIds.length) {
+          return reply.code(400).send({ error: 'Unknown tag', code: 'THREAD_TAGS_UNKNOWN' })
+        }
       }
     }
+
+    // XP por cena (trik): mexe na economia do RPG, então continua restrito a
+    // admin/owner DA COMUNIDADE DO FIO (pin/lock passaram a moderate_content).
+    if (body.is_xp_enabled !== undefined) {
+      const communityId = await communityOfThread(threadId)
+      const access = communityId ? await getAccess(communityId, userId) : null
+      if (!access || access.rank < rankOf('admin')) {
+        return reply.code(403).send({ error: 'Only admins and owners can mark this thread for XP', code: 'FORBIDDEN' })
+      }
+    }
+
+    // Pin / lock : relèvent de moderate_content (modAccess ci-dessus), comme
+    // supprimer ou modifier. Avant le 02/11/2026 c'était réservé aux admins.
 
     // Feature : restreint à owner/admin DE L'INSTANCE, jamais "de n'importe
     // quelle communauté", cf isInstanceAdmin ci-dessus.
@@ -780,10 +841,11 @@ app.get('/threads', {
       return reply.code(204).send()
     }
 
-    if (body.tag_ids !== undefined) {
-      await TagModel.setThreadTags(threadId, body.tag_ids)
+    if (tagIds !== undefined) {
+      await TagModel.setThreadTags(threadId, tagIds)
     }
 
+    const wasPinned = !!(thread as { is_pinned?: boolean }).is_pinned
     const updated = await ThreadModel.update(threadId, {
       title:       body.title ? (stripTitleTags(body.title) || undefined) : undefined,
       is_pinned:   body.is_pinned,
@@ -791,6 +853,8 @@ app.get('/threads', {
       is_featured: body.is_featured,
     })
     bumpThreadsCache()
+    // Webhooks : un article qui vient d'être mis en avant (pas à chaque enregistrement)
+    if (body.is_pinned === true && !wasPinned) announceThread(threadId, 'forum_pinned')
     return reply.send({ thread: updated })
   })
 

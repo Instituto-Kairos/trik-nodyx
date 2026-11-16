@@ -5,9 +5,13 @@ import type { PageServerLoad } from './$types';
 import { apiFetch } from '$lib/api';
 import { findCategoryPath } from '$lib/forumTree';
 
-export const load: PageServerLoad = async ({ fetch, params }) => {
+export const load: PageServerLoad = async ({ fetch, params, url }) => {
+	// Filtre par tag (?tag=slug) : fait par le serveur, sur TOUS les sujets de la catégorie
+	const rawTag = url.searchParams.get('tag');
+	const tag = rawTag && /^[a-z0-9-]{1,60}$/.test(rawTag) ? rawTag : null;
+
 	// 1. Récupérer les threads (accepte UUID ou slug côté API)
-	const threadsRes = await apiFetch(fetch, `/forums/threads?category_id=${params.category}`);
+	const threadsRes = await apiFetch(fetch, `/forums/threads?category_id=${encodeURIComponent(params.category)}${tag ? `&tag=${tag}` : ''}`);
 	const threadsJson = await threadsRes.json();
 
 	if (!threadsRes.ok) {
@@ -28,7 +32,7 @@ export const load: PageServerLoad = async ({ fetch, params }) => {
 
 	// 4. Redirect 301 UUID → slug (SEO canonique)
 	if (category.slug && params.category !== category.slug) {
-		redirect(301, `/forum/${category.slug}`);
+		redirect(301, `/forum/${category.slug}${url.search}`);
 	}
 
 	return {
@@ -37,6 +41,8 @@ export const load: PageServerLoad = async ({ fetch, params }) => {
 		category,
 		// Lignée racine → catégorie courante. Vide si l'arbre n'a pas répondu :
 		// la page retombe alors sur la catégorie seule.
-		trail: (trail ?? [category]).map(c => ({ id: c.id, name: c.name, slug: c.slug ?? null }))
+		trail: (trail ?? [category]).map(c => ({ id: c.id, name: c.name, slug: c.slug ?? null })),
+		categoryTags: (threadsJson.tags ?? []) as Array<{ id: string; name: string; slug: string; color: string; thread_count: number }>,
+		activeTag: tag,
 	};
 };

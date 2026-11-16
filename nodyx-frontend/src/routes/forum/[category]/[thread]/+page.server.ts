@@ -98,7 +98,16 @@ export const load: PageServerLoad = async ({ fetch, params, cookies, url, parent
 		}
 	}
 
-	return { thread: json.thread, posts: json.posts, poll, token, ogImagePath, xpEnabled, trikRegion, page, totalPages: pages, trail };
+	// Mes réponses et modifications retenues par OctoGuard dans ce fil : moi seul les vois
+	let heldMine: Array<{ id: string; kind: 'post' | 'post_edit'; content: string; post_id: string | null }> = [];
+	if (token) {
+		try {
+			const hr = await apiFetch(fetch, `/reports/held/mine?thread_id=${thread.id}`, { headers: { Authorization: `Bearer ${token}` } });
+			if (hr.ok) heldMine = ((await hr.json()).held ?? []).filter((h: { kind: string }) => h.kind === 'post' || h.kind === 'post_edit');
+		} catch { /* rien à montrer */ }
+	}
+
+	return { thread: json.thread, posts: json.posts, poll, token, ogImagePath, xpEnabled, trikRegion, page, totalPages: pages, trail, heldMine };
 };
 
 export const actions: Actions = {
@@ -121,9 +130,12 @@ export const actions: Actions = {
 		});
 
 		if (!res.ok) {
-			const json = await res.json();
-			return fail(res.status, { replyError: json.error });
+			const json = await res.json().catch(() => ({}));
+			// Le code et la fin d'une sourdine : la page en fait une phrase claire
+			return fail(res.status, { replyError: json.error ?? null, replyCode: json.code ?? null, mutedUntil: json.expires_at ?? null, ogKey: json.i18n_key ?? null });
 		}
+		// 202 : retenue pour relecture, elle s'affiche « en attente » pour moi seul
+		if (res.status === 202) return { held: true };
 
 		// Atterrit sur le dernier message : sa page n'est pas connue ici (le total
 		// vient du load), d'où `?page=last` + ancre sur le post créé.
@@ -147,9 +159,10 @@ export const actions: Actions = {
 		});
 
 		if (!res.ok) {
-			const json = await res.json();
-			return fail(res.status, { editError: json.error });
+			const json = await res.json().catch(() => ({}));
+			return fail(res.status, { editError: json.error ?? null, editCode: json.code ?? null, ogKey: json.i18n_key ?? null, editPostId: postId });
 		}
+		if (res.status === 202) return { editHeld: true };
 	},
 
 	// ── Supprimer un post ─────────────────────────────────────────────────
@@ -201,6 +214,26 @@ export const actions: Actions = {
 			headers: { Authorization: `Bearer ${token}` },
 			body: JSON.stringify({ is_pinned: isPinned })
 		});
+	},
+
+	// ── Changer les tags du sujet (équipe de modération) ──────────────────
+	setTags: async ({ fetch, request, params, cookies }) => {
+		const token = cookies.get('token');
+		if (!token) return fail(401, { tagsErrorKey: 'forum.tags_err_forbidden' });
+
+		const form = await request.formData();
+		const tagIds = (form.getAll('tag_ids') as string[]).filter(Boolean);
+
+		const res = await apiFetch(fetch, `/forums/threads/${params.thread}`, {
+			method: 'PATCH',
+			headers: { Authorization: `Bearer ${token}` },
+			body: JSON.stringify({ tag_ids: tagIds })
+		});
+		if (!res.ok) {
+			const code = (await res.json().catch(() => ({}))).code ?? '';
+			return fail(res.status, { tagsErrorKey: code === 'THREAD_TAGS_TOO_MANY' ? 'forum.tags_err_many' : code === 'THREAD_TAGS_UNKNOWN' ? 'forum.tags_err_unknown' : res.status === 403 ? 'forum.tags_err_forbidden' : 'forum.tags_err_save' });
+		}
+		return { tagsSaved: true };
 	},
 
 	// ── Verrouiller / déverrouiller ───────────────────────────────────────

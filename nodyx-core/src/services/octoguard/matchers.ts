@@ -10,6 +10,7 @@
  */
 
 import safeRegex from 'safe-regex'
+import { tallyMentions } from './mentionTally'
 import type {
   AutomodRuleRow,
   AutomodRuleParams,
@@ -138,11 +139,21 @@ export function assessPatternSafety(pattern: string, flags: string = 'i'): Patte
 export interface MatchContext {
   /** Contenu après sanitize() existant. Peut contenir du HTML (tags ok). */
   content: string
+  /** Auteur (détecteurs à état : inondation). */
+  userId?: string
+  now?:    number
+  /** Poids réel des mentions (les groupes valent les personnes prévenues),
+   *  calculé par le moteur. Absent : le détecteur compte lui-même dans le texte. */
+  mentionCount?: number
 }
 
 export interface MatchResult {
   /** Extrait pertinent pour le log/UI admin (max ~120 chars). */
   excerpt: string
+  /** Mots interdits : le mot du message qui a déclenché, et le motif qui l'a
+   *  attrapé. Sert à « Faux positif » (D25) : on ne propose d'apprendre un mot
+   *  que s'il a été attrapé par un motif partiel sans être le motif lui-même. */
+  found?: { token: string; pattern: string; kind: 'word' | 'prefix' | 'contains' }
 }
 
 export type Matcher = (
@@ -215,22 +226,35 @@ export const matchCaps: Matcher = (ctx, params) => {
 
 // ─── Matcher 3 : link_domain ─────────────────────────────────────────────────
 
-const URL_RE = /https?:\/\/([^\s/<>"'`]+)/gi
+// Hôte ET chemin : une entrée « discord.com/invite » ne vaut que pour les
+// invitations. Avant, seul l'hôte était lu : une entrée avec chemin ne
+// correspondait à RIEN (les invitations discord.com/invite passaient).
+const URL_RE = /https?:\/\/([^\s<>"'`]+)/gi
 
-function extractDomain(host: string): string {
-  // 'sub.example.com:8080/path' → 'sub.example.com'
-  return host.split('/')[0].split(':')[0].toLowerCase()
+type LinkTarget = { host: string; path: string }
+
+function splitUrl(rest: string): LinkTarget {
+  // 'Sub.Example.com:8080/Path?x' → { host: 'sub.example.com', path: '/path?x' }
+  const cut = rest.search(/[/?#]/)
+  const hostPort = cut < 0 ? rest : rest.slice(0, cut)
+  const path = cut < 0 ? '/' : rest.slice(cut)
+  return { host: hostPort.split(':')[0].toLowerCase(), path: (path.startsWith('/') ? path : '/' + path).toLowerCase() }
 }
 
-function domainMatches(host: string, listed: string): boolean {
+function domainMatches(link: LinkTarget, listed: string): boolean {
   // Wildcard simple : '*.example.com' matche n'importe quel sous-domaine
   const l = listed.toLowerCase().trim()
   if (!l) return false
-  if (l.startsWith('*.')) {
-    const root = l.slice(2)
-    return host === root || host.endsWith('.' + root)
-  }
-  return host === l || host.endsWith('.' + l)
+  const slash = l.indexOf('/')
+  const lHost = slash < 0 ? l : l.slice(0, slash)
+  const lPath = slash < 0 ? '' : l.slice(slash).replace(/\/+$/, '')
+  const root = lHost.startsWith('*.') ? lHost.slice(2) : lHost
+  const hostOk = link.host === root || link.host.endsWith('.' + root)
+  if (!hostOk) return false
+  if (!lPath) return true
+  // « /invite » prend /invite, /invite/abc, /invite?x, pas /invitement
+  const p = link.path
+  return p === lPath || /^[/?#]/.test(p.slice(lPath.length)) && p.startsWith(lPath)
 }
 
 export const matchLinkDomain: Matcher = (ctx, params) => {
@@ -239,11 +263,11 @@ export const matchLinkDomain: Matcher = (ctx, params) => {
     const domains = Array.isArray(params.domains) ? params.domains : []
     if (domains.length === 0) return null
 
-    const found: string[] = []
+    const found: LinkTarget[] = []
     let m: RegExpExecArray | null
     URL_RE.lastIndex = 0
     while ((m = URL_RE.exec(ctx.content))) {
-      found.push(extractDomain(m[1]))
+      found.push(splitUrl(m[1]))
       if (found.length > 50) break  // garde-fou anti-DoS sur message géant
     }
     if (found.length === 0) return null
@@ -252,7 +276,7 @@ export const matchLinkDomain: Matcher = (ctx, params) => {
       for (const host of found) {
         for (const banned of domains) {
           if (domainMatches(host, banned)) {
-            return { excerpt: `domain blacklist match: ${host}` }
+            return { excerpt: `domain blacklist match: ${host.host}` }
           }
         }
       }
@@ -266,7 +290,7 @@ export const matchLinkDomain: Matcher = (ctx, params) => {
         if (domainMatches(host, ok)) { allowed = true; break }
       }
       if (!allowed) {
-        return { excerpt: `domain not in whitelist: ${host}` }
+        return { excerpt: `domain not in whitelist: ${host.host}` }
       }
     }
     return null
@@ -277,16 +301,17 @@ export const matchLinkDomain: Matcher = (ctx, params) => {
 
 // ─── Matcher 4 : mention_spam ────────────────────────────────────────────────
 
-// {1,32} : tolérant pour détecter le spam, même les "@a" en série
-const MENTION_RE = /@[a-zA-Z0-9_-]{1,32}/g
-
+// Le comptage vit dans mentionTally.ts : marques de mention (personnes et groupes)
+// et « @mot » écrits, lettres accentuées comprises (@équipe, @Zoé). Le poids réel
+// d'un groupe (les personnes qu'il prévient) est calculé par le moteur
+// (mentionWeight.ts) et arrive ici dans ctx.mentionCount.
 export const matchMentionSpam: Matcher = (ctx, params) => {
   try {
     const max = typeof params.max_mentions === 'number' ? params.max_mentions : 5
-    const mentions = ctx.content.match(MENTION_RE) ?? []
-    if (mentions.length <= max) return null
-    const sample = mentions.slice(0, 3).join(' ')
-    return { excerpt: `mentions=${mentions.length} ${sample}` }
+    const tally = tallyMentions(ctx.content)
+    const count = typeof ctx.mentionCount === 'number' ? ctx.mentionCount : tally.people + tally.words + tally.groups.length  // repli : chaque marque pèse 1
+    if (count <= max) return null
+    return { excerpt: `mentions=${count} ${tally.sample.join(' ')}`.trim() }
   } catch {
     return null
   }
@@ -305,6 +330,8 @@ export const matchLinkSpam: Matcher = (ctx, params) => {
   }
 }
 
+import { matchKeywords, matchFlood, matchZalgo } from './matchers2'
+
 // ─── Dispatcher ──────────────────────────────────────────────────────────────
 
 const MATCHERS: Record<string, Matcher> = {
@@ -313,11 +340,14 @@ const MATCHERS: Record<string, Matcher> = {
   link_domain:   matchLinkDomain,
   mention_spam:  matchMentionSpam,
   link_spam:     matchLinkSpam,
+  keywords:      matchKeywords,
+  flood:         matchFlood,
+  zalgo:         matchZalgo,
 }
 
 /** Évalue une règle contre un message. Retourne le match ou null. */
-export function matchRule(content: string, rule: AutomodRuleRow): MatchResult | null {
+export function matchRule(content: string, rule: AutomodRuleRow, extra: { userId?: string; now?: number; mentionCount?: number } = {}): MatchResult | null {
   const fn = MATCHERS[rule.type]
   if (!fn) return null
-  return fn({ content }, rule.params ?? {})
+  return fn({ content, ...extra }, rule.params ?? {})
 }

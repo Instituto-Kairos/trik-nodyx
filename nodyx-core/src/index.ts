@@ -29,6 +29,10 @@ import dmRoutes           from './routes/dm'
 import galeriaRoutes      from './routes/galeria'
 import emblemasRoutes     from './routes/emblemas'
 import eventRoutes           from './routes/events'
+import geoRoutes from './routes/geo'
+import linksRoutes           from './routes/links'
+import commandsRoutes        from './routes/commands'
+import mentionsRoutes        from './routes/mentions'
 import authenticatorRoutes   from './routes/authenticator'
 import taskRoutes            from './routes/tasks'
 import honeypotRoutes        from './routes/honeypot'
@@ -57,6 +61,7 @@ import { initOctoGuard }    from './services/octoguard'
 import { ensureEsyKeyExists } from './utils/esyKeyGen'
 import { octoguardAdminPlugin, reportsPublicPlugin } from './routes/octoguard'
 import { trikAdminPlugin, trikPlayerPlugin } from './routes/trik'
+import { webhooksAdminPlugin } from './routes/webhooks'
 import { startScheduler }  from './scheduler'
 
 // trustProxy : PAS `true` (ferait confiance à un X-Forwarded-For usurpé et
@@ -236,6 +241,7 @@ server.register(adminRoutes,     { prefix: '/api/v1/admin' })
 server.register(settingsRoutes,  { prefix: '/api/v1/admin/settings' })
 server.register(appearanceRoutes, { prefix: '/api/v1/admin/appearance' })
 server.register(octoguardAdminPlugin, { prefix: '/api/v1/admin/octoguard' })
+server.register(webhooksAdminPlugin,  { prefix: '/api/v1/admin/webhooks' })
 server.register(reportsPublicPlugin,  { prefix: '/api/v1/reports' })
 server.register(trikAdminPlugin,  { prefix: '/api/v1/admin/trik' })
 server.register(emblemasRoutes,   { prefix: '/api/v1/admin/emblemas' })
@@ -255,6 +261,10 @@ server.register(pollRoutes,          { prefix: '/api/v1/polls' })
 server.register(dmRoutes,            { prefix: '/api/v1/dm' })
 server.register(galeriaRoutes,       { prefix: '/api/v1/galeria' })
 server.register(eventRoutes,          { prefix: '/api/v1/events' })
+server.register(geoRoutes,            { prefix: '/api/v1/geo' })
+server.register(linksRoutes,          { prefix: '/api/v1/links' })
+server.register(commandsRoutes,       { prefix: '/api/v1/commands' })
+server.register(mentionsRoutes,       { prefix: '/api/v1/mentions' })
 server.register(authenticatorRoutes,  { prefix: '/api/auth' })
 server.register(taskRoutes,           { prefix: '/api/v1/tasks' })
 server.register(honeypotRoutes,       { prefix: '/api/v1' })
@@ -346,6 +356,11 @@ const start = async () => {
       pingTimeout:  4000,
     })
     setIO(io)
+    // Fantômes des mentions (D53) : textes gardés effacés au bout de la durée choisie
+    // par l'admin, faits effacés au bout de six mois. Au démarrage puis toutes les 6 h.
+    const purgeMentionGhosts = () => { void import('./services/mentionGhosts').then(m => m.purgeGhosts()).catch(() => {}) }
+    purgeMentionGhosts()
+    setInterval(purgeMentionGhosts, 6 * 3600 * 1000).unref()
     registerSocketIO(io)
     registerOverlayNamespace(io)
     console.log('⚡ Socket.IO prêt')

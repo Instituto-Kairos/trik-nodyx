@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { apiFetch } from '$lib/api'
-	import { browser } from '$app/environment'
+	import { browser } from '$app/env'
 	import { onMount, onDestroy } from 'svelte'
-	import { PUBLIC_API_URL } from '$env/static/public'
+	import { PUBLIC_API_URL } from '$app/env/public'
 	import { t as i18n } from '$lib/i18n'
 	import Tooltip from '$lib/components/ui/Tooltip.svelte'
 	import SendToDeckModal from './SendToDeckModal.svelte'
@@ -597,7 +597,7 @@
 
 	<!-- Zone d'upload : drag & drop + click. -->
 	<label
-		class="block border-2 border-dashed transition-colors cursor-pointer {dragHover ? 'border-purple-500/80 bg-purple-500/[0.06]' : 'border-zinc-800 hover:border-zinc-700 bg-zinc-900/50'}"
+		class="relative block border-2 border-dashed transition-colors cursor-pointer {dragHover ? 'border-purple-500/80 bg-purple-500/[0.06]' : 'border-zinc-800 hover:border-zinc-700 bg-zinc-900/50'}"
 		ondragover={onDragOver}
 		ondragleave={onDragLeave}
 		ondrop={onDrop}>

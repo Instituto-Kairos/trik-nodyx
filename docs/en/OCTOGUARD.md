@@ -43,7 +43,7 @@ Now open **`/admin/octoguard`**. You'll see the **Vue d'ensemble** (Overview) wi
 | **Sourdines** | Who is currently muted, add or lift a mute |
 | **Signalements** | Reports your members filed, to review |
 | **Journal** | The log of everything OctoGuard did (or would have done) |
-| **Webhook** | Advanced: send signed events to your own service |
+| **Webhook** | Shortcut to the destinations that receive moderation (see Webhooks) |
 
 We'll spend most of our time in **Auto-mod**.
 
@@ -272,16 +272,33 @@ Every action OctoGuard takes, and every relevant admin action, is written here, 
 
 It's paginated (**Suivant →**). This is where your **test-mode** rules record their would-be catches, so the Journal is the first place you look when tuning a new rule, and the place you go to answer "wait, why was this message removed?".
 
+### "Are you sure?" before sending
+
+When a chat or forum message would be held or refused, its author is told **before** sending it: "Your message may be held for review. It could hurt someone, and nobody has seen it yet." They can **Rephrase** it, or **Send anyway**, and the message is then judged as usual.
+
+- Nothing is recorded while they decide: no Journal entry, no warning, no step on the sanction ladder, and the check does not count towards flood rules.
+- The rule is never named. The member only learns what would happen (held, refused, warned, sanctioned) and what kind of problem it is (words, links, capitals, mentions).
+- Off by default. Turn it on in **Vu par un membre**, where a live preview shows exactly what members will see. The **Communauté jeunesse** template turns it on too.
+- It only speaks when OctoGuard is on, and it never slows anyone down: if the check takes more than 1.5 seconds, the message simply leaves and OctoGuard judges it as always.
+
+### Raid shield: one button when a wave hits
+
+A raid is a gang of accounts showing up all at once to wreck a community: insults, shady links, floods of messages. In **Bouclier anti-raid** (Protection), one button raises the shield for 30 minutes (or 15, 60, 120). While it is up:
+
+- **Brand-new accounts read but don't write.** Accounts created less than a day ago see everything but cannot post in chat, on the forum, or send private messages until the end.
+- **Links wait for review.** In chat and on the forum, a message with a link is held, for everyone except the team. You approve it in Signalements, like any held message.
+- **Chat slows down.** One message every 10 seconds per person.
+- **The team is notified**, and the team webhooks that asked for the "Raid shield" family get an alert (ideal on a phone with ntfy).
+
+The moderation team is never slowed down or blocked. The shield lowers by itself at the end, even if the server restarts in between, and anyone in the team can lower it sooner.
+
+- The button **always works, even with OctoGuard off**. Only the automatic alert needs OctoGuard on.
+- **The alert:** OctoGuard counts new accounts over 10 minutes and held messages over 5 minutes (10 and 20 by default, adjustable). At the threshold it notifies the team once, then stays quiet for 30 minutes. It raises the shield by itself only if you turned on **Raise automatically**.
+- Raising, lowering and every alert are written to the Journal.
+
 ### Webhook: pipe events to your own tools (advanced)
 
-For people who want OctoGuard events in their own dashboard, an alerts channel, or a log aggregator. OctoGuard can POST every action to a URL you own.
-
-1. Open the **Webhook** tab and switch on **Activer le webhook**.
-2. **URL POST**: where the events should be sent.
-3. **Secret HMAC**: a shared secret. OctoGuard signs every POST with it in a header, `X-Octoguard-Signature: sha256=<hex>`, so your receiver can verify the request genuinely came from your instance and wasn't forged. Leave the field empty to keep the current secret.
-4. **Enregistrer**.
-
-Your chat is **never slowed down** by this: webhooks fire asynchronously, after the action, so a slow or offline receiver can never lag your community.
+The OctoGuard webhook moved to **Administration > Integrations > Webhooks**, where you can send moderation alerts to your phone (ntfy), a private team channel (Discord, Matrix, Slack) or your own tool (signed JSON), next to public community announcements. The OctoGuard **Webhook** tab lists the destinations that receive moderation and links there. See [Webhooks](./WEBHOOKS.md).
 
 ---
 
@@ -310,7 +327,7 @@ That's exactly what test mode is for. A rule in "Test (dry-run)" only logs to th
 No. OctoGuard uses Google's `re2`, a linear-time engine immune to catastrophic backtracking. A pattern that would hang a normal regex engine simply runs safely here.
 
 **Does any of this leave my server?**
-No. OctoGuard is native to your Nodyx instance. The only thing that can leave is what *you* configure in the Webhook tab, signed and pointed at a URL you chose.
+No. OctoGuard is native to your Nodyx instance. The only thing that can leave is what *you* configure in Webhooks, signed and pointed at a URL you chose.
 
 ---
 

@@ -21,9 +21,11 @@ function slugify(name: string): string {
     .trim()
 }
 
-export async function listByCommunity(communityId: string): Promise<Tag[]> {
-  const { rows } = await db.query<Tag>(
-    `SELECT * FROM tags WHERE community_id = $1 ORDER BY position ASC, name ASC`,
+/** Todas as tags, na ordem definida pela equipe, cada uma com o número de tópicos que a usam. */
+export async function listByCommunity(communityId: string): Promise<Array<Tag & { thread_count: number }>> {
+  const { rows } = await db.query<Tag & { thread_count: number }>(
+    `SELECT t.*, (SELECT COUNT(*)::int FROM thread_tags tt WHERE tt.tag_id = t.id) AS thread_count
+       FROM tags t WHERE t.community_id = $1 ORDER BY t.position ASC, t.name ASC`,
     [communityId]
   )
   return rows
@@ -68,23 +70,19 @@ export async function reorder(communityId: string, ids: string[]): Promise<void>
   )
 }
 
-/**
- * Renomeia e/ou recolore uma tag. O slug acompanha o nome, e os tópicos não
- * precisam ser tocados: thread_tags aponta para o id. Devolve null se a tag
- * não existir nesta comunidade; um slug repetido estoura como 23505 (UNIQUE).
- */
-export async function update(id: string, communityId: string, data: {
-  name?:  string
-  color?: string
-}): Promise<Tag | null> {
+/** Renommer ou recolorer. Le slug suit le nom (il ne sert dans aucune adresse). Null si absent. */
+export async function update(id: string, communityId: string, data: { name?: string; color?: string }): Promise<Tag | null> {
+  const sets: string[] = []
+  const vals: unknown[] = [id, communityId]
+  if (data.name !== undefined) {
+    vals.push(data.name); sets.push(`name = $${vals.length}`)
+    vals.push(slugify(data.name)); sets.push(`slug = $${vals.length}`)
+  }
+  if (data.color !== undefined) { vals.push(data.color); sets.push(`color = $${vals.length}`) }
+  if (!sets.length) return null
   const { rows } = await db.query<Tag>(
-    `UPDATE tags
-        SET name  = COALESCE($3, name),
-            slug  = COALESCE($4, slug),
-            color = COALESCE($5, color)
-      WHERE id = $1 AND community_id = $2
-      RETURNING *`,
-    [id, communityId, data.name ?? null, data.name ? slugify(data.name) : null, data.color ?? null]
+    `UPDATE tags SET ${sets.join(', ')} WHERE id = $1 AND community_id = $2 RETURNING *`,
+    vals
   )
   return rows[0] ?? null
 }
@@ -125,13 +123,21 @@ export async function getTagsForThreads(threadIds: string[]): Promise<Map<string
   return map
 }
 
+/**
+ * Les tags d'un sujet deviennent EXACTEMENT ceux demandés, en UNE requête :
+ * tout ou rien. Avant, on effaçait puis on réinsérait en deux temps ; une
+ * coupure entre les deux laissait le sujet sans aucun tag.
+ * Seuls les tags qui existent sont posés, sans doublon : un identifiant en
+ * double ou disparu entre-temps ne fait plus tomber l'enregistrement du sujet.
+ * Ceux qui restent ne sont pas touchés (ni effacés, ni recréés).
+ */
 export async function setThreadTags(threadId: string, tagIds: string[]): Promise<void> {
-  await db.query(`DELETE FROM thread_tags WHERE thread_id = $1`, [threadId])
-  if (tagIds.length > 0) {
-    const values = tagIds.map((_, i) => `($1, $${i + 2})`).join(', ')
-    await db.query(
-      `INSERT INTO thread_tags (thread_id, tag_id) VALUES ${values}`,
-      [threadId, ...tagIds]
-    )
-  }
+  await db.query(
+    `WITH wanted AS (SELECT t.id FROM tags t WHERE t.id = ANY($2::uuid[])),
+          gone   AS (DELETE FROM thread_tags WHERE thread_id = $1 AND tag_id NOT IN (SELECT id FROM wanted))
+     INSERT INTO thread_tags (thread_id, tag_id)
+     SELECT $1, id FROM wanted
+     ON CONFLICT DO NOTHING`,
+    [threadId, [...new Set(tagIds)]]
+  )
 }

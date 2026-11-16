@@ -15,29 +15,56 @@ import { randomUUID } from 'crypto'
 import { db } from '../../config/database'
 import { isOctoGuardEnabled } from './index'
 import { getRules } from './cache'
-import { matchRule } from './matchers'
+import { matchRule, type MatchResult } from './matchers'
+import { recordActivity } from './matchers2'
+import { mentionWeight } from './mentionWeight'
+import { instanceCommunityId } from '../mentionPeople'
 import { logOctoGuardAction } from './logger'
 import { applyMute } from './mutes'
+import { engineLadderStep } from './ladder'
+import { applyTempBan } from './bans'
 import type {
   AutomodRuleRow,
   PipelineUserCtx,
   PipelineResult,
   AutomodAction,
-  Duration,
+  Duration, Surface,
 } from './types'
 
 const PIPELINE_TIMEOUT_MS = 50
 
+// ─── Le temps du moteur (ligne de santé : « N ms par message en moyenne ») ───
+// Les 500 derniers passages, en mémoire. Rien n'est écrit nulle part.
+const LATENCY_WINDOW = 500
+const latencies: number[] = []
+let latencyNext = 0
+function recordLatency(ms: number): void {
+  if (latencies.length < LATENCY_WINDOW) latencies.push(ms)
+  else { latencies[latencyNext] = ms; latencyNext = (latencyNext + 1) % LATENCY_WINDOW }
+}
+/** Moyenne des derniers passages, null tant que rien n'est passé. */
+export function pipelineLatency(): { avg_ms: number; samples: number } | null {
+  if (latencies.length === 0) return null
+  return { avg_ms: latencies.reduce((a, b) => a + b, 0) / latencies.length, samples: latencies.length }
+}
+export function _resetLatencyForTests(): void { latencies.length = 0; latencyNext = 0 }
+
 export interface PipelineInput {
   content:    string
   userCtx:    PipelineUserCtx
-  channelId:  string
+  /** Où le contenu est écrit. Défaut : le chat (seul endroit surveillé avant OctoGuard 2). */
+  surface?:   Surface
+  channelId?: string
   messageId?: string  // optionnel (undefined si message pas encore inséré)
+  /** Les mêmes textes avec le corps en HTML, quand `content` n'en est que
+   *  l'extraction (forum, wiki) : les mentions y sont des marques, que
+   *  l'extraction a perdues. Défaut : `content` (le chat juge déjà du HTML). */
+  mentionHtml?: string
 }
 
 // ─── Immunisation ────────────────────────────────────────────────────────────
 
-function isImmunized(rule: AutomodRuleRow, user: PipelineUserCtx): boolean {
+export function isImmunized(rule: AutomodRuleRow, user: PipelineUserCtx): boolean {
   const roleTypes  = rule.immunized_role_types ?? []
   const gradeIds   = rule.immunized_grade_ids  ?? []
   if (roleTypes.includes(user.role)) return true
@@ -60,12 +87,48 @@ export function computeExpiresAt(duration: Duration | null): Date | null {
   return new Date(Date.now() + ms)
 }
 
+// ─── Conditions (OctoGuard 2) ───────────────────────────────────────────────
+
+/** « Comptes récents seulement » : un âge inconnu ne déclenche jamais la règle. */
+export function conditionsMet(rule: AutomodRuleRow, user: PipelineUserCtx): boolean {
+  const maxAge = rule.conditions?.account_max_age_days
+  if (typeof maxAge === 'number') {
+    if (typeof user.accountAgeDays !== 'number') return false
+    if (user.accountAgeDays >= maxAge) return false
+  }
+  return true
+}
+
+// ─── Escalade ────────────────────────────────────────────────────────────────
+
+async function escalate(rule: AutomodRuleRow, user: PipelineUserCtx, warnCount: number, eventId: string): Promise<void> {
+  const esc = rule.escalation
+  if (!esc) return
+  const reason = `${warnCount} avertissements (règle "${rule.name}")`
+  if (esc.action === 'mute') {
+    await applyMute({ userId: user.userId, channelId: null, duration: esc.duration ?? { value: 1, unit: 'h' }, reason, appliedBy: null, ruleId: rule.id, eventId })
+  } else if (esc.action === 'ban_temp') {
+    await applyTempBan({ userId: user.userId, duration: esc.duration ?? { value: 1, unit: 'd' }, reason, ruleId: rule.id, eventId })
+  }
+  logOctoGuardAction({
+    action:       `octoguard.escalation_${esc.action}`,
+    target_type:  'user',
+    target_id:    user.userId,
+    target_label: reason,
+    metadata:     { rule_id: rule.id, rule_name: rule.name, event_id: eventId, actor: 'octoguard:auto', escalated_to: esc.action, warn_count: warnCount },
+  })
+}
+
 // ─── Application d'une action ────────────────────────────────────────────────
 
 interface ActionOutcome {
   blocked:  boolean
   reason:   string
   i18nKey:  string
+  /** Cran « signaler » : un dossier à ouvrir dans la file (D13) */
+  report?:  boolean
+  /** Cran « retenir » : le contenu attend la relecture (lot 2) */
+  hold?:    boolean
 }
 
 async function applyAction(
@@ -74,6 +137,7 @@ async function applyAction(
   excerpt:  string,
   eventId:  string,
   dryRun:   boolean,
+  found?:   MatchResult['found'],
 ): Promise<ActionOutcome> {
   const action: AutomodAction = rule.action
   const meta = {
@@ -82,10 +146,12 @@ async function applyAction(
     event_id:   eventId,
     actor:      'octoguard:auto' as const,
     would_be:   dryRun,
+    // Mots interdits : le mot trouvé et le motif (D25, « Faux positif »)
+    ...(found ? { found } : {}),
   }
 
-  // dry_run OU action report_only : on log et on laisse passer
-  if (dryRun || action === 'report_only') {
+  // Cran « observer » (dry_run) : on note ce qui AURAIT été fait, rien ne se passe
+  if (dryRun) {
     logOctoGuardAction({
       action:       `octoguard.would_${action}`,
       target_type:  'message',
@@ -93,7 +159,28 @@ async function applyAction(
       target_label: excerpt,
       metadata:     { ...meta, would_be: true },
     })
-    return { blocked: false, reason: 'report_only', i18nKey: 'octoguard.report_only' }
+    return { blocked: false, reason: 'observe', i18nKey: 'octoguard.observe' }
+  }
+
+  // Cran « signaler » (report_only) : le contenu passe, et un dossier arrive
+  // dans la file de l'équipe, signé OctoGuard (D13). L'appelant ouvre le
+  // dossier une fois le contenu enregistré (il en connaît alors l'identifiant).
+  if (action === 'report_only') {
+    logOctoGuardAction({
+      action:       'octoguard.report_filed',
+      target_type:  'user',
+      target_id:    user.userId,
+      target_label: excerpt,
+      metadata:     { ...meta, would_be: false },
+    })
+    return { blocked: false, reason: 'report_only', i18nKey: 'octoguard.report_only', report: true }
+  }
+
+  // Cran « retenir » : rien n'est publié. L'appelant confie le contenu à
+  // holdContent() (qui journalise « octoguard.message_held ») ; l'auteur le voit
+  // « en attente de validation », les autres ne le voient pas.
+  if (action === 'hold') {
+    return { blocked: false, reason: 'hold', i18nKey: 'octoguard.held', hold: true }
   }
 
   // notify_only : log + webhook (webhook Session D), pas de blocage
@@ -131,49 +218,53 @@ async function applyAction(
   // D4 tranché fire-and-forget). L'INSERT précède le COUNT DANS le même bloc
   // async -> pas de race d'escalade.
   if (action === 'warn') {
-    logOctoGuardAction({
-      action:       'octoguard.warn_user',
-      target_type:  'user',
-      target_id:    user.userId,
-      target_label: excerpt,
-      metadata:     { ...meta, undoable: true, undo_op: { type: 'clear_last_warn', user_id: user.userId } },
-    })
+    if (rule.follow_ladder) {
+      // La règle suit le barème (D28) : au lieu d'un avertissement brut et de
+      // l'escalade propre à la règle, la prochaine marche du membre, en tâche de
+      // fond (jamais d'exclusion, une marche par 24 h au plus : ladder.ts).
+      // Le message, lui, est bloqué tout de suite, comme pour tout avertissement.
+      void engineLadderStep({ id: rule.id, name: rule.name }, user.userId)
+        .catch((err) => console.warn('[octoguard] ladder step failed:', err))
+    } else {
+      logOctoGuardAction({
+        action:       'octoguard.warn_user',
+        target_type:  'user',
+        target_id:    user.userId,
+        target_label: excerpt,
+        metadata:     { ...meta, undoable: true, undo_op: { type: 'clear_last_warn', user_id: user.userId } },
+      })
 
-    void (async () => {
-      try {
-        await db.query(
-          `INSERT INTO octoguard_warns (user_id, rule_id, reason) VALUES ($1, $2, $3)`,
-          [user.userId, rule.id, excerpt]
-        )
-
-        // Escalation : check count + apply si seuil atteint (STUB Session C pour mute/ban_temp)
-        if (rule.escalation) {
-          const windowDays = rule.escalation.window_days
-          const { rows } = await db.query<{ cnt: number }>(
-            `SELECT COUNT(*)::int AS cnt
-               FROM octoguard_warns
-              WHERE user_id = $1
-                AND rule_id = $2
-                AND cleared_at IS NULL
-                AND created_at > NOW() - ($3 || ' days')::interval`,
-            [user.userId, rule.id, String(windowDays)]
+      void (async () => {
+        try {
+          await db.query(
+            `INSERT INTO octoguard_warns (user_id, rule_id, reason) VALUES ($1, $2, $3)`,
+            [user.userId, rule.id, excerpt]
           )
-          const cnt = rows[0]?.cnt ?? 0
-          if (cnt >= rule.escalation.warns_threshold) {
-            console.warn(`[octoguard] escalation triggered (cnt=${cnt} >= ${rule.escalation.warns_threshold}, action=${rule.escalation.action}) → TODO Session C apply mute/ban_temp`)
-            logOctoGuardAction({
-              action:       `octoguard.escalation_${rule.escalation.action}`,
-              target_type:  'user',
-              target_id:    user.userId,
-              target_label: `escalated after ${cnt} warns`,
-              metadata:     { ...meta, escalated_to: rule.escalation.action, warn_count: cnt, stub: true },
-            })
+
+          // Escalation : check count + apply si seuil atteint (STUB Session C pour mute/ban_temp)
+          if (rule.escalation) {
+            const windowDays = rule.escalation.window_days
+            const { rows } = await db.query<{ cnt: number }>(
+              `SELECT COUNT(*)::int AS cnt
+                 FROM octoguard_warns
+                WHERE user_id = $1
+                  AND rule_id = $2
+                  AND cleared_at IS NULL
+                  AND created_at > NOW() - ($3 || ' days')::interval`,
+              [user.userId, rule.id, String(windowDays)]
+            )
+            const cnt = rows[0]?.cnt ?? 0
+            if (cnt >= rule.escalation.warns_threshold) {
+              // L'escalade pour de vrai : N avertissements en X jours donnent une
+              // sourdine ou un bannissement temporaire (avant : un « TODO » au journal).
+              await escalate(rule, user, cnt, eventId)
+            }
           }
+        } catch (err) {
+          console.warn('[octoguard] warn side-effects failed:', err)
         }
-      } catch (err) {
-        console.warn('[octoguard] warn side-effects failed:', err)
-      }
-    })()
+      })()
+    }
 
     return {
       blocked: true,
@@ -211,19 +302,14 @@ async function applyAction(
     }
   }
 
-  // ban_temp : STUB Session C, bloque comme delete + log "TODO"
+  // ban_temp : bannissement temporaire réel (community_bans.expires_at), levé
+  // automatiquement à l'échéance. Décision immédiate, écriture en arrière-plan
+  // (même patron que mute : jamais dépasser le budget du pipeline).
   if (action === 'ban_temp') {
-    console.warn(`[octoguard] action=ban_temp STUB Session C, blocking like delete for now`)
-    logOctoGuardAction({
-      action:       'octoguard.ban_temp_user',
-      target_type:  'user',
-      target_id:    user.userId,
-      target_label: excerpt,
-      metadata:     { ...meta, stub: 'Session C will implement community_bans INSERT + expires_at', duration: rule.action_duration },
-    })
+    void applyTempBan({ userId: user.userId, duration: rule.action_duration, reason: `règle "${rule.name}"`, ruleId: rule.id, eventId })
     return {
       blocked: true,
-      reason:  `Bannissement temporaire (stub) : règle "${rule.name}"`,
+      reason:  `Bannissement temporaire : règle "${rule.name}"`,
       i18nKey: 'octoguard.ban_temp.applied',
     }
   }
@@ -235,14 +321,39 @@ async function applyAction(
 
 // ─── Pipeline principal ──────────────────────────────────────────────────────
 
+// Taille des groupes mentionnés et appartenance à l'équipe, gardées 30 s : le
+// moteur a 50 ms, il ne relit pas la base à chaque message d'une conversation.
+const MENTION_CACHE_MS = 30_000
+let mentionCache = new Map<string, number>()
+let mentionCacheAt = 0
+function liveMentionCache(): Map<string, number> {
+  if (Date.now() - mentionCacheAt > MENTION_CACHE_MS) { mentionCache = new Map(); mentionCacheAt = Date.now() }
+  return mentionCache
+}
+export function _resetMentionCacheForTests(): void { mentionCache = new Map(); mentionCacheAt = 0 }
+
 async function runPipelineInner(input: PipelineInput): Promise<PipelineResult> {
   const rules = getRules()
   if (rules.length === 0) return { blocked: false }
+  const surface: Surface = input.surface ?? 'chat'
+  // Inondation : on note le message UNE fois, avant les règles (clé par endroit)
+  const floodKey = `${surface}:${input.userCtx.userId}`
+  recordActivity(floodKey, input.content)
+  // Poids des mentions : calculé une fois, et seulement si une règle le lira
+  let mentionCount: number | undefined
+  let mentionCounted = false
 
   for (const rule of rules) {
+    // Une règle d'avant OctoGuard 2 (sans scopes) ne surveillait que le chat
+    if (!(rule.scopes?.length ? rule.scopes : ['chat']).includes(surface)) continue
     if (isImmunized(rule, input.userCtx)) continue
+    if (!conditionsMet(rule, input.userCtx)) continue
 
-    const match = matchRule(input.content, rule)
+    if (rule.type === 'mention_spam' && !mentionCounted) {
+      mentionCounted = true
+      mentionCount = await mentionWeight(input.mentionHtml || input.content, await instanceCommunityId().catch(() => null), input.userCtx.userId, liveMentionCache())
+    }
+    const match = matchRule(input.content, rule, { userId: floodKey, mentionCount })
     if (!match) continue
 
     const eventId = randomUUID()
@@ -252,6 +363,7 @@ async function runPipelineInner(input: PipelineInput): Promise<PipelineResult> {
       match.excerpt,
       eventId,
       rule.dry_run,
+      match.found,
     )
 
     return {
@@ -259,6 +371,8 @@ async function runPipelineInner(input: PipelineInput): Promise<PipelineResult> {
       reason:   outcome.reason,
       i18n_key: outcome.i18nKey,
       event_id: eventId,
+      ...(outcome.report ? { report: { rule_id: rule.id, rule_name: rule.name, excerpt: match.excerpt } } : {}),
+      ...(outcome.hold ? { hold: { rule_id: rule.id, rule_name: rule.name, excerpt: match.excerpt } } : {}),
     }
   }
 
@@ -272,16 +386,25 @@ async function runPipelineInner(input: PipelineInput): Promise<PipelineResult> {
 export async function runPipeline(input: PipelineInput): Promise<PipelineResult> {
   if (!isOctoGuardEnabled()) return { blocked: false }
 
+  // Le minuteur est ANNULÉ dès que le moteur répond. Avant, il n'était jamais
+  // annulé : il écrivait « timeout » 50 ms après CHAQUE message, même traité à
+  // temps, ce qui noyait les vrais dépassements dans de faux.
+  let timer: NodeJS.Timeout | undefined
   try {
     const timeout = new Promise<PipelineResult>((resolve) => {
-      setTimeout(() => {
+      timer = setTimeout(() => {
         console.warn(`[octoguard] pipeline timeout >${PIPELINE_TIMEOUT_MS}ms, bypassing`)
         resolve({ blocked: false })
       }, PIPELINE_TIMEOUT_MS)
     })
-    return await Promise.race([runPipelineInner(input), timeout])
+    const t0 = performance.now()
+    const res = await Promise.race([runPipelineInner(input), timeout])
+    recordLatency(performance.now() - t0)
+    return res
   } catch (err) {
     console.warn('[octoguard] pipeline error, bypassing:', err)
     return { blocked: false }
+  } finally {
+    if (timer) clearTimeout(timer)
   }
 }

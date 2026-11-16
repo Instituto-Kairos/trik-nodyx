@@ -165,6 +165,37 @@ describe('GET /api/v1/forums/threads', () => {
 
     expect(res.statusCode).toBe(404)
   })
+
+  // Filtrer par tag : fait par la base, sur tous les sujets de la catégorie
+  const listCall = () => vi.mocked(db.query).mock.calls.find(([sql]) => String(sql).includes('FROM threads t') && String(sql).includes('LIMIT $2'))
+  it('?tag=slug : seuls les sujets qui portent ce tag, filtre posé dans la requête', async () => {
+    const res = await app.inject({ method: 'GET', url: `/api/v1/forums/threads?category_id=${CATEGORY_UUID}&tag=tutoriels-video` })
+    expect(res.statusCode).toBe(200)
+    const [sql, params] = listCall()!
+    expect(String(sql).replace(/\s+/g, ' ')).toContain('AND ($4::text IS NULL OR EXISTS ( SELECT 1 FROM thread_tags tt JOIN tags g ON g.id = tt.tag_id WHERE tt.thread_id = t.id AND g.slug = $4))')
+    expect(params).toEqual([CATEGORY_UUID, 50, 0, 'tutoriels-video'])
+  })
+  it('sans tag : aucun filtre (null)', async () => {
+    await app.inject({ method: 'GET', url: `/api/v1/forums/threads?category_id=${CATEGORY_UUID}` })
+    expect(listCall()![1]).toEqual([CATEGORY_UUID, 50, 0, null])
+  })
+  it('un tag malformé est refusé avant la base', async () => {
+    for (const tag of ['Majuscules', "x' OR 1=1", 'a b', 'x'.repeat(61)]) {
+      const res = await app.inject({ method: 'GET', url: `/api/v1/forums/threads?category_id=${CATEGORY_UUID}&tag=${encodeURIComponent(tag)}` })
+      expect(res.statusCode).toBe(400)
+    }
+    expect(listCall()).toBeUndefined()
+  })
+  it('la réponse donne les tags de la catégorie, avec leur nombre de sujets', async () => {
+    const TAGS = [{ id: 't1', name: 'Tutoriel', slug: 'tutoriel', color: '#8b5cf6', thread_count: 3 }]
+    vi.mocked(db.query).mockImplementation((async (sql: string) =>
+      String(sql).includes('GROUP BY g.id') ? { rows: TAGS, rowCount: 1 } : { rows: [], rowCount: 0 }) as never)
+    const res = await app.inject({ method: 'GET', url: `/api/v1/forums/threads?category_id=${CATEGORY_UUID}` })
+    expect(res.json().tags).toEqual(TAGS)
+    const tagSql = vi.mocked(db.query).mock.calls.find(([s]) => String(s).includes('GROUP BY g.id'))!
+    expect(String(tagSql[0])).toContain('WHERE t.category_id = $1')
+    expect(tagSql[1]).toEqual([CATEGORY_UUID])
+  })
 })
 
 describe('POST /api/v1/forums/threads', () => {
@@ -544,6 +575,8 @@ describe('PATCH /api/v1/forums/threads/:id — is_featured réservé aux admins'
     vi.mocked(db.query).mockImplementation(async (sql: string) => {
       const s = String(sql)
       if (s.includes('FROM communities')) return { rows: [{ id: 'community-1' }], rowCount: 1 } as any
+      // Communauté du fil (droits du forum, services/permissions.communityOfThread)
+      if (s.includes('FROM threads t JOIN categories')) return { rows: [{ community_id: 'community-1' }], rowCount: 1 } as any
       return { rows: [{ role: 'admin' }], rowCount: 1 } as any
     })
     vi.mocked(ThreadModel.update).mockResolvedValueOnce({ ...FAKE_THREAD, is_featured: true } as any)
@@ -605,8 +638,8 @@ describe('PATCH /api/v1/forums/threads/:id : nettoyage du titre (injection audit
 })
 
 // Módulo RPG (trik, Fase 2) — toggle de trik_threads via is_xp_enabled.
-// Ver plans/fase-dois-passo-a-passo.md, passo 4.4: mesmo guard de
-// isAdmin() que já restringe pin/lock (só owner/admin, moderador não basta).
+// Ver plans/fase-dois-passo-a-passo.md, passo 4.4: XP continua só para
+// owner/admin da comunidade do fio (moderador não basta), pelo rank do getAccess.
 describe('PATCH /api/v1/forums/threads/:id — is_xp_enabled (trik)', () => {
   let app: Awaited<ReturnType<typeof buildApp>>
 
@@ -618,7 +651,7 @@ describe('PATCH /api/v1/forums/threads/:id — is_xp_enabled (trik)', () => {
 
   it('retorna 403 quando quem pede é moderador mas não owner/admin', async () => {
     vi.mocked(ThreadModel.findById).mockResolvedValueOnce(FAKE_THREAD as any)
-    vi.mocked(db.query).mockResolvedValue({ rows: [{ role: 'moderator' }], rowCount: 1 } as any)
+    vi.mocked(db.query).mockResolvedValue({ rows: [{ role: 'moderator', community_id: 'community-1' }], rowCount: 1 } as any)
 
     const res = await app.inject({
       method:  'PATCH',
@@ -633,7 +666,7 @@ describe('PATCH /api/v1/forums/threads/:id — is_xp_enabled (trik)', () => {
 
   it('owner/admin marca o tópico como elegível pra XP', async () => {
     vi.mocked(ThreadModel.findById).mockResolvedValueOnce(FAKE_THREAD as any)
-    vi.mocked(db.query).mockResolvedValue({ rows: [{ role: 'admin' }], rowCount: 1 } as any)
+    vi.mocked(db.query).mockResolvedValue({ rows: [{ role: 'admin', community_id: 'community-1' }], rowCount: 1 } as any)
     vi.mocked(ThreadModel.update).mockResolvedValueOnce({ ...FAKE_THREAD } as any)
 
     const res = await app.inject({
@@ -649,7 +682,7 @@ describe('PATCH /api/v1/forums/threads/:id — is_xp_enabled (trik)', () => {
 
   it('owner/admin desmarca o tópico', async () => {
     vi.mocked(ThreadModel.findById).mockResolvedValueOnce(FAKE_THREAD as any)
-    vi.mocked(db.query).mockResolvedValue({ rows: [{ role: 'owner' }], rowCount: 1 } as any)
+    vi.mocked(db.query).mockResolvedValue({ rows: [{ role: 'owner', community_id: 'community-1' }], rowCount: 1 } as any)
     vi.mocked(ThreadModel.update).mockResolvedValueOnce({ ...FAKE_THREAD } as any)
 
     const res = await app.inject({
@@ -737,7 +770,7 @@ describe('PATCH /api/v1/forums/threads/:id — apagar o tópico desfaz o xp das 
 
   it('reverte cada post premiado do tópico antes do ThreadModel.remove', async () => {
     vi.mocked(ThreadModel.findById).mockResolvedValueOnce(FAKE_THREAD as any)
-    vi.mocked(db.query).mockResolvedValue({ rows: [{ role: 'moderator' }], rowCount: 1 } as any)
+    vi.mocked(db.query).mockResolvedValue({ rows: [{ role: 'moderator', community_id: 'community-1' }], rowCount: 1 } as any)
     vi.mocked(TrikModel.listAwardedPostIdsByThread).mockResolvedValueOnce(['post-a', 'post-b'])
 
     const res = await app.inject({
@@ -785,5 +818,69 @@ describe('PUT /api/v1/forums/posts/:id — revert e reprocesso em sequência (tr
 
     releaseRevert()
     await vi.waitFor(() => expect(TrikModel.isXpThread).toHaveBeenCalledWith(THREAD_UUID))
+  })
+})
+
+describe('PATCH /api/v1/forums/threads/:id : l’équipe change les tags d’un sujet', () => {
+  let app: Awaited<ReturnType<typeof buildApp>>
+  const OTHER_AUTHOR = '8ba7b810-9dad-11d1-80b4-00c04fd430c8'
+  const T1 = '11111111-1111-4111-8111-111111111111', T2 = '22222222-2222-4222-8222-222222222222'
+  let known: string[]
+  let role: string
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    vi.mocked(redis.exists).mockImplementation((key: string) => Promise.resolve(key.startsWith('banned:') ? 0 : 1))
+    vi.mocked(redis.incr).mockResolvedValue(1 as any)
+    vi.mocked(redis.expire).mockResolvedValue(1 as any)
+    known = [T1, T2]; role = 'admin'
+    vi.mocked(db.query).mockImplementation(async (sql: string, params?: unknown[]) => {
+      const s = String(sql)
+      if (s.includes('FROM communities')) return { rows: [{ id: 'community-1' }], rowCount: 1 } as any
+      if (s.includes('FROM threads t JOIN categories')) return { rows: [{ community_id: 'community-1' }], rowCount: 1 } as any
+      if (s.includes('FROM tags WHERE id = ANY')) return { rows: [{ n: (params![0] as string[]).filter((i) => known.includes(i)).length }], rowCount: 1 } as any
+      return { rows: [{ role }], rowCount: 1 } as any
+    })
+    vi.mocked(ThreadModel.update).mockResolvedValue({ ...FAKE_THREAD } as any)
+    app = await buildApp(a => a.register(forumRoutes, { prefix: '/api/v1/forums' }))
+  })
+  const patch = (tag_ids: unknown, author = OTHER_AUTHOR) => {
+    vi.mocked(ThreadModel.findById).mockResolvedValueOnce({ ...FAKE_THREAD, author_id: author } as any)
+    return app.inject({ method: 'PATCH', url: `/api/v1/forums/threads/${THREAD_UUID}`, headers: { authorization: `Bearer ${makeToken()}` }, payload: { tag_ids } })
+  }
+  const TagModel = () => import('../models/tag')
+
+  it('un membre de l’équipe change les tags : doublons retirés', async () => {
+    const res = await patch([T1, T2, T1.toUpperCase()])
+    expect(res.statusCode).toBe(200)
+    expect((await TagModel()).setThreadTags).toHaveBeenCalledWith(THREAD_UUID, [T1, T2])
+  })
+  it('retirer tous les tags : liste vide acceptée', async () => {
+    expect((await patch([])).statusCode).toBe(200)
+    expect((await TagModel()).setThreadTags).toHaveBeenCalledWith(THREAD_UUID, [])
+  })
+  it('plus de 5 tags : 400, rien n’est touché', async () => {
+    known = Array.from({ length: 6 }, (_, i) => `${i}1111111-1111-4111-8111-111111111111`)
+    const res = await patch(known)
+    expect(res.json().code).toBe('THREAD_TAGS_TOO_MANY')
+    expect((await TagModel()).setThreadTags).not.toHaveBeenCalled()
+    expect(ThreadModel.update).not.toHaveBeenCalled()
+  })
+  it('un tag inconnu : 400 AVANT d’effacer les tags existants', async () => {
+    const res = await patch([T1, '33333333-3333-4333-8333-333333333333'])
+    expect(res.json().code).toBe('THREAD_TAGS_UNKNOWN')
+    expect((await TagModel()).setThreadTags).not.toHaveBeenCalled()
+  })
+  it('pas une liste d’identifiants : 400 au lieu d’une erreur 500', async () => {
+    for (const bad of ['tuto', [42], ['pas-un-uuid'], { a: 1 }]) {
+      expect((await patch(bad)).json().code).toBe('THREAD_TAGS_INVALID')
+    }
+    expect((await TagModel()).setThreadTags).not.toHaveBeenCalled()
+  })
+  it('l’auteur sans droit de modération ne change pas les tags', async () => {
+    role = 'member'
+    const res = await patch([T1], USER_UUID)
+    expect(res.statusCode).toBe(403)
+    expect((await TagModel()).setThreadTags).not.toHaveBeenCalled()
   })
 })

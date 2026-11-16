@@ -7,7 +7,7 @@
 	 * completo" (bot não tem página de perfil navegável de verdade).
 	 */
 	import { onMount } from 'svelte'
-	import { browser } from '$app/environment'
+	import { browser } from '$app/env'
 
 	interface Props {
 		token: string
@@ -50,7 +50,7 @@
 	onMount(async () => {
 		if (!browser) return
 		try {
-			const { PUBLIC_API_URL } = await import('$env/static/public')
+			const { PUBLIC_API_URL } = await import('$app/env/public')
 			const res = await fetch(`${PUBLIC_API_URL}/api/v1/trik/bot`, {
 				headers: { Authorization: `Bearer ${token}` }
 			})

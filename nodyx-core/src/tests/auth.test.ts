@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { buildApp } from './helpers/buildApp'
 
 // ── Mocks (hoisted before imports) ───────────────────────────
@@ -139,6 +139,28 @@ describe('POST /api/v1/auth/register', () => {
     })
 
     expect(res.statusCode).toBe(400)
+  })
+
+  // Sécurité (12/11/2026) : un pseudo s'affiche parfois DANS du HTML. Il ne doit
+  // jamais pouvoir contenir de quoi écrire du code ni des caractères invisibles.
+  it.each([
+    ['<img src=x onerror=alert(1)>'], ['a"b'], ["l'ami"], ['x&y'], ['a`b'], ['a/b'], ['a\\b'],
+    ['ad​min'], ['ad‮min'], ['tab\tname'],
+  ])('refuse un pseudo avec des caractères interdits : %j', async (username) => {
+    const res = await app.inject({ method: 'POST', url: '/api/v1/auth/register', payload: { username, email: 'x@nodyx.dev', password: 'password123' } })
+    expect(res.statusCode).toBe(400)
+    expect(UserModel.create).not.toHaveBeenCalled()
+  })
+  it('le code du refus est stable (USERNAME_INVALID_CHARS)', async () => {
+    const res = await app.inject({ method: 'POST', url: '/api/v1/auth/register', payload: { username: '<b>moi</b>', email: 'x@nodyx.dev', password: 'password123' } })
+    expect(res.json().code).toBe('USERNAME_INVALID_CHARS')
+  })
+  it.each([['Léa'], ['jean-pierre'], ['max.dupont'], ['neo_42'], ['Marie Claire'], ['ana@home']])('accepte un pseudo ordinaire : %j', async (username) => {
+    vi.mocked(UserModel.findByEmail).mockResolvedValueOnce(null)
+    vi.mocked(UserModel.findByUsername).mockResolvedValueOnce(null)
+    vi.mocked(UserModel.create).mockResolvedValueOnce({ ...FAKE_PUBLIC_USER, username })
+    const res = await app.inject({ method: 'POST', url: '/api/v1/auth/register', payload: { username, email: 'x@nodyx.dev', password: 'password123' } })
+    expect(res.statusCode).toBe(201)
   })
 
   it('returns 400 when email is invalid', async () => {
@@ -370,5 +392,49 @@ describe('POST /api/v1/auth/logout', () => {
 
     expect(res.statusCode).toBe(200)
     expect(JSON.parse(res.body).message).toBe('Logged out')
+  })
+})
+
+// ── Limite d'inscriptions : même chiffre que celui affiché (models/memberCount.ts) ──
+
+describe('POST /api/v1/auth/register avec NODYX_MAX_MEMBERS', () => {
+  let app: Awaited<ReturnType<typeof buildApp>>
+  const payload = { username: 'testuser', email: 'test@nodyx.dev', password: 'password123' }
+
+  // countActiveMembers() lit db.query : on route sa requête par son SQL.
+  function membersAre(total: number) {
+    vi.mocked(db.query).mockImplementation(((sql: string) => {
+      if (typeof sql === 'string' && sql.includes('COUNT(DISTINCT cm.user_id)')) {
+        return Promise.resolve({ rows: [{ total, new_this_week: 0 }], rowCount: 1 })
+      }
+      if (typeof sql === 'string' && (sql.includes('community_bans') || sql.includes('ip_bans') || sql.includes('email_bans') || sql.includes('authenticator_devices'))) {
+        return Promise.resolve({ rows: [], rowCount: 0 })
+      }
+      return Promise.resolve({ rows: [{ id: 'community-uuid' }], rowCount: 1 })
+    }) as never)
+  }
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    process.env.NODYX_MAX_MEMBERS = '50'
+    vi.mocked(UserModel.findByEmail).mockResolvedValue(null)
+    vi.mocked(UserModel.findByUsername).mockResolvedValue(null)
+    vi.mocked(UserModel.create).mockResolvedValue(FAKE_PUBLIC_USER)
+    app = await buildApp(a => a.register(authRoutes, { prefix: '/api/v1/auth' }))
+  })
+
+  afterEach(() => { delete process.env.NODYX_MAX_MEMBERS })
+
+  it('refuse avec INSTANCE_FULL quand les membres atteignent la limite', async () => {
+    membersAre(50)
+    const res = await app.inject({ method: 'POST', url: '/api/v1/auth/register', payload })
+    expect(res.statusCode).toBe(403)
+    expect(JSON.parse(res.body).code).toBe('INSTANCE_FULL')
+  })
+
+  it('accepte sous la limite, même si la table users contient plus de comptes', async () => {
+    membersAre(49)
+    const res = await app.inject({ method: 'POST', url: '/api/v1/auth/register', payload })
+    expect(res.statusCode).toBe(201)
   })
 })

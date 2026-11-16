@@ -15,6 +15,9 @@ import { isSmtpConfigured, sendPasswordResetEmail, sendVerificationEmail } from 
 import { resolveServerLocale } from '../i18n/serverStrings'
 import { getUserTotp, TOTP_PENDING_TTL } from './totp'
 import { getClientIp, estPubliquementRoutable } from '../utils/clientIp'
+import { countActiveMembers } from '../models/memberCount'
+import { setBanMark } from '../services/octoguard/bans'
+import { announceMember } from '../services/webhooks/announce'
 
 // ── Discord security alerts ───────────────────────────────────────────────────
 
@@ -57,7 +60,7 @@ async function forgotPasswordRateLimit(request: FastifyRequest, reply: FastifyRe
   if (count > 3) {
     reply.header('Retry-After', String(15 * 60))
     return reply.code(429).send({
-      error: 'Trop de tentatives. Réessayez dans 15 minutes.',
+      error: 'Trop de tentatives. Réessaie dans 15 minutes.',
       code:  'RATE_LIMITED',
     })
   }
@@ -72,7 +75,7 @@ async function loginRateLimit(request: FastifyRequest, reply: FastifyReply): Pro
     const ttl = await redis.ttl(key)
     reply.header('Retry-After', String(ttl))
     return reply.code(429).send({
-      error: 'Trop de tentatives de connexion. Réessayez dans 15 minutes.',
+      error: 'Trop de tentatives de connexion. Réessaie dans 15 minutes.',
       code:  'RATE_LIMITED',
     })
   }
@@ -86,7 +89,7 @@ async function registerRateLimit(request: FastifyRequest, reply: FastifyReply): 
   if (count > 5) {
     reply.header('Retry-After', String(60 * 60))
     return reply.code(429).send({
-      error: 'Trop de créations de compte depuis cette IP. Réessayez dans une heure.',
+      error: 'Trop de créations de compte depuis cette IP. Réessaie dans une heure.',
       code:  'RATE_LIMITED',
     })
   }
@@ -110,6 +113,10 @@ export async function invalidateUserSessions(userId: string): Promise<void> {
     await redis.del(indexKey)
   }
 }
+
+/** Ce qu'un pseudo ne peut pas contenir : de quoi écrire du HTML, des
+ *  caractères de contrôle ou de mise en forme invisibles (usurpation). */
+export const USERNAME_FORBIDDEN = /[<>"'`&\\/\p{Cc}\p{Cf}]/u
 
 const RegisterBody = z.object({
   // trim() AVANT min/max : une espace de tête ou de fin donnait un pseudo
@@ -188,6 +195,15 @@ export default async function authRoutes(app: FastifyInstance) {
     // strawberry, lapersonne...) pour ~0 bot que le honeypot ne prend pas déjà.
     // Le honeypot (couche 1) + le timing (couche 2) portent la défense.
 
+    // Sécurité (12/11/2026) : un pseudo s'affiche partout, parfois DANS du HTML
+    // (textes traduits rendus en {@html}). Il acceptait n'importe quel caractère :
+    // `<img src=x onerror=…>` tenait en 50 caractères. On refuse ce qui sert à
+    // écrire du code ou à se cacher (caractères de contrôle, invisibles). Les
+    // accents, espaces, - . @ _ des pseudos existants restent permis.
+    if (USERNAME_FORBIDDEN.test(username)) {
+      return reply.code(400).send({ error: 'Username contains forbidden characters', code: 'USERNAME_INVALID_CHARS' })
+    }
+
     const clientIp = clientIpEarly
 
     const maxMembers = process.env.NODYX_MAX_MEMBERS ? parseInt(process.env.NODYX_MAX_MEMBERS, 10) : null
@@ -203,16 +219,8 @@ export default async function authRoutes(app: FastifyInstance) {
          LIMIT 1`,
         [email]
       ),
-      maxMembers
-        ? db.query<{ count: number }>(
-            `SELECT COUNT(*)::int AS count FROM users u
-             WHERE NOT EXISTS (
-               SELECT 1 FROM community_bans cb
-               JOIN communities c ON c.id = cb.community_id
-               WHERE cb.user_id = u.id LIMIT 1
-             )`
-          )
-        : Promise.resolve(null),
+      // La limite plafonne le même chiffre que celui affiché partout (models/memberCount.ts).
+      maxMembers ? countActiveMembers() : Promise.resolve(null),
     ])
 
     if (existingEmail) {
@@ -227,11 +235,13 @@ export default async function authRoutes(app: FastifyInstance) {
     if (emailBan.rows.length > 0) {
       return reply.code(403).send({ error: 'Registration not allowed', code: 'FORBIDDEN' })
     }
-    if (maxMembers !== null && memberCount && memberCount.rows[0].count >= maxMembers) {
+    if (maxMembers !== null && memberCount && memberCount.total >= maxMembers) {
       return reply.code(403).send({ error: 'This instance has reached its member limit', code: 'INSTANCE_FULL' })
     }
 
     const user  = await UserModel.create({ username, email, password })
+    // Une vague d'inscriptions peut annoncer un raid (bouclier anti-raid, lot 6)
+    void import('../services/octoguard/shield').then((m) => m.recordSignup()).catch(() => {})
     // Store registration IP
     await db.query(`UPDATE users SET registration_ip = $1::inet WHERE id = $2`, [clientIp, user.id]).catch(() => {})
 
@@ -265,6 +275,8 @@ export default async function authRoutes(app: FastifyInstance) {
          ON CONFLICT DO NOTHING`,
         [communityId, user.id]
       )
+      // Webhooks : une nouvelle arrivée (famille éteinte par défaut, par discrétion)
+      announceMember(user.username)
     }
 
     // OctoGuard welcome (Module 2). Fire-and-forget : ne bloque jamais
@@ -281,9 +293,11 @@ export default async function authRoutes(app: FastifyInstance) {
     // Email verification — only when SMTP is configured
     if (isSmtpConfigured()) {
       const verificationToken = crypto.randomBytes(32).toString('hex')
-      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000) // 24h
+      // L'e-mail promet 24 h : l'échéance est enregistrée et vérifiée (avant : jamais)
       await db.query(
-        `UPDATE users SET email_verified = false, email_verification_token = $1 WHERE id = $2`,
+        `UPDATE users SET email_verified = false, email_verification_token = $1,
+                email_verification_expires_at = NOW() + INTERVAL '24 hours'
+          WHERE id = $2`,
         [verificationToken, user.id]
       )
       const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:5173'
@@ -360,7 +374,7 @@ export default async function authRoutes(app: FastifyInstance) {
 
     // Block login if email not verified
     if (user.email_verified === false) {
-      return reply.code(403).send({ error: 'Veuillez confirmer votre adresse email avant de vous connecter.', code: 'EMAIL_NOT_VERIFIED' })
+      return reply.code(403).send({ error: 'Confirme ton adresse email avant de te connecter.', code: 'EMAIL_NOT_VERIFIED' })
     }
 
     // Block banned users — check Redis first (fast), then DB as fallback for pre-existing bans
@@ -370,13 +384,15 @@ export default async function authRoutes(app: FastifyInstance) {
     }
     const loginCommunityId = await getDefaultCommunityId()
     if (loginCommunityId) {
-      const { rows: banRows } = await db.query(
-        `SELECT 1 FROM community_bans WHERE community_id = $1 AND user_id = $2 LIMIT 1`,
+      const { rows: banRows } = await db.query<{ expires_at: string | null }>(
+        `SELECT expires_at FROM community_bans WHERE community_id = $1 AND user_id = $2 LIMIT 1`,
         [loginCommunityId, user.id]
       )
       if (banRows.length > 0) {
-        // Populate Redis cache for future checks
-        await redis.set(`banned:${user.id}`, '1')
+        // Marque Redis pour les vérifications suivantes. Une exclusion
+        // temporaire garde son échéance : avant (lot 4a, 08/11/2026), la marque
+        // était posée pour toujours et l'exclusion devenait définitive.
+        await setBanMark(user.id, banRows[0].expires_at)
         return reply.code(403).send({ error: 'You are banned from this community', code: 'BANNED' })
       }
     }
@@ -544,7 +560,7 @@ export default async function authRoutes(app: FastifyInstance) {
 
     // Toujours la même réponse (anti-énumération)
     return reply.send({
-      message: 'Si cet email est enregistré, vous recevrez un lien de réinitialisation.',
+      message: 'Si cet email est enregistré, tu recevras un lien de réinitialisation.',
     })
   })
 
@@ -606,7 +622,7 @@ export default async function authRoutes(app: FastifyInstance) {
     // Invalider toutes les sessions actives de l'utilisateur
     await invalidateUserSessions(userId)
 
-    return reply.send({ message: 'Mot de passe réinitialisé. Vous pouvez vous connecter.' })
+    return reply.send({ message: 'Mot de passe réinitialisé. Tu peux te connecter.' })
   })
 
   // ── Vérification email ────────────────────────────────────────────────────
@@ -615,16 +631,25 @@ export default async function authRoutes(app: FastifyInstance) {
   app.get('/verify-email/:token', async (request, reply) => {
     const { token } = request.params as { token: string }
 
+    // Ce lien ouvre une session : il ne vaut que 24 h, comme l'e-mail le promet.
+    // Sans échéance enregistrée, il est refusé (fermé par défaut).
     const { rows } = await db.query<{ id: string; username: string; email: string }>(
       `UPDATE users
-       SET email_verified = true, email_verification_token = NULL
+       SET email_verified = true, email_verification_token = NULL, email_verification_expires_at = NULL
        WHERE email_verification_token = $1
          AND email_verified = false
+         AND email_verification_expires_at > NOW()
        RETURNING id, username, email`,
       [token]
     )
 
     if (!rows[0]) {
+      // Expiré ou inconnu ? Le dire permet de proposer un nouveau lien. Le jeton fait 256 bits :
+      // distinguer les deux cas n'aide pas à en deviner un.
+      const { rows: [old] } = await db.query<{ id: string }>(
+        `SELECT id FROM users WHERE email_verification_token = $1 AND email_verified = false`, [token]
+      )
+      if (old) return reply.code(400).send({ error: 'Verification link expired', code: 'TOKEN_EXPIRED' })
       return reply.code(400).send({ error: 'Lien invalide ou déjà utilisé.', code: 'INVALID_TOKEN' })
     }
 
@@ -652,7 +677,7 @@ export default async function authRoutes(app: FastifyInstance) {
     if (countEmail === 1) await redis.expire(rateLimitKey, 5 * 60)
     if (countIp === 1)    await redis.expire(rateLimitIp, 5 * 60)
     if (countEmail > 1 || countIp > 3) {
-      return reply.code(429).send({ error: 'Un email a déjà été envoyé récemment. Attendez 5 minutes.', code: 'RATE_LIMITED' })
+      return reply.code(429).send({ error: 'Un email a déjà été envoyé récemment. Attends 5 minutes.', code: 'RATE_LIMITED' })
     }
 
     const user = await UserModel.findByEmail(email)
@@ -664,7 +689,8 @@ export default async function authRoutes(app: FastifyInstance) {
 
     const verificationToken = crypto.randomBytes(32).toString('hex')
     await db.query(
-      `UPDATE users SET email_verification_token = $1 WHERE id = $2`,
+      `UPDATE users SET email_verification_token = $1, email_verification_expires_at = NOW() + INTERVAL '24 hours'
+        WHERE id = $2`,
       [verificationToken, user.id]
     )
 

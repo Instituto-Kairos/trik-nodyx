@@ -74,7 +74,7 @@
 			if (k === 'offset' && v === '0') continue   // 1ª página → URL limpa
 			p.set(k, v)
 		}
-		goto(`/galeria${p.toString() ? `?${p}` : ''}`, { keepFocus: true })
+		goto(`/galeria${p.toString() ? `?${p}` : ''}`, { reset: false })
 	}
 
 	/**

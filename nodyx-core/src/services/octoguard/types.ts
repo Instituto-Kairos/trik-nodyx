@@ -14,6 +14,9 @@ export type AutomodRuleType =
   | 'link_domain'
   | 'mention_spam'
   | 'link_spam'
+  | 'keywords'   // liste de mots interdits, sans expression régulière (OctoGuard 2)
+  | 'flood'      // même message répété, ou rafale (OctoGuard 2)
+  | 'zalgo'      // texte corrompu (OctoGuard 2)
 
 export type AutomodAction =
   | 'delete'
@@ -22,6 +25,7 @@ export type AutomodAction =
   | 'ban_temp'
   | 'notify_only'
   | 'report_only'
+  | 'hold'         // Retenir : le contenu attend une relecture de l'équipe (lot 2, CDC E4h)
 
 export type DurationUnit = 'm' | 'h' | 'd' | 'w' | 'M'
 
@@ -50,6 +54,22 @@ export interface AutomodRuleParams {
   max_mentions?: number
   // link_spam
   max_links?: number
+  // keywords : « mot » (mot entier), « *mot* » (n'importe où), « mot* » (début)
+  words?:      string[]
+  exceptions?: string[]
+  // flood
+  max_repeats?:     number   // même message N fois…
+  repeat_window_s?: number   // …en X secondes
+  max_messages?:    number   // ou plus de N messages…
+  burst_window_s?:  number   // …en X secondes
+  // zalgo
+  max_combining?:   number   // caractères combinés tolérés par lettre
+}
+
+/** Restrictions d'une règle (OctoGuard 2, migration 130). */
+export interface RuleConditions {
+  /** La règle ne vise que les comptes créés il y a moins de N jours. */
+  account_max_age_days?: number
 }
 
 export interface Escalation {
@@ -67,13 +87,27 @@ export interface AutomodRuleRow {
   action:                AutomodAction
   action_duration:       Duration | null
   escalation:            Escalation | null
+  /** Au cran Avertir : suivre le barème au lieu de l'escalade propre (D28). */
+  follow_ladder?:        boolean
   immunized_role_types:  string[]
   immunized_grade_ids:   string[]
   dry_run:               boolean
   enabled:               boolean
+  /** Où la règle s'applique (migration 129). */
+  scopes:                Surface[]
+  /** Restrictions (migration 130) : comptes récents seulement, etc. */
+  conditions?:           RuleConditions
+  /** Modèle du profil de base d'où vient la règle, null si écrite à la main. */
+  preset_key:            string | null
+  /** Règle issue d'un modèle mais modifiée par l'admin : les mises à jour du profil ne la touchent plus. */
+  customized:            boolean
   created_at:            string
   updated_at:            string
 }
+
+/** Les endroits du site que surveille OctoGuard. */
+export type Surface = 'chat' | 'forum' | 'profile' | 'poll' | 'wiki'
+export const SURFACES: readonly Surface[] = ['chat', 'forum', 'profile', 'poll', 'wiki']
 
 // ─── Welcome (singleton) ──────────────────────────────────────────────────────
 
@@ -176,6 +210,12 @@ export interface PipelineResult {
   i18n_key?:         string
   event_id?:         string
   command_response?: string
+  /** Cran « signaler » : l'appelant crée un dossier dans la file APRÈS avoir
+   *  enregistré le contenu (il en connaît alors l'identifiant). D13. */
+  report?:           { rule_id: string; rule_name: string; excerpt: string }
+  /** Cran « retenir » : l'appelant N'ÉCRIT PAS le contenu, il le confie à
+   *  holdContent() ; il ne sera publié qu'à l'approbation (CDC E4h, lot 2). */
+  hold?:             { rule_id: string | null; rule_name: string; excerpt: string }
 }
 
 /**
@@ -186,6 +226,8 @@ export interface PipelineUserCtx {
   userId:    string
   role:      'owner' | 'admin' | 'moderator' | 'member' | string
   gradeIds:  string[]
+  /** Âge du compte en jours (conditions « comptes récents »). Inconnu = règle ignorée. */
+  accountAgeDays?: number
 }
 
 /**
@@ -198,6 +240,9 @@ export interface ActionLogEntry {
   target_type:  'message' | 'user' | 'channel' | 'thread' | 'post' | 'dm_message' | 'rule' | 'report' | 'log' | 'welcome' | 'command' | null
   target_id:    string | null
   target_label: string | null
+  /** Membre de l'équipe à l'origine de l'action (sourdine posée à la main…).
+   *  Absent = OctoGuard lui-même. Le journal attribue alors l'action au bon nom. */
+  actor_id?:    string | null
   metadata: {
     rule_id?:    string
     rule_name?:  string

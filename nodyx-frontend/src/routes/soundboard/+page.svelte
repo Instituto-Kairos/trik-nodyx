@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte'
-	import { browser } from '$app/environment'
-	import { PUBLIC_API_URL } from '$env/static/public'
+	import { browser } from '$app/env'
+	import { PUBLIC_API_URL } from '$app/env/public'
 	import { t as i18n } from '$lib/i18n'   // `t` est déjà une variable locale (piste)
 
 	const tFn = $derived($i18n)
@@ -377,8 +377,8 @@
 			{:else if tracks.length === 0}
 				<div class="rounded-lg border border-dashed border-zinc-800 bg-zinc-900/40 px-4 py-10 text-center text-sm text-zinc-500 space-y-1">
 					<div class="text-2xl mb-2">🎵</div>
-					<div>{streamer?.displayName ?? 'Le streamer'} n'a pas encore mis de sons en public.</div>
-					<div class="text-[11px] text-zinc-600">Si tu es l'admin, passe quelques pistes en <span class="font-mono text-zinc-400">visibility: public</span> depuis le tab Soundboard.</div>
+					<div>{tFn('soundboard.empty_public', { name: streamer?.displayName ?? tFn('soundboard.streamer_fallback') })}</div>
+					<div class="text-[11px] text-zinc-600">{tFn('soundboard.empty_admin_hint_before')} <span class="font-mono text-zinc-400">visibility: public</span> {tFn('soundboard.empty_admin_hint_after')}</div>
 				</div>
 			{:else}
 				<!-- Pills playlists : visible uniquement quand le streamer a au moins

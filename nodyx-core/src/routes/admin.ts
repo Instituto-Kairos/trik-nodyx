@@ -25,6 +25,24 @@ import { pipeline } from 'stream/promises'
 import path from 'path'
 import { getClientIp } from '../utils/clientIp'
 import { revertThreadScenes } from '../services/trik/xp'
+import { buildMemberFile } from '../services/memberFile'
+import * as NotificationModel from '../models/notification'
+import { requirePermission, requireAnyPermission, requireStaff } from '../middleware/permissions'
+import { invalidatePermissions, rankOf, outranks, type MemberAccess } from '../services/permissions'
+
+// Garde-fou de rang des actions sur un membre : un admin ou le propriétaire
+// peut viser tout le monde sauf le propriétaire (vérifié à part) ; en dessous,
+// on ne vise qu'un rang STRICTEMENT inférieur au sien.
+function mayTarget(actor: MemberAccess | undefined, targetRole: string | null | undefined): boolean {
+  if (!actor) return false
+  return actor.rank >= rankOf('admin') || outranks(actor, targetRole)
+}
+import { countActiveMembers, ACTIVE_MEMBERS_FROM } from '../models/memberCount'
+import { restoreAfterBan } from '../services/octoguard/bans'
+
+// Les couleurs du bandeau d'annonce (la barre du haut ne sait en dessiner aucune autre)
+const ANNOUNCEMENT_COLORS: readonly string[] = ['indigo', 'amber', 'green', 'red', 'sky', 'rose']
+const ANNOUNCEMENT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 const UPLOADS_DIR = path.join(process.cwd(), 'uploads')
 const ALLOWED_MIME_BRANDING = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
@@ -123,15 +141,40 @@ export async function logAction(
 
 export default async function adminRoutes(app: FastifyInstance) {
 
+  // ── Mes droits dans l'administration ───────────────────────────────────────
+  // Ouvert à toute l'équipe (au moins une permission) : l'interface admin s'en
+  // sert pour n'afficher que les pages auxquelles on a droit (D3).
+  app.get('/me', {
+    preHandler: [rateLimit, requireStaff],
+  }, async (request, reply) => {
+    const access = request.access!
+    // Dossiers en attente dans la file de signalements : le compteur du menu
+    // (dossiers ouverts + contenus retenus à relire, cran « Retenir »)
+    let open_reports: number | null = null
+    let held_pending: number | null = null
+    if (access.permissions.includes('moderate_members') || access.permissions.includes('manage_octoguard')) {
+      const { rows } = await db.query<{ n: number; h: number }>(
+        `SELECT (SELECT COUNT(DISTINCT (target_type, target_id)) FROM reports WHERE status = 'open')::int AS n,
+                (SELECT COUNT(*) FROM octoguard_held WHERE status = 'pending')::int AS h`)
+      held_pending = rows[0]?.h ?? 0
+      open_reports = (rows[0]?.n ?? 0) + held_pending
+    }
+    return reply.send({ role: access.role, permissions: access.permissions, open_reports, held_pending })
+  })
+
   // ── Dashboard stats ────────────────────────────────────────────────────────
 
   app.get('/stats', {
-    preHandler: [rateLimit, adminOnly],
+    preHandler: [rateLimit, requireStaff],
   }, async (_req, reply) => {
     const communityId = await getCommunityId()
 
-    const [usersRes, threadsRes, postsRes, catRes, presenceSockets,
+    const [members, usersRes, threadsRes, postsRes, catRes, presenceSockets,
            eventsRes, pollsRes, assetsRes, chatRes, dmRes] = await Promise.all([
+      // Les membres : la définition unique de l'instance (models/memberCount.ts).
+      countActiveMembers(),
+      // Les comptes : toutes les lignes de users, bots, bannis et inscriptions
+      // non validées comprises. Un chiffre technique, PAS le nombre de membres.
       db.query(`SELECT COUNT(*)::int AS total,
                        COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days')::int AS new_this_week
                 FROM users`),
@@ -243,16 +286,17 @@ export default async function adminRoutes(app: FastifyInstance) {
       // L'adresse ne sort PAS du tableau de bord : on veut y voir qui vient
       // d'arriver, pas son courriel. Ouvrir cette page en direct diffusait
       // les adresses des membres.
+      // Mêmes membres que le compteur (ni bot, ni banni).
       `SELECT u.username, u.avatar, cm.joined_at, cm.role
-       FROM community_members cm
-       JOIN users u ON u.id = cm.user_id
-       WHERE cm.community_id = $1
+       ${ACTIVE_MEMBERS_FROM}
+         AND cm.community_id = $1
        ORDER BY cm.joined_at DESC
        LIMIT 5`,
       [communityId]
     ).catch(() => ({ rows: [] as any[] }))
 
     return reply.send({
+      members,
       users:    usersRes.rows[0],
       threads:  threadsRes.rows[0],
       posts:    postsRes.rows[0],
@@ -272,7 +316,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   // ── Members ────────────────────────────────────────────────────────────────
 
   app.get('/members', {
-    preHandler: [rateLimit, adminOnly],
+    preHandler: [rateLimit, requireAnyPermission('moderate_members', 'ban_members', 'manage_grades')],
   }, async (_req, reply) => {
     const communityId = await getCommunityId()
 
@@ -294,6 +338,7 @@ export default async function adminRoutes(app: FastifyInstance) {
        JOIN users u ON u.id = cm.user_id
        LEFT JOIN community_grades cg ON cg.id = cm.grade_id
        WHERE cm.community_id = $1
+         AND u.is_system = false
          AND NOT EXISTS (
            SELECT 1 FROM community_bans cb
            WHERE cb.community_id = $1 AND cb.user_id = cm.user_id
@@ -343,6 +388,7 @@ export default async function adminRoutes(app: FastifyInstance) {
         `UPDATE community_members SET role = $1 WHERE community_id = $2 AND user_id = $3`,
         [body.role, communityId, userId]
       )
+      await invalidatePermissions(communityId)
       logAction(adminUser.userId, 'change_role', 'user', userId, check[0].username,
         { old_role: check[0].role, new_role: body.role })
     }
@@ -435,7 +481,7 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   // Kick member from community (not a full ban — can re-join if public)
   app.delete('/members/:userId', {
-    preHandler: [rateLimit, adminOnly],
+    preHandler: [rateLimit, requirePermission('moderate_members')],
   }, async (request, reply) => {
     const { userId }  = request.params as { userId: string }
     const communityId = await getCommunityId()
@@ -447,20 +493,107 @@ export default async function adminRoutes(app: FastifyInstance) {
     )
     if (!check[0]) return reply.code(404).send({ error: 'Member not found' })
     if (check[0].role === 'owner') return reply.code(403).send({ error: 'Cannot kick the owner' })
+    // Garde-fou de rang : sous le rang d'admin, on ne vise qu'un rang inférieur
+    if (!mayTarget(request.access, check[0].role)) {
+      return reply.code(403).send({ error: 'Cannot act on a member of equal or higher rank', code: 'RANK_TOO_LOW' })
+    }
 
     await db.query(
       `DELETE FROM community_members WHERE community_id = $1 AND user_id = $2`,
       [communityId, userId]
     )
+    await invalidatePermissions(communityId)
     logAction(adminUser.userId, 'kick_member', 'user', userId, check[0].username, {})
     return reply.send({ ok: true })
+  })
+
+  // ── Fiche membre (CDC modération, E3) ──────────────────────────────────────
+
+  const UuidParam = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+  // Tout ce que l'équipe sait d'un membre, en une fiche
+  app.get('/members/:userId/file', {
+    preHandler: [rateLimit, requireAnyPermission('moderate_members', 'ban_members')],
+  }, async (request, reply) => {
+    const { userId } = request.params as { userId: string }
+    if (!UuidParam.test(userId)) return reply.code(400).send({ error: 'Invalid user id', code: 'VALIDATION_ERROR' })
+    const file = await buildMemberFile((await getCommunityId())!, userId)
+    if (!file) return reply.code(404).send({ error: 'Member not found', code: 'NOT_FOUND' })
+    return reply.send(file)
+  })
+
+  // Note de l'équipe (D5 : jamais visible du membre, effacée avec son compte)
+  app.post('/members/:userId/notes', {
+    preHandler: [rateLimit, requirePermission('moderate_members'), validate({ body: z.object({ body: z.string().trim().min(1).max(2000) }) })],
+  }, async (request, reply) => {
+    const { userId } = request.params as { userId: string }
+    if (!UuidParam.test(userId)) return reply.code(400).send({ error: 'Invalid user id', code: 'VALIDATION_ERROR' })
+    const { body } = request.body as { body: string }
+    const { rows } = await db.query(
+      `INSERT INTO member_notes (community_id, user_id, author_id, body)
+       SELECT $1, u.id, $3, $4 FROM users u WHERE u.id = $2
+       RETURNING id, created_at::text AS created_at`,
+      [await getCommunityId(), userId, request.user!.userId, body]
+    )
+    if (!rows[0]) return reply.code(404).send({ error: 'Member not found', code: 'NOT_FOUND' })
+    return reply.code(201).send({ note: rows[0] })
+  })
+
+  // Supprimer une note : son auteur, ou un admin
+  app.delete('/members/:userId/notes/:noteId', {
+    preHandler: [rateLimit, requirePermission('moderate_members')],
+  }, async (request, reply) => {
+    const { userId, noteId } = request.params as { userId: string; noteId: string }
+    if (!UuidParam.test(userId) || !UuidParam.test(noteId)) return reply.code(400).send({ error: 'Invalid id', code: 'VALIDATION_ERROR' })
+    const isAdmin = (request.access?.rank ?? -1) >= rankOf('admin')
+    const { rowCount } = await db.query(
+      `DELETE FROM member_notes
+        WHERE id = $1 AND user_id = $2 AND community_id = $3 AND ($4 OR author_id = $5)`,
+      [noteId, userId, await getCommunityId(), isAdmin, request.user!.userId]
+    )
+    if (!rowCount) return reply.code(404).send({ error: 'Note not found', code: 'NOT_FOUND' })
+    return reply.send({ ok: true })
+  })
+
+  // Avertir : le membre reçoit le motif en notification, l'avertissement entre
+  // dans sa fiche (et compte pour l'escalade d'OctoGuard).
+  app.post('/members/:userId/warn', {
+    preHandler: [rateLimit, requirePermission('moderate_members'), validate({ body: z.object({ reason: z.string().trim().min(3).max(500) }) })],
+  }, async (request, reply) => {
+    const { userId } = request.params as { userId: string }
+    if (!UuidParam.test(userId)) return reply.code(400).send({ error: 'Invalid user id', code: 'VALIDATION_ERROR' })
+    const { reason } = request.body as { reason: string }
+    const communityId = await getCommunityId()
+    const { rows: target } = await db.query<{ role: string | null; username: string }>(
+      `SELECT cm.role, u.username FROM users u
+       LEFT JOIN community_members cm ON cm.user_id = u.id AND cm.community_id = $1
+       WHERE u.id = $2 AND u.is_system = false`, [communityId, userId])
+    if (!target[0]) return reply.code(404).send({ error: 'Member not found', code: 'NOT_FOUND' })
+    if (target[0].role === 'owner' || !mayTarget(request.access, target[0].role) || userId === request.user!.userId) {
+      return reply.code(403).send({ error: 'Cannot act on a member of equal or higher rank', code: 'RANK_TOO_LOW' })
+    }
+    const { rows } = await db.query(
+      `INSERT INTO octoguard_warns (user_id, reason, issued_by) VALUES ($1, $2, $3)
+       RETURNING id, created_at::text AS created_at`,
+      [userId, reason, request.user!.userId]
+    )
+    logAction(request.user!.userId, 'warn_user', 'user', userId, target[0].username, { reason })
+    try {
+      // warn_id : l'écran du membre y accroche « Contester » (OctoGuard lot 8)
+      await NotificationModel.create({ user_id: userId, type: 'moderation_warning', meta: { reason, warn_id: rows[0].id } })
+      if (io) {
+        const count = await NotificationModel.getUnreadCount(userId)
+        io.to(`user:${userId}`).emit('notification:new', { unreadCount: count })
+      }
+    } catch { /* la notification ne bloque jamais l'avertissement */ }
+    return reply.code(201).send({ warn: rows[0] })
   })
 
   // ── Bans ───────────────────────────────────────────────────────────────────
 
   // GET /api/v1/admin/bans — list banned users
   app.get('/bans', {
-    preHandler: [rateLimit, adminOnly],
+    preHandler: [rateLimit, requirePermission('ban_members')],
   }, async (_req, reply) => {
     const communityId = await getCommunityId()
     const { rows } = await db.query(
@@ -488,7 +621,7 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   // POST /api/v1/admin/members/:userId/ban — ban member (kick + blacklist)
   app.post('/members/:userId/ban', {
-    preHandler: [rateLimit, adminOnly],
+    preHandler: [rateLimit, requirePermission('ban_members')],
   }, async (request, reply) => {
     const { userId }  = request.params as { userId: string }
     const communityId = await getCommunityId()
@@ -506,6 +639,9 @@ export default async function adminRoutes(app: FastifyInstance) {
     )
     if (!userRows[0]) return reply.code(404).send({ error: 'User not found' })
     if (userRows[0].role === 'owner') return reply.code(403).send({ error: 'Cannot ban the owner' })
+    if (!mayTarget(request.access, userRows[0].role)) {
+      return reply.code(403).send({ error: 'Cannot act on a member of equal or higher rank', code: 'RANK_TOO_LOW' })
+    }
 
     const { username: targetUsername, email, registration_ip, last_seen_ip } = userRows[0]
 
@@ -513,7 +649,8 @@ export default async function adminRoutes(app: FastifyInstance) {
     await db.query(
       `INSERT INTO community_bans (community_id, user_id, banned_by, reason)
        VALUES ($1, $2, $3, $4)
-       ON CONFLICT (community_id, user_id) DO UPDATE SET reason = EXCLUDED.reason, banned_by = EXCLUDED.banned_by, banned_at = now()`,
+       ON CONFLICT (community_id, user_id) DO UPDATE SET reason = EXCLUDED.reason, banned_by = EXCLUDED.banned_by, banned_at = now(),
+         expires_at = NULL`,
       [communityId, userId, adminUser.userId, body.reason ?? null]
     )
     // Remove from members if still present
@@ -521,6 +658,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       `DELETE FROM community_members WHERE community_id = $1 AND user_id = $2`,
       [communityId, userId]
     )
+    await invalidatePermissions(communityId)
 
     // Optional: ban IP — jamais une adresse interne/loopback. On préfère
     // last_seen_ip (vraie adresse captée au login) à registration_ip, qui vaut
@@ -583,7 +721,7 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   // DELETE /api/v1/admin/members/:userId/ban — unban
   app.delete('/members/:userId/ban', {
-    preHandler: [rateLimit, adminOnly],
+    preHandler: [rateLimit, requirePermission('ban_members')],
   }, async (request, reply) => {
     const { userId }  = request.params as { userId: string }
     const communityId = await getCommunityId()
@@ -591,12 +729,15 @@ export default async function adminRoutes(app: FastifyInstance) {
 
     const { rows: targetRows } = await db.query(`SELECT username FROM users WHERE id = $1`, [userId])
 
-    await db.query(
-      `DELETE FROM community_bans WHERE community_id = $1 AND user_id = $2`,
+    const { rows: lifted } = await db.query(
+      `DELETE FROM community_bans WHERE community_id = $1 AND user_id = $2
+       RETURNING user_id, community_id, prev_role, prev_grade_id, prev_joined_at::text AS prev_joined_at`,
       [communityId, userId]
     )
-    // Remove Redis ban flag so user can log in again
+    // Efface la marque Redis (le membre peut se reconnecter) et, si c'était une
+    // exclusion temporaire, lui rend son rôle et son grade (lot 4a, D32)
     await redis.del(`banned:${userId}`)
+    if (lifted.length) await restoreAfterBan(lifted as never)
     logAction(adminUser.userId, 'unban_user', 'user', userId, targetRows[0]?.username ?? null, {})
     return reply.send({ ok: true })
   })
@@ -605,7 +746,7 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   // GET /api/v1/admin/ip-bans
   app.get('/ip-bans', {
-    preHandler: [rateLimit, adminOnly],
+    preHandler: [rateLimit, requirePermission('ban_members')],
   }, async (_req, reply) => {
     const { rows } = await db.query(
       `SELECT ib.ip, ib.reason, ib.banned_at, u.username AS banned_by_username
@@ -618,7 +759,7 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   // POST /api/v1/admin/ip-bans
   app.post('/ip-bans', {
-    preHandler: [rateLimit, adminOnly],
+    preHandler: [rateLimit, requirePermission('ban_members')],
   }, async (request, reply) => {
     const adminUser = (request as any).user as { userId: string }
     const body = (request.body ?? {}) as { ip: string; reason?: string }
@@ -639,7 +780,7 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   // DELETE /api/v1/admin/ip-bans/:ip
   app.delete('/ip-bans/:ip', {
-    preHandler: [rateLimit, adminOnly],
+    preHandler: [rateLimit, requirePermission('ban_members')],
   }, async (request, reply) => {
     const adminUser = (request as any).user as { userId: string }
     const { ip } = request.params as { ip: string }
@@ -652,7 +793,7 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   // GET /api/v1/admin/email-bans
   app.get('/email-bans', {
-    preHandler: [rateLimit, adminOnly],
+    preHandler: [rateLimit, requirePermission('ban_members')],
   }, async (_req, reply) => {
     const { rows } = await db.query(
       `SELECT eb.email, eb.reason, eb.banned_at, u.username AS banned_by_username
@@ -669,7 +810,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   // les comptes légitimes sur ce provider — c'est une erreur facile à faire
   // depuis le formulaire admin, on protège l'admin contre lui-même.
   app.post('/email-bans', {
-    preHandler: [rateLimit, adminOnly],
+    preHandler: [rateLimit, requirePermission('ban_members')],
   }, async (request, reply) => {
     const adminUser = (request as any).user as { userId: string }
     const body = (request.body ?? {}) as { email: string; reason?: string; force?: boolean }
@@ -719,7 +860,7 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   // DELETE /api/v1/admin/email-bans/:email
   app.delete('/email-bans/:email', {
-    preHandler: [rateLimit, adminOnly],
+    preHandler: [rateLimit, requirePermission('ban_members')],
   }, async (request, reply) => {
     const adminUser = (request as any).user as { userId: string }
     const { email } = request.params as { email: string }
@@ -732,7 +873,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   // ── Threads (moderation) ───────────────────────────────────────────────────
 
   app.get('/threads', {
-    preHandler: [rateLimit, adminOnly],
+    preHandler: [rateLimit, requirePermission('moderate_content')],
   }, async (request, reply) => {
     const communityId = await getCommunityId()
     const q = request.query as { limit?: string; offset?: string; category_id?: string }
@@ -779,7 +920,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   })
 
   app.patch('/threads/:id', {
-    preHandler: [rateLimit, adminOnly, validate({ body: PatchThreadBody })],
+    preHandler: [rateLimit, requirePermission('moderate_content'), validate({ body: PatchThreadBody })],
   }, async (request, reply) => {
     const { id } = request.params as { id: string }
     const body   = request.body as z.infer<typeof PatchThreadBody>
@@ -813,7 +954,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   })
 
   app.delete('/threads/:id', {
-    preHandler: [rateLimit, adminOnly],
+    preHandler: [rateLimit, requirePermission('moderate_content')],
   }, async (request, reply) => {
     const { id } = request.params as { id: string }
     const adminUser = (request as any).user as { userId: string }
@@ -830,7 +971,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   // ── Categories ────────────────────────────────────────────────────────────
 
   app.patch('/categories/:id', {
-    preHandler: [rateLimit, adminOnly, validate({ body: PatchCategoryBody })],
+    preHandler: [rateLimit, requirePermission('manage_categories'), validate({ body: PatchCategoryBody })],
   }, async (request, reply) => {
     const { id } = request.params as { id: string }
     const body   = request.body as z.infer<typeof PatchCategoryBody>
@@ -864,7 +1005,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   })
 
   app.delete('/categories/:id', {
-    preHandler: [rateLimit, adminOnly],
+    preHandler: [rateLimit, requirePermission('manage_categories')],
   }, async (request, reply) => {
     const { id } = request.params as { id: string }
 
@@ -1109,7 +1250,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   }, async (request, reply) => {
     if (!isSmtpConfigured()) {
       return reply.code(503).send({
-        error: 'SMTP non configuré. Ajoutez SMTP_HOST, SMTP_USER et SMTP_PASS dans le fichier .env.',
+        error: 'SMTP non configuré. Ajoute SMTP_HOST, SMTP_USER et SMTP_PASS dans le fichier .env.',
         code: 'SMTP_NOT_CONFIGURED',
         doc: 'https://github.com/Pokled/Nodyx/blob/main/docs/fr/EMAIL.md',
       })
@@ -1130,7 +1271,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       return reply.code(500).send({
         error: `Échec de l'envoi : ${message}`,
         code: 'SMTP_SEND_FAILED',
-        hint: `Vérifiez vos identifiants SMTP dans .env — voir docs/fr/EMAIL.md`,
+        hint: `Vérifie tes identifiants SMTP dans .env, voir docs/fr/EMAIL.md`,
       })
     }
   })
@@ -1154,15 +1295,17 @@ export default async function adminRoutes(app: FastifyInstance) {
       message: string; color?: string; expires_at?: string | null
     }
     if (!message?.trim()) return reply.code(400).send({ error: 'message requis' })
+    if (expires_at && Number.isNaN(Date.parse(expires_at))) {
+      return reply.code(400).send({ error: 'Invalid expiry date', code: 'ANNOUNCEMENT_BAD_EXPIRY' })
+    }
 
-    const validColors = ['indigo', 'amber', 'green', 'red', 'sky', 'rose']
-    const safeColor = validColors.includes(color ?? '') ? color : 'indigo'
+    const safeColor = ANNOUNCEMENT_COLORS.includes(color ?? '') ? color : 'indigo'
 
     const { rows } = await db.query(
       `INSERT INTO system_announcements (message, color, expires_at)
        VALUES ($1, $2, $3)
        RETURNING id, message, color, is_active, created_at, expires_at`,
-      [message.trim(), safeColor, expires_at ?? null]
+      [message.trim(), safeColor, expires_at ? new Date(expires_at).toISOString() : null]
     )
     logAction(adminUser.userId, 'create_announcement', 'announcement', rows[0].id,
       message.trim().slice(0, 60), { color: safeColor })
@@ -1173,19 +1316,31 @@ export default async function adminRoutes(app: FastifyInstance) {
   app.patch('/announcements/:id', { preHandler: [adminOnly] }, async (request, reply) => {
     const adminUser = (request as any).user as { userId: string }
     const { id } = request.params as { id: string }
-    const { is_active, message, color } = request.body as {
-      is_active?: boolean; message?: string; color?: string
+    const { is_active, message, color, expires_at } = (request.body ?? {}) as {
+      is_active?: boolean; message?: string; color?: string; expires_at?: string | null
+    }
+    if (!ANNOUNCEMENT_ID_RE.test(id)) return reply.code(400).send({ error: 'Invalid id', code: 'INVALID_REQUEST' })
+    if (message !== undefined && (typeof message !== 'string' || !message.trim())) {
+      return reply.code(400).send({ error: 'Message required', code: 'ANNOUNCEMENT_MESSAGE_REQUIRED' })
+    }
+    if (color !== undefined && !ANNOUNCEMENT_COLORS.includes(color)) {
+      return reply.code(400).send({ error: 'Invalid color', code: 'ANNOUNCEMENT_BAD_COLOR' })
+    }
+    // null efface l'expiration ; une date doit être lisible
+    if (expires_at !== undefined && expires_at !== null && (typeof expires_at !== 'string' || Number.isNaN(Date.parse(expires_at)))) {
+      return reply.code(400).send({ error: 'Invalid expiry date', code: 'ANNOUNCEMENT_BAD_EXPIRY' })
     }
 
     const sets: string[] = []
     const vals: unknown[] = []
     let idx = 1
 
-    if (is_active !== undefined) { sets.push(`is_active = $${idx++}`); vals.push(is_active) }
-    if (message)                 { sets.push(`message = $${idx++}`);   vals.push(message.trim()) }
-    if (color)                   { sets.push(`color = $${idx++}`);     vals.push(color) }
+    if (is_active !== undefined)  { sets.push(`is_active = $${idx++}`);  vals.push(is_active) }
+    if (message !== undefined)    { sets.push(`message = $${idx++}`);    vals.push(message.trim()) }
+    if (color !== undefined)      { sets.push(`color = $${idx++}`);      vals.push(color) }
+    if (expires_at !== undefined) { sets.push(`expires_at = $${idx++}`); vals.push(expires_at === null ? null : new Date(expires_at).toISOString()) }
 
-    if (sets.length === 0) return reply.code(400).send({ error: 'rien à mettre à jour' })
+    if (sets.length === 0) return reply.code(400).send({ error: 'rien à mettre à jour', code: 'INVALID_REQUEST' })
 
     vals.push(id)
     const { rows } = await db.query(
@@ -1196,7 +1351,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     )
     if (!rows[0]) return reply.code(404).send({ error: 'not found' })
     logAction(adminUser.userId, 'update_announcement', 'announcement', id,
-      rows[0].message?.slice(0, 60) ?? null, { is_active, color })
+      rows[0].message?.slice(0, 60) ?? null, { is_active, color, ...(message !== undefined ? { message_changed: true } : {}), ...(expires_at !== undefined ? { expires_at } : {}) })
     return reply.send({ announcement: rows[0] })
   })
 
@@ -1214,7 +1369,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   // ── Audit log ─────────────────────────────────────────────────────────────
 
   // GET /admin/audit-log
-  app.get('/audit-log', { preHandler: [adminOnly] }, async (request, reply) => {
+  app.get('/audit-log', { preHandler: [requirePermission('view_audit_log')] }, async (request, reply) => {
     const q = request.query as { limit?: string; offset?: string; action?: string; actor?: string }
     const limit  = Math.min(Number(q.limit  ?? 50), 200)
     const offset = Math.max(0, Math.min(Number(q.offset ?? 0), 100000))

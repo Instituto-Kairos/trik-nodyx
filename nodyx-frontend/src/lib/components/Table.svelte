@@ -3,7 +3,7 @@
 	import { jukeboxStore, initJukebox, cleanupJukebox, mountYTPlayer, jukeboxLoad } from '$lib/jukebox'
 	import VoiceEqualizer from '$lib/components/VoiceEqualizer.svelte'
 	import { goto } from '$app/navigation'
-	import { PUBLIC_API_URL } from '$env/static/public'
+	import { PUBLIC_API_URL } from '$app/env/public'
 	import { page } from '$app/state'
 	import type { Socket } from 'socket.io-client'
 	import { t } from '$lib/i18n'
@@ -440,7 +440,7 @@
 						<div class="flex flex-col items-center gap-2 w-full">
 							<span class="text-[13px] font-bold tracking-wide truncate max-w-[140px] transition-all duration-200"
 							      style="color:{isSpeaking || myActive ? '#e2e8f0' : '#6b7280'}; {isSpeaking || myActive ? 'text-shadow:0 0 14px rgba(167,139,250,0.55)' : ''}">
-								{p.isMe ? 'Vous' : p.username}
+								{p.isMe ? tFn('table.you') : p.username}
 							</span>
 
 							<!-- ÉQUALISEUR RÉEL — dégradé violet → cyan.

@@ -10,7 +10,7 @@
  */
 
 import { db } from '../../config/database'
-import type { AutomodRuleRow, AutomodRuleParams, Escalation, Duration } from './types'
+import type { AutomodRuleRow, AutomodRuleParams, Escalation, Duration, Surface, RuleConditions } from './types'
 
 let _rules:  AutomodRuleRow[] = []
 let _loaded: boolean          = false
@@ -29,12 +29,17 @@ export async function reloadRules(): Promise<void> {
     immunized_grade_ids:   string[]
     dry_run:               boolean
     enabled:               boolean
+    scopes:                string[] | null
+    preset_key:            string | null
+    customized:            boolean
+    conditions:            unknown
+    follow_ladder:         boolean
     created_at:            string
     updated_at:            string
   }>(`
     SELECT id, name, type, params, action, action_duration, escalation,
            immunized_role_types, immunized_grade_ids, dry_run, enabled,
-           created_at, updated_at
+           scopes, preset_key, customized, conditions, follow_ladder, created_at, updated_at
       FROM octoguard_automod_rules
      WHERE enabled = true
      ORDER BY created_at ASC
@@ -52,6 +57,11 @@ export async function reloadRules(): Promise<void> {
     immunized_grade_ids:   r.immunized_grade_ids  ?? [],
     dry_run:               !!r.dry_run,
     enabled:               !!r.enabled,
+    scopes:                (r.scopes?.length ? r.scopes : ['chat']) as Surface[],
+    preset_key:            r.preset_key ?? null,
+    customized:            !!r.customized,
+    conditions:            (r.conditions ?? {}) as RuleConditions,
+    follow_ladder:         r.follow_ladder === true,
     created_at:            r.created_at,
     updated_at:            r.updated_at,
   }))

@@ -1,32 +1,75 @@
 <script lang="ts">
+	import { placeChips } from '$lib/actions/placeChips'
 	import { t, locale } from '$lib/i18n';
-	import { datetime, calendarDay, eventStart } from '$lib/datetime';
 	const tFn = $derived($t);
-	// Antes daqui os formatos tinham o locale francês fixo: numa instância em
-	// português os nomes de mês e de dia da semana saíam em francês.
-	const dt = $derived($datetime);
 	import { enhance } from '$app/forms';
 	import { goto } from '$app/navigation';
 	import type { PageData, ActionData } from './$types';
+	import { viewerZone, showZone, zoneNote, organizerTime } from '$lib/eventTime';
+	import { page } from '$app/state';
+	import { jsonLdScript, absoluteUrl, plainText } from '$lib/jsonLd';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	const ev  = $derived(data.event);
+
+	// ── Référencement ──
+	const seoImage = $derived(absoluteUrl(page.url.origin, ev.cover_url) ?? `${page.url.origin}/og-image.jpg`);
+	const seoDescription = $derived(plainText(ev.description, 300) || ev.title);
+	const seoEvent = $derived.by(() => {
+		const online = !!ev.location && /^https?:\/\//.test(ev.location);
+		const place = ev.location && !online
+			? { '@type': 'Place', name: ev.location, address: ev.location,
+				...(ev.location_lat && ev.location_lng ? { geo: { '@type': 'GeoCoordinates', latitude: Number(ev.location_lat), longitude: Number(ev.location_lng) } } : {}) }
+			: null;
+		const virtual = online ? { '@type': 'VirtualLocation', url: ev.location } : null;
+		const price = ev.ticket_price === null || ev.ticket_price === undefined || ev.ticket_price === '' ? null : Number(ev.ticket_price);
+		return {
+			'@context': 'https://schema.org',
+			'@type': 'Event',
+			name: ev.title,
+			description: seoDescription,
+			startDate: ev.is_all_day ? String(ev.starts_at).slice(0, 10) : ev.starts_at,
+			...(ev.ends_at ? { endDate: ev.is_all_day ? String(ev.ends_at).slice(0, 10) : ev.ends_at } : {}),
+			eventStatus: ev.is_cancelled ? 'https://schema.org/EventCancelled' : 'https://schema.org/EventScheduled',
+			eventAttendanceMode: virtual && !place ? 'https://schema.org/OnlineEventAttendanceMode' : 'https://schema.org/OfflineEventAttendanceMode',
+			...(place || virtual ? { location: place ?? virtual } : {}),
+			image: [seoImage],
+			url: page.url.origin + page.url.pathname,
+			organizer: { '@type': 'Organization', name: page.data.communityName ?? 'Nodyx', url: page.url.origin },
+			...(price !== null ? { offers: { '@type': 'Offer', price, priceCurrency: ev.ticket_currency || 'EUR', availability: 'https://schema.org/InStock', url: ev.ticket_url || page.url.origin + page.url.pathname } } : {}),
+		};
+	});
 	const me  = $derived(data.event.my_rsvp ?? null);
 
 	let deleting = $state(false);
+	// Supprimer et annuler demandent une confirmation (un clic suffisait)
+	let confirmDelete = $state(false);
+	let confirmCancel = $state(false);
 
 	// ── Formatage dates ────────────────────────────────────────────────────────
-	// Dia inteiro é gravado em meia-noite UTC e lido em UTC, senão o dia 6
-	// aparece como dia 5 no Brasil. Ver `valueToIso` em $lib/dateMask.
-	const allDay     = $derived(!!ev.is_all_day);
-	const fDate      = (iso: string) => dt.dateLong(iso, allDay);
-	const fTime      = (iso: string) => dt.time(iso);
-	const fDateShort = (iso: string) => dt.dateShort(iso, allDay);
-	const dayNum     = (iso: string) => dt.dayNum(iso, allDay);
-	const monthShort = (iso: string) => dt.monthShort(iso, allDay);
-	// Já começou? `eventStart` põe o dia inteiro na meia-noite LOCAL do dia.
-	const started    = $derived(eventStart(ev) < new Date());
+	// Nodyx se plie à l'heure du LECTEUR (son navigateur, lib/eventTime). Une journée
+	// entière est une date (UTC, la même partout). Avant le chargement de la page, le
+	// lecteur est inconnu : heure de l'organisateur, et on le dit (zoneNote).
+	const zone = $derived({ timeZone: showZone(ev, $viewerZone) });
+	const note = $derived(zoneNote(ev, $viewerZone, $locale, ev.starts_at));
+	const orgStart = $derived(organizerTime(ev.starts_at, ev, $viewerZone, $locale));
+	function fDate(iso: string) {
+		return new Date(iso).toLocaleDateString($locale, {
+			weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', ...zone,
+		});
+	}
+	function fTime(iso: string) {
+		return new Date(iso).toLocaleTimeString($locale, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', ...zone });
+	}
+	function fDateShort(iso: string) {
+		return new Date(iso).toLocaleDateString($locale, { day: 'numeric', month: 'short', ...zone });
+	}
+	function dayNum(iso: string) { return new Date(iso).toLocaleDateString($locale, { day: 'numeric', ...zone }); }
+	function monthShort(iso: string) {
+		return new Date(iso).toLocaleDateString($locale, { month: 'short', ...zone }).toUpperCase();
+	}
+	function isPast(iso: string) { return new Date(iso) < new Date(); }
 
 	// ── OSM embed ─────────────────────────────────────────────────────────────
 	const osmEmbedUrl = $derived(() => {
@@ -45,10 +88,12 @@
 	});
 
 	// ── Prix ticket ───────────────────────────────────────────────────────────
-	function formatPrice(price: number | null, currency: string): string {
-		if (price === null || price === undefined) return 'Gratuit';
-		if (price === 0) return 'Gratuit';
-		return new Intl.NumberFormat($locale, { style: 'currency', currency }).format(price);
+	// Le prix peut arriver en texte (« 0.00 ») : comparé en nombre, sinon un billet
+	// gratuit s'affichait « 0,00 € »
+	const price = $derived(ev.ticket_price === null || ev.ticket_price === undefined || ev.ticket_price === '' ? null : Number(ev.ticket_price));
+	function formatPrice(p: number | null, currency: string): string {
+		if (p === null || !(p > 0)) return tFn('event.free');
+		return new Intl.NumberFormat($locale, { style: 'currency', currency }).format(p);
 	}
 
 	// ── Statut capacité ───────────────────────────────────────────────────────
@@ -57,12 +102,27 @@
 		return Math.min(100, Math.round((ev.going_count / ev.max_attendees) * 100));
 	});
 	const isFull = $derived(() => ev.max_attendees && ev.going_count >= ev.max_attendees);
+	// « Participants » : ceux qui viennent, puis ceux qui hésitent. Ceux qui ont répondu
+	// « Je ne peux pas » étaient comptés et listés avec eux.
+	const coming = $derived((data.attendees ?? []).filter((a: any) => a.status === 'going' || a.status === 'maybe')
+		.sort((a: any, b: any) => (a.status === b.status ? 0 : a.status === 'going' ? -1 : 1)));
 </script>
 
 <svelte:head>
-	<title>{ev.title}</title>
-	{#if ev.cover_url}
-		<meta property="og:image" content={ev.cover_url}/>
+	<!-- Référencement (revu le 14/11) : avant, le seul titre, et une image en chemin
+	     relatif (aucun aperçu ne l'affichait) ou AUCUNE image sans affiche. Un événement
+	     privé n'est jamais indexé ; un public porte ses données schema.org (Event). -->
+	<title>{ev.title} · {page.data.communityName ?? 'Nodyx'}</title>
+	<meta name="description" content={seoDescription} />
+	<meta property="og:title" content={ev.title} />
+	<meta property="og:description" content={seoDescription} />
+	<meta property="og:type" content="website" />
+	<meta property="og:image" content={seoImage} />
+	<meta name="twitter:image" content={seoImage} />
+	{#if !ev.is_public}
+		<meta name="robots" content="noindex, nofollow" />
+	{:else}
+		{@html jsonLdScript(seoEvent)}
 	{/if}
 </svelte:head>
 
@@ -87,7 +147,7 @@
 			<div class="flex items-center gap-2 mb-2 flex-wrap">
 				{#if ev.is_cancelled}
 					<span class="text-xs px-2.5 py-1 rounded-full bg-[color-mix(in_srgb,var(--nx-bad)_22%,transparent)] text-[var(--nx-bad)] border border-[color-mix(in_srgb,var(--nx-bad)_40%,transparent)] font-medium backdrop-blur-sm">{tFn('event.badge_cancelled')}</span>
-				{:else if !started}
+				{:else if !isPast(ev.starts_at)}
 					<span class="text-xs px-2.5 py-1 rounded-full bg-[color-mix(in_srgb,var(--nx-ok)_22%,transparent)] text-[var(--nx-ok)] border border-[color-mix(in_srgb,var(--nx-ok)_40%,transparent)] font-medium backdrop-blur-sm">{tFn('event.badge_upcoming')}</span>
 				{/if}
 				{#if !ev.is_public}
@@ -116,7 +176,7 @@
 			<div class="flex items-center gap-2 mb-1 flex-wrap">
 				{#if ev.is_cancelled}
 					<span class="text-xs px-2 py-0.5 rounded-full bg-[color-mix(in_srgb,var(--nx-bad)_15%,transparent)] text-[var(--nx-bad)] border border-[color-mix(in_srgb,var(--nx-bad)_40%,transparent)] font-medium">{tFn('event.badge_cancelled')}</span>
-				{:else if !started}
+				{:else if !isPast(ev.starts_at)}
 					<span class="text-xs px-2 py-0.5 rounded-full bg-[color-mix(in_srgb,var(--nx-ok)_15%,transparent)] text-[var(--nx-ok)] border border-[color-mix(in_srgb,var(--nx-ok)_40%,transparent)] font-medium">{tFn('event.badge_upcoming')}</span>
 				{/if}
 			</div>
@@ -148,7 +208,7 @@
 		{#if ev.description && ev.description !== '<p></p>'}
 			<div class="rounded-2xl border border-[var(--nx-border)] bg-[var(--nx-surface)]/50 p-6">
 				<h2 class="text-sm font-semibold text-[var(--nx-text-muted)] uppercase tracking-wider mb-4">Description</h2>
-				<div class="nodyx-prose">
+				<div class="nodyx-prose" use:placeChips={{ html: ev.description, token: data.token ?? null }}>
 					{@html ev.description}
 				</div>
 			</div>
@@ -208,19 +268,19 @@
 		{/if}
 
 		<!-- Participants -->
-		{#if ev.rsvp_enabled && data.attendees?.length > 0}
+		{#if ev.rsvp_enabled && coming.length > 0}
 			<div class="rounded-2xl border border-[var(--nx-border)] bg-[var(--nx-surface)]/50 px-5 py-5">
 				<h2 class="text-sm font-semibold text-[var(--nx-text-muted)] uppercase tracking-wider mb-4">
 					{tFn('event.participants')}
-					<span class="ml-2 px-2 py-0.5 rounded-full bg-[var(--nx-surface-raised)] text-[var(--nx-text)] text-xs font-normal">{data.attendees.length}</span>
+					<span class="ml-2 px-2 py-0.5 rounded-full bg-[var(--nx-surface-raised)] text-[var(--nx-text)] text-xs font-normal">{ev.going_count}</span>
 				</h2>
 				<div class="flex flex-wrap gap-2">
-					{#each data.attendees as a}
+					{#each coming as a (a.id)}
 						<a href="/users/{a.username}"
 						   class="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[var(--nx-surface-raised)] border border-[var(--nx-border)]/50 hover:border-[var(--nx-border)] transition-colors"
 						   title={a.username + ': ' + (a.status === 'going' ? tFn('event.rsvp_going_short') : a.status === 'maybe' ? tFn('event.rsvp_maybe_short') : tFn('event.rsvp_absent_short'))}>
-							{#if a.avatar_url}
-								<img src={a.avatar_url} alt="" class="w-5 h-5 rounded-full object-cover"/>
+							{#if a.avatar}
+								<img src={a.avatar} alt="" class="w-5 h-5 rounded-full object-cover"/>
 							{:else}
 								<div class="w-5 h-5 rounded-full bg-[var(--nx-border)] flex items-center justify-center text-[10px] text-[var(--nx-text-muted)] font-medium">
 									{a.username[0].toUpperCase()}
@@ -252,10 +312,14 @@
 					<p class="text-[var(--nx-text)] font-semibold text-sm capitalize">{fDate(ev.starts_at)}</p>
 					{#if !ev.is_all_day}
 						<p class="text-[var(--nx-ok)] text-sm mt-0.5">{fTime(ev.starts_at)}{ev.ends_at ? ` - ${fTime(ev.ends_at)}` : ''}</p>
+						<!-- De quelle heure il s'agit : celle de l'organisateur (avant le chargement), ou
+						     la tienne quand l'organisateur vit ailleurs, avec la sienne à côté -->
+						{#if note}<p class="ev-zone">{note.kind === 'organizer' ? tFn('event.tz_of', { zone: note.name ?? '' }) : tFn('event.tz_utc')}</p>
+						{:else if orgStart}<p class="ev-zone" title={tFn('event.tz_help', { mine: orgStart.mine, theirs: orgStart.name })}>{tFn('event.tz_yours', { zone: orgStart.mine })} · {tFn('event.tz_organizer', { time: orgStart.time, zone: orgStart.name })}</p>{/if}
 					{:else}
 						<p class="text-[var(--nx-ok)] text-xs mt-0.5">{tFn('event.all_day')}</p>
 					{/if}
-					{#if ev.ends_at && calendarDay(ev.starts_at, allDay) !== calendarDay(ev.ends_at, allDay)}
+					{#if ev.ends_at && fDateShort(ev.starts_at) !== fDateShort(ev.ends_at)}
 						<p class="text-[var(--nx-text-muted)] text-xs mt-1">→ {fDateShort(ev.ends_at)}</p>
 					{/if}
 				</div>
@@ -276,9 +340,9 @@
 				{#if ev.rsvp_enabled}
 					<div class="flex items-center gap-2.5 text-sm">
 						<svg class="w-4 h-4 text-[var(--nx-text-muted)] flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-							<path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0"/>
+							<path stroke-linecap="round" stroke-linejoin="round" d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path stroke-linecap="round" stroke-linejoin="round" d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
 						</svg>
-						<span class="text-[var(--nx-text-muted)]">{ev.going_count} participant{ev.going_count !== 1 ? 's' : ''}</span>
+						<span class="text-[var(--nx-text-muted)]">{tFn(new Intl.PluralRules($locale).select(ev.going_count) === 'one' ? 'event.going_one' : 'event.going_other', { count: String(ev.going_count) })}</span>
 						{#if ev.max_attendees}
 							<span class="text-[var(--nx-text-muted)] text-xs">/ {ev.max_attendees} max</span>
 						{/if}
@@ -291,7 +355,7 @@
 							     style="width: {capacityPct()}%"></div>
 						</div>
 						{#if isFull()}
-							<p class="text-xs text-[var(--nx-bad)] font-medium">Complet</p>
+							<p class="text-xs text-[var(--nx-bad)] font-medium">{tFn('event.full')}</p>
 						{/if}
 					{/if}
 				{/if}
@@ -299,28 +363,28 @@
 		</div>
 
 		<!-- Billetterie -->
-		{#if ev.ticket_price !== null && ev.ticket_price !== undefined}
+		{#if price !== null}
 			<div class="rounded-2xl border border-[var(--nx-border)] bg-[var(--nx-surface)]/60 px-5 py-4">
 				<div class="flex items-center justify-between mb-3">
-					<h3 class="text-sm font-semibold text-[var(--nx-text)]">Billet</h3>
-					<span class="text-xl font-bold {ev.ticket_price === 0 ? 'text-[var(--nx-ok)]' : 'text-[var(--nx-text)]'}">
-						{formatPrice(ev.ticket_price, ev.ticket_currency ?? 'EUR')}
+					<h3 class="text-sm font-semibold text-[var(--nx-text)]">{tFn('event.ticket')}</h3>
+					<span class="text-xl font-bold {!(price > 0) ? 'text-[var(--nx-ok)]' : 'text-[var(--nx-text)]'}">
+						{formatPrice(price, ev.ticket_currency ?? 'EUR')}
 					</span>
 				</div>
-				{#if ev.ticket_url && ev.ticket_price > 0 && !started && !ev.is_cancelled}
+				{#if ev.ticket_url && /^https:\/\//i.test(ev.ticket_url) && price !== null && price > 0 && !isPast(ev.starts_at) && !ev.is_cancelled}
 					<a href={ev.ticket_url} target="_blank" rel="noopener"
 					   class="block w-full py-3 text-center rounded-xl bg-emerald-600 hover:bg-emerald-500
 					          text-white font-semibold text-sm transition-colors">
 						{tFn('event.buy_ticket')} →
 					</a>
-				{:else if ev.ticket_price === 0}
+				{:else if !(price > 0)}
 					<p class="text-xs text-[var(--nx-text-muted)]">{tFn('event.free_entry')}</p>
 				{/if}
 			</div>
 		{/if}
 
 		<!-- RSVP -->
-		{#if ev.rsvp_enabled && !started && !ev.is_cancelled && data.token}
+		{#if ev.rsvp_enabled && !isPast(ev.starts_at) && !ev.is_cancelled && data.token}
 			<div class="rounded-2xl border border-[var(--nx-border)] bg-[var(--nx-surface)]/60 px-5 py-4">
 				<h3 class="text-sm font-semibold text-[var(--nx-text)] mb-3">{tFn('event.my_rsvp')}</h3>
 
@@ -374,12 +438,22 @@
 				</a>
 
 				{#if !ev.is_cancelled}
-					<form method="POST" action="?/cancelEvent" use:enhance class="w-full">
-						<button type="submit"
-						        class="w-full py-2 rounded-xl border border-[color-mix(in_srgb,var(--nx-warn)_40%,transparent)] text-[var(--nx-warn)] hover:bg-amber-950/30 text-xs transition-colors">
+					{#if !confirmCancel}
+						<button type="button" onclick={() => { confirmCancel = true; confirmDelete = false; }}
+						        class="w-full py-2 rounded-xl border border-[color-mix(in_srgb,var(--nx-warn)_40%,transparent)] text-[var(--nx-warn)] hover:bg-[color-mix(in_srgb,var(--nx-warn)_10%,transparent)] text-xs transition-colors">
 							{tFn('event.cancel_event')}
 						</button>
-					</form>
+					{:else}
+						<div class="ev-confirm" role="alertdialog" aria-labelledby="ev-cancel-q">
+							<p id="ev-cancel-q">{tFn('event.confirm_cancel_q')}</p>
+							<div class="ev-confirm-acts">
+								<form method="POST" action="?/cancelEvent" use:enhance={() => async ({ update }) => { confirmCancel = false; await update(); }}>
+									<button type="submit" class="ev-btn warn">{tFn('event.confirm_cancel_yes')}</button>
+								</form>
+								<button type="button" class="ev-btn" onclick={() => (confirmCancel = false)}>{tFn('event.confirm_keep')}</button>
+							</div>
+						</div>
+					{/if}
 				{:else}
 					<form method="POST" action="?/uncancelEvent" use:enhance class="w-full">
 						<button type="submit"
@@ -389,15 +463,25 @@
 					</form>
 				{/if}
 
-				<form method="POST" action="?/deleteEvent" use:enhance={() => {
-					deleting = true;
-					return async () => { await goto('/calendar'); };
-				}} class="w-full">
-					<button type="submit" disabled={deleting}
-					        class="w-full py-2 rounded-xl border border-[color-mix(in_srgb,var(--nx-bad)_40%,transparent)] text-[var(--nx-bad)] hover:bg-red-950/30 text-xs transition-colors disabled:opacity-50">
-						{deleting ? tFn('event.deleting') : tFn('event.delete_forever')}
+				{#if !confirmDelete}
+					<button type="button" onclick={() => { confirmDelete = true; confirmCancel = false; }}
+					        class="w-full py-2 rounded-xl border border-[color-mix(in_srgb,var(--nx-bad)_40%,transparent)] text-[var(--nx-bad)] hover:bg-[color-mix(in_srgb,var(--nx-bad)_10%,transparent)] text-xs transition-colors">
+						{tFn('event.delete_forever')}
 					</button>
-				</form>
+				{:else}
+					<div class="ev-confirm bad" role="alertdialog" aria-labelledby="ev-delete-q">
+						<p id="ev-delete-q">{tFn('event.confirm_delete_q')}</p>
+						<div class="ev-confirm-acts">
+							<form method="POST" action="?/deleteEvent" use:enhance={() => {
+								deleting = true;
+								return async () => { await goto('/calendar'); };
+							}}>
+								<button type="submit" disabled={deleting} class="ev-btn bad">{deleting ? tFn('event.deleting') : tFn('event.confirm_delete_yes')}</button>
+							</form>
+							<button type="button" class="ev-btn" onclick={() => (confirmDelete = false)}>{tFn('event.confirm_keep')}</button>
+						</div>
+					</div>
+				{/if}
 			</div>
 		{/if}
 
@@ -405,3 +489,15 @@
 </div>
 
 </div>
+
+<style>
+	.ev-zone { margin: 3px 0 0; font-size: 11.5px; line-height: 1.35; color: var(--nx-text-muted); }
+	.ev-confirm { border-radius: 12px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--nx-warn) 40%, transparent); background: color-mix(in srgb, var(--nx-warn) 8%, transparent); }
+	.ev-confirm.bad { border-color: color-mix(in srgb, var(--nx-bad) 40%, transparent); background: color-mix(in srgb, var(--nx-bad) 8%, transparent); }
+	.ev-confirm p { margin: 0 0 8px; font-size: 12.5px; color: var(--nx-text); }
+	.ev-confirm-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+	.ev-btn { border-radius: 8px; padding: 5px 10px; font-size: 12px; font-weight: 600; border: 1px solid color-mix(in srgb, var(--nx-text) 15%, transparent); background: var(--nx-surface); color: var(--nx-text); cursor: pointer; }
+	.ev-btn.warn { background: var(--nx-warn); border-color: transparent; color: #16120c; }
+	.ev-btn.bad { background: var(--nx-bad); border-color: transparent; color: #fff; }
+	.ev-btn:disabled { opacity: .6; cursor: default; }
+</style>

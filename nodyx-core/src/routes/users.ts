@@ -15,6 +15,9 @@ import {
 } from '../models/usernameHistory'
 import { signToken, trackSession, invalidateUserSessions, SESSION_TTL } from './auth'
 import { toPublicUser, toSelfUser } from '../utils/publicUser'
+import { getAccess } from '../services/permissions'
+import { moderateText, blockedBody } from '../services/octoguard/moderate'
+import { fileAutoReport } from '../services/octoguard/autoReport'
 import { db, redis } from '../config/database'
 import { io } from '../socket/io'
 import { scanBuffer } from '../services/fileScanner'
@@ -169,6 +172,9 @@ export default async function userRoutes(app: FastifyInstance) {
     let role: string | null = null
     let grade: { name: string; color: string } | null = null
     let is_banned = false
+    // Droits effectifs (socle du rôle + grade) : l'interface n'affiche que les
+    // actions permises, le serveur les revérifie de toute façon.
+    let permissions: string[] = []
     if (communityId) {
       const [memberRows, banRows] = await Promise.all([
         db.query<{ role: string; grade_name: string | null; grade_color: string | null }>(
@@ -184,6 +190,7 @@ export default async function userRoutes(app: FastifyInstance) {
         ),
       ])
       role      = memberRows.rows[0]?.role ?? null
+      permissions = (await getAccess(communityId, request.user!.userId)).permissions
       grade     = memberRows.rows[0]?.grade_name ? { name: memberRows.rows[0].grade_name, color: memberRows.rows[0].grade_color! } : null
       is_banned = banRows.rows.length > 0
     }
@@ -191,7 +198,7 @@ export default async function userRoutes(app: FastifyInstance) {
     // Narrador do trik: libera o botão de texto ofuscado no editor (o core
     // valida de novo ao salvar, ver scrambleGate em routes/forums.ts).
     const is_narrator = (await getNarratorUserId()) === user.id
-    return reply.send({ user: { ...toSelfUser(user), role, grade, is_banned, is_narrator } })
+    return reply.send({ user: { ...toSelfUser(user), role, grade, is_banned, permissions, is_narrator } })
   })
 
   // PATCH /api/v1/users/me/linked-instances — ajouter ou retirer une instance liée
@@ -297,6 +304,10 @@ export default async function userRoutes(app: FastifyInstance) {
       if (!fc.ok) return reply.code(422).send({ error: fc.reason, code: 'CONTENT_BLOCKED' })
     }
 
+    // OctoGuard (profils) : pseudo affiché, bio, statut, lieu
+    const ogProfile = await moderateText(request.user!.userId, 'profile', textsToCheck)
+    if (ogProfile.blocked) return reply.code(422).send(blockedBody(ogProfile))
+
     const fields: string[] = []
     const values: unknown[] = []
     let i = 1
@@ -380,6 +391,8 @@ export default async function userRoutes(app: FastifyInstance) {
       })
     }
 
+    // Dossier OctoGuard (cran « signaler ») APRÈS l'enregistrement : la photo montre le profil tel que publié
+    if (ogProfile.report) void fileAutoReport({ targetType: 'user', targetId: request.user!.userId, ruleName: ogProfile.report.rule_name, excerpt: ogProfile.report.excerpt })
     return reply.send({ profile: rows[0] })
   })
 
@@ -576,7 +589,7 @@ export default async function userRoutes(app: FastifyInstance) {
       if (count === 1) await redis.expire(key, 600)
       if (count > 10) {
         reply.header('Retry-After', String(await redis.ttl(key)))
-        return reply.code(429).send({ error: 'Trop d\'uploads. Réessayez dans quelques minutes.', code: 'RATE_LIMITED' })
+        return reply.code(429).send({ error: 'Trop d\'uploads. Réessaie dans quelques minutes.', code: 'RATE_LIMITED' })
       }
     }],
   }, async (request, reply) => {

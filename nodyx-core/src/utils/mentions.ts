@@ -7,6 +7,11 @@ import { db } from '../config/database'
 // message en dizaines de milliers de requêtes (trouvé en audit le 16/09).
 const MAX_MENTIONS_PER_MESSAGE = 20
 
+const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+// Une marque de mention liée à la PERSONNE (SPECS/NODYX_MENTIONS_CDC.md, D49) :
+// <span data-mention="u:<id>">@Léa</span>. Le texte du span n'est qu'un repli lisible.
+const MARK_RE = new RegExp(`<span\\b[^>]*\\bdata-mention="u:(${UUID})"[^>]*>[^<]*</span>`, 'gi')
+
 // Alias de personagem (módulo trik): `@[Nome do Personagem](username)`.
 // O nome visível é só um rótulo — o alvo notificado é SEMPRE o username entre
 // parênteses, porque um alias é um apelido DO JOGADOR, não uma entidade
@@ -29,18 +34,30 @@ const MAX_MENTIONS_PER_MESSAGE = 20
 const ALIAS_MENTION_RE = /@\[[^\]\n]{1,100}\]\(([^)\n]{2,50})\)/g
 const MENTION_RE       = /@([\w\-]{2,30})/g
 
-// Scan HTML content for @username mentions, return matching user IDs.
-// `communityId` scope la résolution aux membres de CETTE communauté : un
-// utilisateur exclu/banni ne doit pas pouvoir être notifié via une mention.
+/**
+ * Les personnes mentionnées dans un contenu, parmi les membres de la communauté :
+ * les marques liées à la personne (la forme actuelle) ET l'ancien « @pseudo » écrit en
+ * texte (les messages d'avant, et ceux tapés sans choisir dans la liste). Le texte d'une
+ * marque n'est PAS relu comme « @pseudo » (il porte le nom affiché, pas le pseudo).
+ * Plafond de MAX_MENTIONS_PER_MESSAGE sur l'ensemble des deux formes.
+ * `communityId` scope la résolution aux membres de CETTE communauté : un
+ * utilisateur exclu/banni ne doit pas pouvoir être notifié via une mention.
+ */
 export async function resolveMentions(html: string, communityId: string): Promise<string[]> {
+  const ids = new Set<string>()
   const usernames = new Set<string>()
   const characterImages = new Set<string>()
+  const total = () => ids.size + usernames.size + characterImages.size
+  const text = (html ?? '').replace(MARK_RE, (_m, id: string) => {
+    if (total() < MAX_MENTIONS_PER_MESSAGE) ids.add(id.toLowerCase())
+    return ' '
+  })
   let match: RegExpExecArray | null
 
   // Aliases primeiro: numa cena de RPG é a forma dominante, e o plafond deve
   // proteger o caminho mais usado em vez de sobrar para ele.
   ALIAS_MENTION_RE.lastIndex = 0
-  while ((match = ALIAS_MENTION_RE.exec(html)) !== null) {
+  while ((match = ALIAS_MENTION_RE.exec(text)) !== null) {
     // `@[Nome](npcc:<thread id>)` aponta um tópico de NPCC e
     // `@[Nome](npc:<image id>)` uma imagem do álbum NPC da galeria, não um
     // jogador : ninguém a notificar (cf GET /trik/npcc e /trik/npc).
@@ -50,15 +67,15 @@ export async function resolveMentions(html: string, communityId: string): Promis
     if (match[1].startsWith('pc:')) {
       const id = match[1].slice(3)
       if (/^[0-9a-f-]{36}$/i.test(id)) characterImages.add(id)
-      if (usernames.size + characterImages.size >= MAX_MENTIONS_PER_MESSAGE) break
+      if (total() >= MAX_MENTIONS_PER_MESSAGE) break
       continue
     }
     usernames.add(match[1].toLowerCase())
-    if (usernames.size >= MAX_MENTIONS_PER_MESSAGE) break
+    if (total() >= MAX_MENTIONS_PER_MESSAGE) break
   }
 
   MENTION_RE.lastIndex = 0
-  while (usernames.size + characterImages.size < MAX_MENTIONS_PER_MESSAGE && (match = MENTION_RE.exec(html)) !== null) {
+  while (total() < MAX_MENTIONS_PER_MESSAGE && (match = MENTION_RE.exec(text)) !== null) {
     usernames.add(match[1].toLowerCase())
   }
 
@@ -80,7 +97,7 @@ export async function resolveMentions(html: string, communityId: string): Promis
     for (const r of rows) usernames.add(r.username.toLowerCase())
   }
 
-  if (usernames.size === 0) return []
+  if (ids.size === 0 && usernames.size === 0) return []
 
   // Exclut les utilisateurs système (bots OctoGuard et autres) :
   // un user humain ne peut pas mentionner un bot pour le notifier.
@@ -91,8 +108,9 @@ export async function resolveMentions(html: string, communityId: string): Promis
      JOIN community_members cm ON cm.user_id = u.id
      WHERE u.is_system = false AND cm.community_id = $2
        AND (LOWER(u.username) = ANY($1)
+            OR u.id = ANY($3::uuid[])
             OR u.id IN (SELECT h.user_id FROM username_history h WHERE LOWER(h.old_username) = ANY($1)))`,
-    [Array.from(usernames), communityId]
+    [Array.from(usernames), communityId, Array.from(ids)]
   )
   return rows.map(r => r.id)
 }
