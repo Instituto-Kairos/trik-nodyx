@@ -252,7 +252,7 @@
 	// L'équipe change les tags d'un sujet sur place (l'auteur, lui, ne change que le titre)
 	// La liste des tags n'est chargée qu'à l'ouverture du panneau : un lecteur
 	// ordinaire (la quasi-totalité des vues) ne paie pas cette requête.
-	let allTags     = $state<Array<{ id: string; name: string; slug: string; color: string }> | null>(null);
+	let allTags     = $state<Array<{ id: string; name: string; slug: string; color: string; category_ids?: string[] }> | null>(null);
 	let tagsEditing = $state(false);
 	let tagsPick    = $state<string[]>([]);
 	let tagsBusy    = $state(false);
@@ -263,7 +263,9 @@
 		if (allTags) return;
 		try {
 			const res = await apiFetch(fetch, '/instance/tags');
-			allTags = res.ok ? ((await res.json()).tags ?? []) : [];
+			// Só as que valem na categoria do tópico (migration 144)
+			allTags = res.ok ? ((await res.json()).tags ?? []).filter((t: { category_ids?: string[] }) =>
+				!t.category_ids?.length || t.category_ids.includes(thread.category_id)) : [];
 			if (!res.ok) tagsError = tFn('forum.tags_err_load');
 		} catch { allTags = []; tagsError = tFn('forum.tags_err_load'); }
 	}

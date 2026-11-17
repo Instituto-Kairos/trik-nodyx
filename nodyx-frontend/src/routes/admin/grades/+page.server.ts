@@ -43,6 +43,7 @@ export const actions: Actions = {
 			permissions: permissionsFrom(form),
 			hoist:     form.get('hoist') === 'on',
 			is_secret: form.get('is_secret') === 'on',
+			mentionable: form.get('mentionable') === 'on',
 		}
 		const res = await apiFetch(fetch, `/communities/${slug}/grades`, {
 			method: 'POST',
@@ -64,6 +65,7 @@ export const actions: Actions = {
 			permissions: permissionsFrom(form),
 			hoist:     form.get('hoist') === 'on',
 			is_secret: form.get('is_secret') === 'on',
+			mentionable: form.get('mentionable') === 'on',
 		}
 		const res = await apiFetch(fetch, `/communities/${slug}/grades/${gradeId}`, {
 			method: 'PATCH',

@@ -66,6 +66,15 @@ vi.mock('../services/trik/xp/levelup', () => ({
   submitLevelup: vi.fn(),
 }))
 
+vi.mock('../models/trikSheet', () => ({
+  getCharacterSheet: vi.fn(),
+}))
+
+vi.mock('../models/trikMastery', async (orig) => ({
+  ...(await orig<typeof import('../models/trikMastery')>()),
+  listCatalog: vi.fn().mockResolvedValue([]),
+}))
+
 vi.mock('../services/trik/bot', () => ({
   postTrikMessage:    vi.fn().mockResolvedValue(undefined),
   getTrikBotProfile:  vi.fn(),
@@ -78,6 +87,7 @@ import { submitPlaquinha } from '../services/trik/registro/plaquinha'
 import { submitLevelup } from '../services/trik/xp/levelup'
 import { postTrikMessage, getTrikBotProfile } from '../services/trik/bot'
 import { trikPlayerPlugin } from '../routes/trik'
+import { getCharacterSheet } from '../models/trikSheet'
 
 function character(overrides: Record<string, unknown> = {}) {
   return {
@@ -485,6 +495,36 @@ describe('trikPlayerPlugin', () => {
         channelId: CHANNEL_UUID, characterId: CHARACTER_UUID, deltas,
         preferenceId: '33333333-3333-4333-8333-333333333333',
       })
+    })
+  })
+
+  // Ficha só leitura do jogador dono (página /personagens/:id).
+  describe('GET /characters/:id/sheet', () => {
+    const url = `/api/v1/trik/characters/${CHARACTER_UUID}/sheet`
+    const get = () => app.inject({ method: 'GET', url, headers: { Authorization: 'Bearer ada' } })
+
+    it('retorna 401 sem token', async () => {
+      const res = await app.inject({ method: 'GET', url })
+      expect(res.statusCode).toBe(401)
+    })
+
+    it('devolve a ficha pro dono do personagem', async () => {
+      vi.mocked(getCharacterSheet).mockResolvedValue({ character: { id: CHARACTER_UUID, name: 'Jahzell', player_id: USER_ID } } as any)
+      const res = await get()
+      expect(res.statusCode).toBe(200)
+      expect(res.json().sheet.character.name).toBe('Jahzell')
+    })
+
+    it('404 pro personagem de outro jogador (não vaza que existe)', async () => {
+      vi.mocked(getCharacterSheet).mockResolvedValue({ character: { id: CHARACTER_UUID, name: 'X', player_id: 'outro' } } as any)
+      const res = await get()
+      expect(res.statusCode).toBe(404)
+      expect(res.json().sheet).toBeUndefined()
+    })
+
+    it('404 pro personagem inexistente', async () => {
+      vi.mocked(getCharacterSheet).mockResolvedValue(null)
+      expect((await get()).statusCode).toBe(404)
     })
   })
 })

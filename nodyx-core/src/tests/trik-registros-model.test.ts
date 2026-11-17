@@ -9,8 +9,8 @@ vi.mock('../config/database', () => ({ db: mockDb }))
 
 import { listRegistros, updateRegistroPlayer, updateRegistroCharacter } from '../models/trik'
 
-const PLAYER_A = { id: 'pa', username: 'orfeus', name: 'Orfeu', pronouns: 'ele/dele', birth_date: '2000-09-22', permit_active: false, created_at: '2026-09-20T15:52:26.657Z' }
-const PLAYER_B = { id: 'pb', username: 'sem_personagem', name: 'Ninguém', pronouns: null, birth_date: null, permit_active: false, created_at: '2026-09-19T10:00:00.000Z' }
+const PLAYER_A = { id: 'pa', username: 'orfeus', name: 'Orfeu', pronouns: 'ele/dele', birth_date: '2000-09-22', permit_type: null, permit_multiparo: false, created_at: '2026-09-20T15:52:26.657Z' }
+const PLAYER_B = { id: 'pb', username: 'sem_personagem', name: 'Ninguém', pronouns: null, birth_date: null, permit_type: null, permit_multiparo: false, created_at: '2026-09-19T10:00:00.000Z' }
 
 const character = (over: Record<string, unknown>) => ({
   id: 'c1', player_id: 'pa', name: 'Jahzell', pronouns: null, birth_date: '1999-09-03',
@@ -127,25 +127,25 @@ describe('updateRegistroPlayer', () => {
     const { sql, params } = lastQuery()
     expect(sql).toContain('SET name = $2, pronouns = $3, updated_at = NOW()')
     expect(sql).not.toContain('birth_date =')
-    expect(sql).not.toContain('permit_active =')
+    expect(sql).not.toContain('permit_type =')
     expect(params).toEqual(['pa', 'Orfeu Novo', null])
   })
 
   it('grava o Passe sozinho (o botão da tela manda só isso)', async () => {
-    mockDb.query.mockResolvedValueOnce({ rows: [{ ...PLAYER_A, permit_active: true }] })
+    mockDb.query.mockResolvedValueOnce({ rows: [{ ...PLAYER_A, permit_type: 'trabalhista_2' }] })
 
-    const player = await updateRegistroPlayer('pa', { permitActive: true })
+    const player = await updateRegistroPlayer('pa', { permitType: 'trabalhista_2' })
 
     const { sql, params } = lastQuery()
-    expect(sql).toContain('SET permit_active = $2')
-    expect(params).toEqual(['pa', true])
-    expect(player!.permit_active).toBe(true)
+    expect(sql).toContain('SET permit_type = $2')
+    expect(params).toEqual(['pa', 'trabalhista_2'])
+    expect(player!.permit_type).toBe('trabalhista_2')
   })
 
   it('ignora chave fora da whitelist', async () => {
     mockDb.query.mockResolvedValueOnce({ rows: [PLAYER_A] })
 
-    await updateRegistroPlayer('pa', { name: 'X', id: 'outro', permit_active: true } as never)
+    await updateRegistroPlayer('pa', { name: 'X', id: 'outro', permit_type: 'estudantil' } as never)
 
     const { set, params } = lastQuery()
     expect(set).toBe('SET name = $2, updated_at = NOW()')

@@ -29,6 +29,19 @@
 		await tick(); // deixa o input hidden refletir a nova ordem antes de enviar
 		reorderForm?.requestSubmit();
 	}
+	// Tags restritas a categorias (migration 144): a árvore achatada, com recuo.
+	type CatNode = { id: string; name: string; children?: CatNode[] };
+	const flatCats = $derived.by(() => {
+		const out: Array<{ id: string; name: string; depth: number }> = [];
+		const walk = (nodes: CatNode[], depth: number) => {
+			for (const n of nodes) { out.push({ id: n.id, name: n.name, depth }); walk(n.children ?? [], depth + 1); }
+		};
+		walk((data.categories ?? []) as CatNode[], 0);
+		return out;
+	});
+	const catName = (id: string) => flatCats.find(c => c.id === id)?.name ?? '?';
+	let newCats  = $state<string[]>([]);
+	let editCats = $state<string[]>([]);
 
 	// Panneau « créer » : ouvert d'office tant que la liste est vide, puis libre.
 	// Jamais open={expression} : Svelte 5 la réévalue à chaque frappe dans le
@@ -47,6 +60,7 @@
 	let editBusy  = $state(false);
 	function startEdit(tag: { id: string; name: string; color: string }) {
 		editId = tag.id; editName = tag.name; editColor = tag.color;
+		editCats = [...((tag as { category_ids?: string[] }).category_ids ?? [])];
 		queueMicrotask(() => (document.getElementById(`tag-edit-name-${tag.id}`) as HTMLInputElement | null)?.select());
 	}
 	function stopEdit() { editId = null; }
@@ -86,6 +100,24 @@
 		return list;
 	});
 </script>
+
+{#snippet catPicker(sel: string[], set: (v: string[]) => void, key: string)}
+	{#if flatCats.length}
+		<fieldset class="tag-cats">
+			<legend class="adm-label">{tFn('atags.categories')} <span class="tag-cats-state">— {sel.length ? sel.length : tFn('atags.categories_all')}</span></legend>
+			<div class="tag-cats-list">
+				{#each flatCats as c (c.id)}
+					<label class="tag-cat" style="padding-left:{c.depth * 1}rem">
+						<input type="checkbox" name="category_ids" value={c.id} checked={sel.includes(c.id)} id="tc-{key}-{c.id}"
+							onchange={(e) => set((e.currentTarget as HTMLInputElement).checked ? [...sel, c.id] : sel.filter(x => x !== c.id))} />
+						{c.name}
+					</label>
+				{/each}
+			</div>
+			<p class="tag-edit-help">{tFn('atags.categories_help')}</p>
+		</fieldset>
+	{/if}
+{/snippet}
 
 <svelte:head><title>{tFn('atags.page_title')}</title></svelte:head>
 
@@ -167,7 +199,7 @@
 			use:enhance={() => async ({ result, update }) => {
 				// Sans remise à zéro du formulaire : elle effaçait la couleur (noir, aperçu vide)
 				await update({ reset: false });
-				if (result.type === 'success') newName = '';
+				if (result.type === 'success') { newName = ''; newCats = []; }
 			}}>
 			<div class="adm-form-grid">
 				<label class="adm-field">
@@ -189,6 +221,7 @@
 					</div>
 				</div>
 			</div>
+			{@render catPicker(newCats, (v) => (newCats = v), 'new')}
 			<div>
 				<button type="submit" class="adm-btn adm-btn--primary">{tFn('atags.create')}</button>
 			</div>
@@ -259,6 +292,7 @@
 											<button type="button" class="adm-btn adm-btn--sm" onclick={stopEdit}>{tFn('common.cancel')}</button>
 											<button type="submit" class="adm-btn adm-btn--sm adm-btn--primary" disabled={editBusy || !editName.trim()}>{tFn('common.save')}</button>
 										</div>
+										<div class="tag-edit-cats">{@render catPicker(editCats, (v) => (editCats = v), tag.id)}</div>
 										<p class="tag-edit-help">{tFn('atags.edit_help')}</p>
 										{#if editError}<p class="adm-notice adm-notice--bad tag-edit-err" role="alert">{editError}</p>{/if}
 									</form>
@@ -266,6 +300,9 @@
 							{:else}
 							<td class="adm-cell-main">
 								<span class="adm-swatch" style={tagBadgeStyle(tag.color)}>{tag.name}</span>
+								{#if tag.category_ids?.length}
+									<span class="tag-only">{tFn('atags.categories_only', { list: tag.category_ids.map(catName).join(', ') })}</span>
+								{/if}
 							</td>
 							<td class="adm-muted" data-label={tFn('atags.col_slug')}><code>{tag.slug}</code></td>
 							<td class="adm-num" data-label={tFn('atags.col_threads')}>{#if tag.thread_count}{tag.thread_count}{:else}<span class="adm-muted" title={tFn('atags.unused_tip')}>{tFn('atags.unused')}</span>{/if}</td>
@@ -308,6 +345,12 @@
 <style>
 	.tag-grip { cursor: grab; user-select: none; touch-action: none; padding: 0 0.25rem; font-size: 1.1rem; color: var(--nx-text-muted); }
 	.tag-grip:active { cursor: grabbing; }
+	.tag-cats { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.375rem; }
+	.tag-cats-state { font-weight: 400; color: var(--nx-text-muted); }
+	.tag-cats-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 12rem), 1fr)); gap: 0.25rem 0.75rem; max-height: 14rem; overflow-y: auto; }
+	.tag-cat { display: flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; cursor: pointer; }
+	.tag-edit-cats { grid-column: 1 / -1; }
+	.tag-only { display: block; margin-top: 0.25rem; font-size: 0.72rem; color: var(--nx-text-muted); }
 	.tag-row-actions { display: inline-flex; gap: 0.375rem; justify-content: flex-end; flex-wrap: wrap; }
 	.tag-editing td { background: color-mix(in srgb, var(--nx-header-accent) 5%, var(--nx-surface)) !important; }
 	.tag-edit { display: grid; grid-template-columns: minmax(10rem, 1.4fr) auto minmax(8rem, 1fr) auto; gap: 0.75rem 1rem; align-items: end; text-align: left; }

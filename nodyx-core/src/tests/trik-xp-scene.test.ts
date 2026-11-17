@@ -134,6 +134,23 @@ describe('processScenePost — marca ❌ nas cenas recusadas', () => {
     expect(reactSceneCounted).toHaveBeenCalledWith(POST_ID)
   })
 
+  it('passe do jogador multiplica o xp da cena (Estudantil + Multíparo = 2.1x)', async () => {
+    vi.mocked(isXpThread).mockResolvedValue(true)
+    vi.mocked(getPlayer).mockResolvedValue({ id: 'player-1', permit_type: 'estudantil', permit_multiparo: true } as any)
+    vi.mocked(getCharactersWithTemplate).mockResolvedValue([
+      { id: 'char-1', name: 'Fulano', template_name: 'Fulano', template_signature: 'sig' } as any,
+    ])
+    vi.mocked(applySceneAward).mockResolvedValue({ leveledUp: false })
+
+    const result = await processScenePost({
+      threadId: THREAD_ID, postId: POST_ID, authorUserId: USER_ID,
+      content: scene('Fulano - "sig"', 'x'.repeat(600)),
+    })
+    // 12 × 1.5 × 1.4 = 25.2 → 25
+    expect(result).toEqual({ awarded: true, characterId: 'char-1', xp: 25, leveledUp: false })
+    expect(applySceneAward).toHaveBeenCalledWith('char-1', POST_ID, 25, undefined, {})
+  })
+
   it('rejeição: não reage com a marca de "contou xp"', async () => {
     vi.mocked(isXpThread).mockResolvedValue(true)
     const result = await processScenePost({ threadId: THREAD_ID, postId: POST_ID, authorUserId: USER_ID, content: '<p>sem estrutura</p>' })

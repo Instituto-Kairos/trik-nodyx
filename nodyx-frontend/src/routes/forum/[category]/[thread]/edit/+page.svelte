@@ -9,10 +9,12 @@
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
-	type Tag = { id: string; name: string; color: string };
+	type Tag = { id: string; name: string; color: string; category_ids?: string[] };
 
 	const thread   = $derived(data.thread);
-	const tags     = $derived((data.tags ?? []) as Tag[]);
+	// Só as tags que valem na categoria do tópico (migration 144)
+	const tags     = $derived(((data.tags ?? []) as Tag[]).filter(t =>
+		!t.category_ids?.length || t.category_ids.includes(data.thread.category_id)));
 	const backHref = $derived(`/forum/${thread.category_slug ?? thread.category_id}/${thread.slug ?? thread.id}`);
 
 	// Estado inicial vindo do tópico ; editado localmente até o envio.

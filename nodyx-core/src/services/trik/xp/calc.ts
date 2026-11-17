@@ -11,6 +11,31 @@ export function calculateSceneXp(cenaLength: number): number {
   return Math.round(cenaLength > 800 ? base * 1.8 : base)
 }
 
+// ─── Passes do jogador (trik_026) ───────────────────────────────────────────
+// Valem pro xp de cena de todos os personagens do jogador (normal e
+// #treino/#aula — AU e narrador não). Um passe "de tipo" no máximo; o
+// Multíparo acumula multiplicando em cima (1.5 × 1.4 = 2.1).
+
+export const PERMIT_TYPES = ['estudantil', 'trabalhista_1', 'trabalhista_2'] as const
+export type PermitType = typeof PERMIT_TYPES[number]
+
+export const PERMIT_MULTIPLIER: Record<PermitType, number> = {
+  estudantil:    1.5,
+  trabalhista_1: 1.6,
+  trabalhista_2: 1.75,
+}
+export const MULTIPARO_MULTIPLIER = 1.4
+
+export function permitMultiplier(p: { permit_type: string | null; permit_multiparo: boolean }): number {
+  const base = PERMIT_MULTIPLIER[p.permit_type as PermitType] ?? 1
+  return base * (p.permit_multiparo ? MULTIPARO_MULTIPLIER : 1)
+}
+
+/** xp de cena já calculado × multiplicador do passe, arredondado. */
+export function applyPermit(xp: number, multiplier: number): number {
+  return multiplier === 1 ? xp : Math.round(xp * multiplier)
+}
+
 // ─── Cenas de treino/estudo (#treino / #aula) ───────────────────────────────
 // Ver plans/TRIK-PROJECT.md, seção 4 (fluxo do "DETECTAR BUFFS"). Sem
 // bônus de aptidão/#com ainda — isso é Fase 3.

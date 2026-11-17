@@ -37,16 +37,18 @@ const G = '33333333-3333-4333-8333-333333333333'
 const ids = (n: number) => Array.from({ length: n }, (_, i) => ({ user_id: `${String(i).padStart(8, '0')}-0000-4000-8000-000000000000` }))
 let members: Record<string, { user_id: string }[]> = {}
 let threshold: string | null = null
+let gradeMentionable = true
 
 beforeEach(() => {
-  vi.clearAllMocks(); access.team = new Set([MOD]); threshold = null
+  vi.clearAllMocks(); access.team = new Set([MOD]); threshold = null; gradeMentionable = true
   members = { all: [{ user_id: ME }, { user_id: A }, { user_id: B }, { user_id: MOD }], team: [{ user_id: MOD }], grade: [{ user_id: A }] }
   process.env.NODYX_COMMUNITY_SLUG = 'banc'
   vi.mocked(redis.exists).mockImplementation((k: string) => Promise.resolve(k.startsWith('banned:') ? 0 : 1) as any)
   vi.mocked(db.query).mockImplementation(async (sql: any, params?: any) => {
     const s = String(sql)
     if (s.includes("key = 'mentions_group_confirm'")) return { rows: threshold ? [{ value: threshold }] : [] } as any
-    if (s.includes('FROM community_grades WHERE community_id = $1 AND id = ANY')) return { rows: [{ id: G, name: 'Organisation' }] } as any
+    if (s.includes('AND mentionable = false')) return { rows: gradeMentionable ? [] : [{ id: G }] } as any
+    if (s.includes('FROM community_grades WHERE community_id = $1 AND id = ANY')) return { rows: [{ id: G, name: 'Organisation', mentionable: gradeMentionable }] } as any
     if (s.includes('mg.grade_id = $2')) return { rows: members.grade } as any
     if (s.includes("e.value = 'true'::jsonb")) return { rows: members.team } as any
     if (s.includes("moderate_members' = 'true'")) return { rows: members.team } as any
@@ -78,6 +80,19 @@ describe('D52 : qui peut utiliser quel groupe', () => {
     const [team, grade] = await describeGroups('c1', MOD, ['equipe', `grade:${G}`])
     expect(team).toMatchObject({ forbidden: false, count: 0 })   // MOD est seul dans l'équipe : lui-même ne compte pas
     expect(grade).toMatchObject({ forbidden: false, count: 1, label: 'Organisation' })
+  })
+})
+
+describe('trik_027 : cargo não marcável', () => {
+  it('membro não marca: forbidden e ninguém é avisado', async () => {
+    gradeMentionable = false
+    expect((await describeGroups('c1', ME, [`grade:${G}`]))[0]).toMatchObject({ forbidden: true, count: 0 })
+    expect((await groupRecipients(mark(`grade:${G}`), 'c1', ME)).size).toBe(0)
+  })
+  it('a equipe continua marcando', async () => {
+    gradeMentionable = false
+    expect((await describeGroups('c1', MOD, [`grade:${G}`]))[0]).toMatchObject({ forbidden: false, count: 1 })
+    expect((await groupRecipients(mark(`grade:${G}`), 'c1', MOD)).size).toBe(1)
   })
 })
 

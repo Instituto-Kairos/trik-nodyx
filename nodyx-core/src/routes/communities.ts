@@ -24,6 +24,7 @@ const GradeBody = z.object({
   permissions: GradePermissionsBody.optional(),
   hoist:       z.boolean().optional(), // separado no painel de membros
   is_secret:   z.boolean().optional(), // secreto: nunca aparece ao público
+  mentionable: z.boolean().optional(),
 })
 
 // Permissions qu'un grade accorde (clés à true reconnues)

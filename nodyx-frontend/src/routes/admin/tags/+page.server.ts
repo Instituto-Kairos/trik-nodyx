@@ -3,9 +3,13 @@ import type { PageServerLoad, Actions } from './$types';
 import { apiFetch } from '$lib/api';
 
 export const load: PageServerLoad = async ({ fetch }) => {
-	const res  = await apiFetch(fetch, '/instance/tags');
+	const [res, catRes] = await Promise.all([
+		apiFetch(fetch, '/instance/tags'),
+		apiFetch(fetch, '/instance/categories'),
+	]);
 	const { tags } = res.ok ? await res.json() : { tags: [] };
-	return { tags };
+	const { categories } = catRes.ok ? await catRes.json() : { categories: [] };
+	return { tags, categories };
 };
 
 // Les refus du serveur, ramenés à une phrase traduite (l'écran affiche la clé)
@@ -13,6 +17,7 @@ const ERRORS: Record<string, string> = {
 	TAG_NAME_TAKEN:    'atags.err_taken',
 	TAG_NAME_TOO_LONG: 'atags.err_too_long',
 	TAG_BAD_COLOR:     'atags.err_color',
+	TAG_BAD_CATEGORIES: 'atags.err_categories',
 	BAD_REQUEST:       'atags.err_name',
 	NOT_FOUND:         'atags.err_gone',
 	FORBIDDEN:         'atags.err_forbidden',
@@ -28,13 +33,14 @@ export const actions: Actions = {
 		const form  = await request.formData();
 		const name  = String(form.get('name') ?? '').trim();
 		const color = String(form.get('color') ?? '') || '#6366f1';
+		const category_ids = (form.getAll('category_ids') as string[]).filter(Boolean);
 
 		if (!name) return fail(400, { errorKey: 'atags.err_name' });
 
 		const res = await apiFetch(fetch, '/instance/tags', {
 			method: 'POST',
 			headers: { Authorization: `Bearer ${token}` },
-			body: JSON.stringify({ name, color }),
+			body: JSON.stringify({ name, color, ...(category_ids.length ? { category_ids } : {}) }),
 		});
 		if (!res.ok) return fail(res.status, { errorKey: await errorKey(res, 'atags.err_create') });
 	},
@@ -45,13 +51,14 @@ export const actions: Actions = {
 		const id    = String(form.get('tag_id') ?? '');
 		const name  = String(form.get('name') ?? '').trim();
 		const color = String(form.get('color') ?? '');
+		const category_ids = (form.getAll('category_ids') as string[]).filter(Boolean);
 
 		if (!name) return fail(400, { editId: id, errorKey: 'atags.err_name' });
 
 		const res = await apiFetch(fetch, `/instance/tags/${encodeURIComponent(id)}`, {
 			method: 'PATCH',
 			headers: { Authorization: `Bearer ${token}` },
-			body: JSON.stringify({ name, ...(color ? { color } : {}) }),
+			body: JSON.stringify({ name, ...(color ? { color } : {}), category_ids }),
 		});
 		if (!res.ok) return fail(res.status, { editId: id, errorKey: await errorKey(res, 'atags.err_update') });
 		return { updated: id };

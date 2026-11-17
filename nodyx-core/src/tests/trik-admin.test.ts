@@ -154,13 +154,13 @@ describe('trikAdminPlugin', () => {
     })
 
     it('grava o Passe e devolve o jogador', async () => {
-      vi.mocked(TrikModel.updateRegistroPlayer).mockResolvedValue({ id: PLAYER_ID, permit_active: true } as any)
+      vi.mocked(TrikModel.updateRegistroPlayer).mockResolvedValue({ id: PLAYER_ID, permit_type: 'estudantil', permit_multiparo: true } as any)
 
-      const res = await patch(PATCH_PLAYER, { permitActive: true })
+      const res = await patch(PATCH_PLAYER, { permitType: 'estudantil', permitMultiparo: true })
 
       expect(res.statusCode).toBe(200)
-      expect(TrikModel.updateRegistroPlayer).toHaveBeenCalledWith(PLAYER_ID, { permitActive: true })
-      expect(res.json().player.permit_active).toBe(true)
+      expect(TrikModel.updateRegistroPlayer).toHaveBeenCalledWith(PLAYER_ID, { permitType: 'estudantil', permitMultiparo: true })
+      expect(res.json().player.permit_type).toBe('estudantil')
     })
 
     it('retorna 404 quando o jogador não existe', async () => {

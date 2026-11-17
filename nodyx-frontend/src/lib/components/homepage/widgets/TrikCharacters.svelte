@@ -119,6 +119,7 @@
 						{/if}
 					</div>
 				{/if}
+				<a class="tc-sheet" href="/personagens/{char.id}" title="Ver a ficha de {char.name}">ver ficha →</a>
 			</div>
 
 			{#if (showPending && (char.requirements.length > 0 || char.unspent.length > 0)) || (showMastery && groups.length > 0)}
@@ -205,6 +206,8 @@
 	.tc-name-text { font-weight: 700; font-size: 1.05em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.tc-level { font-size: .75em; color: var(--text-secondary, #6b7280); white-space: nowrap; }
 	.tc-count { font-size: .7em; color: var(--text-secondary, #6b7280); }
+	.tc-sheet { align-self: flex-end; font-size: .8em; color: var(--primary, #a78bfa); text-decoration: none; }
+	.tc-sheet:hover { text-decoration: underline; }
 	.tc-nav {
 		width: 1.8em; height: 1.8em; line-height: 1; font-size: 1.2em; cursor: pointer;
 		background: transparent; color: inherit;

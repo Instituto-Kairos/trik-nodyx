@@ -24,6 +24,9 @@ import { publishGrades } from '../services/presenceGrades'
 
 const TAG_COLOR_RE = /^#[0-9a-f]{6}$/i
 const TAG_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const isIdList = (v: unknown): v is string[] =>
+  Array.isArray(v) && v.length <= 200 && v.every((c) => typeof c === 'string' && TAG_ID_RE.test(c))
+
 const isUniqueViolation = (err: unknown) => (err as { code?: string } | null)?.code === '23505'
 import { io } from '../socket/io'
 import { buildIceServers } from '../socket/voice'
@@ -481,7 +484,10 @@ export default async function instanceRoutes(app: FastifyInstance) {
       return reply.code(403).send({ error: 'Forbidden', code: 'FORBIDDEN' })
     }
 
-    const { name, color } = request.body as { name?: string; color?: string }
+    const { name, color, category_ids } = request.body as { name?: string; color?: string; category_ids?: unknown }
+    if (category_ids !== undefined && !isIdList(category_ids)) {
+      return reply.code(400).send({ error: 'category_ids must be a list of ids', code: 'TAG_BAD_CATEGORIES' })
+    }
     if (!name?.trim()) {
       return reply.code(400).send({ error: 'Name required', code: 'BAD_REQUEST' })
     }
@@ -496,6 +502,13 @@ export default async function instanceRoutes(app: FastifyInstance) {
         name:         name.trim(),
         color:        color ?? '#6366f1',
       })
+      if (Array.isArray(category_ids) && category_ids.length) {
+        if (!(await TagModel.setCategories(tag.id, communityId, category_ids as string[]))) {
+          await TagModel.remove(tag.id)
+          return reply.code(400).send({ error: 'Unknown category', code: 'TAG_BAD_CATEGORIES' })
+        }
+        tag.category_ids = category_ids as string[]
+      }
       return reply.code(201).send({ tag })
     } catch (err) {
       if (isUniqueViolation(err)) return reply.code(409).send({ error: 'A tag with this name already exists', code: 'TAG_NAME_TAKEN' })
@@ -516,8 +529,11 @@ export default async function instanceRoutes(app: FastifyInstance) {
 
     const { id } = request.params as { id: string }
     if (!TAG_ID_RE.test(id)) return reply.code(400).send({ error: 'Invalid id', code: 'INVALID_REQUEST' })
-    const { name, color } = (request.body ?? {}) as { name?: unknown; color?: unknown }
-    if (name === undefined && color === undefined) return reply.code(400).send({ error: 'Nothing to update', code: 'INVALID_REQUEST' })
+    const { name, color, category_ids } = (request.body ?? {}) as { name?: unknown; color?: unknown; category_ids?: unknown }
+    if (category_ids !== undefined && !isIdList(category_ids)) {
+      return reply.code(400).send({ error: 'category_ids must be a list of ids', code: 'TAG_BAD_CATEGORIES' })
+    }
+    if (name === undefined && color === undefined && category_ids === undefined) return reply.code(400).send({ error: 'Nothing to update', code: 'INVALID_REQUEST' })
     if (name !== undefined && (typeof name !== 'string' || !name.trim())) return reply.code(400).send({ error: 'Name required', code: 'BAD_REQUEST' })
     if (typeof name === 'string' && name.trim().length > 50) return reply.code(400).send({ error: 'Name too long', code: 'TAG_NAME_TOO_LONG' })
     if (color !== undefined && (typeof color !== 'string' || !TAG_COLOR_RE.test(color))) {
@@ -525,11 +541,19 @@ export default async function instanceRoutes(app: FastifyInstance) {
     }
 
     try {
-      const tag = await TagModel.update(id, communityId, {
-        ...(typeof name === 'string' ? { name: name.trim() } : {}),
-        ...(typeof color === 'string' ? { color } : {}),
-      })
+      let tag = (name !== undefined || color !== undefined)
+        ? await TagModel.update(id, communityId, {
+            ...(typeof name === 'string' ? { name: name.trim() } : {}),
+            ...(typeof color === 'string' ? { color } : {}),
+          })
+        : (await TagModel.listByCommunity(communityId)).find((t) => t.id === id) ?? null
       if (!tag) return reply.code(404).send({ error: 'Tag not found', code: 'NOT_FOUND' })
+      if (Array.isArray(category_ids)) {
+        if (!(await TagModel.setCategories(tag.id, communityId, category_ids as string[]))) {
+          return reply.code(400).send({ error: 'Unknown category', code: 'TAG_BAD_CATEGORIES' })
+        }
+        tag = { ...tag, category_ids: category_ids as string[] }
+      }
       return reply.send({ tag })
     } catch (err) {
       if (isUniqueViolation(err)) return reply.code(409).send({ error: 'A tag with this name already exists', code: 'TAG_NAME_TAKEN' })

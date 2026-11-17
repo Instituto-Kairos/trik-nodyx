@@ -19,6 +19,8 @@ export interface Grade {
   hoist:        boolean
   /** Secreto: jamais mostrado ao público (posts, perfil, painel, lista de membros) */
   is_secret:    boolean
+  /** trik_027: @cargo avisa os portadores (false = só a equipe marca). */
+  mentionable:  boolean
   created_at:   Date
 }
 
@@ -55,11 +57,12 @@ export async function create(data: {
   permissions?: Partial<Permissions>
   hoist?:       boolean
   is_secret?:   boolean
+  mentionable?: boolean
 }): Promise<Grade> {
   const secret = data.is_secret ?? false
   const { rows } = await db.query<Grade>(
-    `INSERT INTO community_grades (community_id, name, color, position, permissions, hoist, is_secret)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO community_grades (community_id, name, color, position, permissions, hoist, is_secret, mentionable)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING *`,
     [
       data.community_id,
@@ -69,6 +72,7 @@ export async function create(data: {
       JSON.stringify(data.permissions ?? {}),
       secret ? false : (data.hoist ?? false), // secreto nunca é separado no painel
       secret,
+      data.mentionable ?? true,
     ]
   )
   return rows[0]
@@ -81,6 +85,7 @@ export async function update(id: string, communityId: string, data: {
   permissions?: Partial<Permissions>
   hoist?:       boolean
   is_secret?:   boolean
+  mentionable?: boolean
 }): Promise<Grade | null> {
   const fields: string[] = []
   const values: unknown[] = []
@@ -98,6 +103,7 @@ export async function update(id: string, communityId: string, data: {
   } else if (data.hoist !== undefined) {
     fields.push(`hoist = ($${i++} AND NOT is_secret)`); values.push(data.hoist)
   }
+  if (data.mentionable !== undefined) { fields.push(`mentionable = $${i++}`); values.push(data.mentionable) }
 
   if (fields.length === 0) return findById(id)
 

@@ -13,7 +13,8 @@ export interface TrikPlayer {
   name:          string
   pronouns:      string | null
   birth_date:    string | null
-  permit_active: boolean
+  permit_type:      string | null
+  permit_multiparo: boolean
   created_at:    string
   updated_at:    string
 }
@@ -638,7 +639,8 @@ export interface TrikRegistroPlayer {
   name:          string
   pronouns:      string | null
   birth_date:    string | null
-  permit_active: boolean
+  permit_type:      string | null
+  permit_multiparo: boolean
   created_at:    string
   characters:    TrikRegistroCharacter[]
 }
@@ -843,7 +845,7 @@ export async function listRegistros(): Promise<TrikRegistroPlayer[]> {
   const [players, characters] = await Promise.all([
     db.query(
       `SELECT p.id, u.username, p.name, p.pronouns, p.birth_date::text AS birth_date,
-              p.permit_active, p.created_at
+              p.permit_type, p.permit_multiparo, p.created_at
          FROM trik_players p
          JOIN users u ON u.id = p.id
         ORDER BY p.created_at DESC`
@@ -891,8 +893,8 @@ export async function listRegistros(): Promise<TrikRegistroPlayer[]> {
 // O /registro é um mutirão de uma vez só: o jogador preenche o modal e o que
 // entrou, entrou (upsertPlayer é DO NOTHING, createCharacter é INSERT). Sem
 // isto, um erro de digitação num nome ou num link de ficha só se conserta no
-// banco. O PATCH é parcial de propósito — o botão de passe manda só
-// `permitActive`, o formulário manda o resto.
+// banco. O PATCH é parcial de propósito — o seletor de passe manda só
+// `permitType`/`permitMultiparo`, o formulário manda o resto.
 //
 // Deliberadamente FORA daqui: conduct_*/principles_* e os campos de
 // progressão. Esses pontos têm orçamento (points_*/spent_* em
@@ -906,7 +908,8 @@ const REGISTRO_PLAYER_COLUMNS = {
   name:         'name',
   pronouns:     'pronouns',
   birthDate:    'birth_date',
-  permitActive: 'permit_active',
+  permitType:      'permit_type',
+  permitMultiparo: 'permit_multiparo',
 } as const
 
 const REGISTRO_CHARACTER_COLUMNS = {
@@ -951,7 +954,7 @@ export async function updateRegistroPlayer(
         SET ${sets.join(', ')}, updated_at = NOW()
       WHERE id = $1
       RETURNING id, name, pronouns, birth_date::text AS birth_date,
-                permit_active, created_at, updated_at`,
+                permit_type, permit_multiparo, created_at, updated_at`,
     [id, ...values],
   )
   return rows[0] ?? null

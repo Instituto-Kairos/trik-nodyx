@@ -41,13 +41,27 @@
 		['secundario', 'Secundário (−1)']
 	] as const;
 
+	const PERMIT_OPTIONS = [
+		['', 'sem passe'],
+		['estudantil', 'Estudantil (1.5x)'],
+		['trabalhista_1', 'Trabalhista 1 (1.6x)'],
+		['trabalhista_2', 'Trabalhista 2 (1.75x)']
+	] as const;
+
+	function permitLabel(p: { permit_type: string | null; permit_multiparo: boolean }): string {
+		const tipo = PERMIT_OPTIONS.find(([v]) => v === (p.permit_type ?? ''))?.[1] ?? 'sem passe';
+		if (!p.permit_multiparo) return tipo;
+		return p.permit_type ? `${tipo} + Multíparo (1.4x)` : 'Multíparo (1.4x)';
+	}
+
 	interface Player {
 		id: string;
 		username: string;
 		name: string;
 		pronouns: string | null;
 		birth_date: string | null;
-		permit_active: boolean;
+		permit_type: string | null;
+		permit_multiparo: boolean;
 		created_at: string;
 		characters: Character[];
 	}
@@ -332,16 +346,31 @@ Isso apaga também o nível, o XP, as maestrias e os bônus dele. Não dá para 
 							</td>
 							<td class="px-4 py-2 text-gray-500">{fmtDateTime(player.created_at)}</td>
 							<td class="px-4 py-2">
-								<form method="POST" action="?/togglePermit" use:enhance>
+								<!-- Salva ao mudar: um passe de tipo (ou nenhum) + Multíparo. -->
+								<form method="POST" action="?/savePermit" use:enhance class="flex items-center gap-2">
 									<input type="hidden" name="playerId" value={player.id} />
-									<input type="hidden" name="active" value={player.permit_active ? '0' : '1'} />
-									<button
-										type="submit"
-										title="Clique para {player.permit_active ? 'desativar' : 'ativar'} o passe de {player.name}"
-										class="rounded-lg border px-2.5 py-1 text-xs transition-colors {player.permit_active
-											? 'border-emerald-700 bg-emerald-900/30 text-emerald-300 hover:border-emerald-500'
-											: 'border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-300'}"
-									>{player.permit_active ? 'ativo' : 'inativo'}</button>
+									<select
+										name="permitType"
+										value={player.permit_type ?? ''}
+										onchange={(e) => e.currentTarget.form?.requestSubmit()}
+										title="Passe de {player.name}"
+										class="rounded-lg border border-gray-700 bg-gray-900 px-2 py-1 text-xs {player.permit_type
+											? 'text-emerald-300'
+											: 'text-gray-500'}"
+									>
+										{#each PERMIT_OPTIONS as [value, label]}
+											<option {value}>{label}</option>
+										{/each}
+									</select>
+									<label class="flex items-center gap-1 text-xs {player.permit_multiparo ? 'text-emerald-300' : 'text-gray-500'}" title="Passe Multíparo (1.4x, acumula)">
+										<input
+											type="checkbox"
+											name="multiparo"
+											checked={player.permit_multiparo}
+											onchange={(e) => e.currentTarget.form?.requestSubmit()}
+										/>
+										Multíparo
+									</label>
 								</form>
 							</td>
 							<td class="px-4 py-2">
@@ -371,7 +400,7 @@ Isso apaga também o nível, o XP, as maestrias e os bônus dele. Não dá para 
 										<dd class="text-gray-300">{player.name} <span class="text-gray-600">@{player.username}</span></dd>
 										<dd class="text-gray-400">Pronomes: {player.pronouns ?? '—'}</dd>
 										<dd class="text-gray-400">Nascimento: {fmtDate(player.birth_date)}</dd>
-										<dd class="text-gray-400">Passe: {player.permit_active ? 'ativo' : 'inativo'}</dd>
+										<dd class="text-gray-400">Passe: {permitLabel(player)}</dd>
 										<dd class="text-gray-500">
 											Personagens: {player.characters.map((c) => c.name).join(', ') || '—'}
 										</dd>

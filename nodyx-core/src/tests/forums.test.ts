@@ -70,6 +70,7 @@ vi.mock('../models/tag', () => ({
   getTagsForThread:   vi.fn().mockResolvedValue([]),
   getTagsForThreads:  vi.fn().mockResolvedValue(new Map()),
   setThreadTags:      vi.fn().mockResolvedValue(undefined),
+  tagsNotAllowedIn:   vi.fn().mockResolvedValue([]),
 }))
 
 // Módulo RPG (trik, Fase 2) — só o que routes/forums.ts usa diretamente de
@@ -887,6 +888,12 @@ describe('PATCH /api/v1/forums/threads/:id : l’équipe change les tags d’un 
     for (const bad of ['tuto', [42], ['pas-un-uuid'], { a: 1 }]) {
       expect((await patch(bad)).json().code).toBe('THREAD_TAGS_INVALID')
     }
+    expect((await TagModel()).setThreadTags).not.toHaveBeenCalled()
+  })
+  it('uma tag restrita a outra categoria : 400, nada é gravado', async () => {
+    vi.mocked((await TagModel()).tagsNotAllowedIn).mockResolvedValueOnce([T2])
+    const res = await patch([T1, T2])
+    expect(res.json().code).toBe('THREAD_TAG_NOT_IN_CATEGORY')
     expect((await TagModel()).setThreadTags).not.toHaveBeenCalled()
   })
   it('l’auteur sans droit de modération ne change pas les tags', async () => {

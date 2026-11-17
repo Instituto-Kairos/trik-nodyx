@@ -41,13 +41,15 @@ async function patch(
 // personagem são tabelas separadas na tela, então cada formulário é um PATCH
 // só — nada de salvar metade de um registro se o outro lado falhar.
 export const actions: Actions = {
-	togglePermit: async ({ request, fetch, cookies }) => {
+	savePermit: async ({ request, fetch, cookies }) => {
 		const form = await request.formData();
 		const playerId = String(form.get('playerId') ?? '');
 		if (!playerId) return fail(400, { error: 'Jogador inválido' });
 
+		const permitType = String(form.get('permitType') ?? '');
 		const error = await patch(fetch, cookies.get('token'), `/admin/trik/registros/players/${playerId}`, {
-			permitActive: form.get('active') === '1'
+			permitType: permitType || null,
+			permitMultiparo: form.get('multiparo') === 'on'
 		});
 		if (error) return fail(400, { error });
 		return { ok: true };

@@ -126,6 +126,16 @@
 	</fieldset>
 {/snippet}
 
+{#snippet mentionCheck(checked: boolean, scope: string)}
+	<div class="adm-perm">
+		<input type="checkbox" id="{scope}-mentionable" name="mentionable" {checked} />
+		<label for="{scope}-mentionable" class="min-w-0 cursor-pointer">
+			<span class="adm-perm-name block">{tFn('agrade.mentionable_name')}</span>
+			<span class="adm-perm-short block">{tFn('agrade.mentionable_short')}</span>
+		</label>
+	</div>
+{/snippet}
+
 {#snippet permChecks(current: Record<string, boolean> | null, scope: string)}
 	<fieldset class="adm-field">
 		<legend class="adm-label mb-1">{tFn('agrade.permissions')}</legend>
@@ -244,6 +254,7 @@
 				</div>
 			</div>
 			{@render visChecks('new', newHoist, newSecret, (h, s) => { newHoist = h; newSecret = s })}
+			{@render mentionCheck(true, 'new')}
 			{@render permChecks(null, 'new')}
 			<div>
 				<button type="submit" class="adm-btn adm-btn--primary">{tFn('agrade.create')}</button>
@@ -296,6 +307,7 @@
 											</div>
 										</div>
 										{@render visChecks(`edit-${grade.id}`, editHoist, editSecret, (h, s) => { editHoist = h; editSecret = s })}
+										{@render mentionCheck(grade.mentionable !== false, `edit-${grade.id}`)}
 										{@render permChecks(grade.permissions ?? {}, `edit-${grade.id}`)}
 										<div class="adm-actions">
 											<button type="submit" class="adm-btn adm-btn--primary adm-btn--sm">{tFn('agrade.save')}</button>
@@ -308,6 +320,9 @@
 									<span class="adm-swatch" style="background:{grade.color}; color:{inkOn(grade.color)}">{grade.name}</span>
 									{#if grade.is_secret}<span class="adm-pill" title={tFn('agrade.secret_help')}>🔒 {tFn('agrade.badge_secret')}</span>{/if}
 									{#if grade.hoist}<span class="adm-pill" title={tFn('agrade.hoist_help')}>{tFn('agrade.badge_hoist')}</span>{/if}
+									{#if grade.mentionable === false}
+										<span class="adm-pill" title={tFn('agrade.mentionable_off_tip')}>{tFn('agrade.mentionable_off')}</span>
+									{/if}
 								</td>
 								<td data-label={tFn('agrade.permissions')}>
 									{#if GRADE_PERMISSIONS.some((p) => grade.permissions?.[p])}

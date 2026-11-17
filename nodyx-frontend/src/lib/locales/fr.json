@@ -3922,6 +3922,11 @@
   "aai.active": "Actif",
   "aai.enable": "Activer",
   "aai.no_models": "Aucun modèle trouvé",
+  "atags.categories": "Catégories",
+  "atags.categories_all": "Toutes les catégories",
+  "atags.categories_help": "Aucune cochée = le tag vaut dans tout le forum. Cochées = il n'apparaît et ne s'utilise que dans celles-ci.",
+  "atags.categories_only": "Seulement dans : {list}",
+  "atags.err_categories": "Catégorie invalide.",
   "atags.page_title": "Tags : Admin Nodyx",
   "atags.title": "Tags",
   "atags.create_tag": "Créer un tag",
@@ -7188,5 +7193,9 @@
   "hpb.sl_icon_emoji": "Emoji",
   "hpb.sl_icon_image": "Image (URL)",
   "hpb.sl_emoji_ph": "ex. : 🎲",
-  "hpb.sl_image_ph": "https://… ou /uploads/…"
+  "hpb.sl_image_ph": "https://… ou /uploads/…",
+  "agrade.mentionable_name": "Mentionnable avec @",
+  "agrade.mentionable_short": "Tout membre peut mentionner ce grade et prévenir ses porteurs. Décoché, seule l'équipe le peut.",
+  "agrade.mentionable_off": "@ équipe seule",
+  "agrade.mentionable_off_tip": "Seule l'équipe peut mentionner ce grade"
 }

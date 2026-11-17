@@ -4,7 +4,8 @@
 //   g:equipe       propriétaire, admins, modérateurs, et tout grade qui donne un droit
 //   g:moderation   ceux qui peuvent modérer les contenus ou les membres
 //   g:tous         toute la communauté : réservé à l'équipe (D52)
-//   g:grade:<id>   les porteurs d'un grade
+//   g:grade:<id>   les porteurs d'un grade — si le grade est « marcável » (trik_027) ;
+//                  sinon réservé à l'équipe, comme g:tous
 //
 // Les groupes sont développés AU SERVEUR, avec les vrais droits, et plafonnés : un
 // message ne prévient jamais plus de MAX_GROUP_RECIPIENTS personnes, quoi qu'en dise
@@ -93,13 +94,14 @@ export async function describeGroups(communityId: string, actorId: string, keys:
   const [team, threshold] = await Promise.all([isTeam(communityId, actorId), confirmThreshold()])
   const gradeIds = valid.filter(k => k.startsWith('grade:')).map(k => k.slice(6))
   const names = new Map<string, string>()
+  const locked = new Set<string>()   // grades non marcáveis (trik_027)
   if (gradeIds.length) {
-    const { rows } = await db.query<{ id: string; name: string }>(
-      `SELECT id, name FROM community_grades WHERE community_id = $1 AND id = ANY($2::uuid[])`, [communityId, gradeIds])
-    rows.forEach(r => names.set('grade:' + r.id, r.name))
+    const { rows } = await db.query<{ id: string; name: string; mentionable: boolean }>(
+      `SELECT id, name, mentionable FROM community_grades WHERE community_id = $1 AND id = ANY($2::uuid[])`, [communityId, gradeIds])
+    rows.forEach(r => { names.set('grade:' + r.id, r.name); if (r.mentionable === false) locked.add('grade:' + r.id) })
   }
   return Promise.all(valid.map(async key => {
-    const forbidden = key === 'tous' && !team
+    const forbidden = !team && (key === 'tous' || locked.has(key))
     const ids = forbidden ? [] : (await membersOf(communityId, key)).filter(id => id !== actorId)
     const count = Math.min(ids.length, MAX_GROUP_RECIPIENTS)
     return { key, count, label: key.startsWith('grade:') ? names.get(key) ?? null : null, forbidden, needs_confirm: !forbidden && count > threshold }
@@ -112,8 +114,9 @@ export async function groupRecipients(html: string, communityId: string, actorId
   const keys = groupKeysIn(html)
   if (!keys.length) return out
   const team = await isTeam(communityId, actorId)
+  const locked = team ? new Set<string>() : await lockedGrades(communityId, keys)
   for (const key of keys) {
-    if (key === 'tous' && !team) continue
+    if (!team && (key === 'tous' || locked.has(key))) continue
     for (const id of await membersOf(communityId, key)) {
       if (id === actorId || out.has(id)) continue
       out.set(id, key)
@@ -121,6 +124,15 @@ export async function groupRecipients(html: string, communityId: string, actorId
     }
   }
   return out
+}
+
+/** Les clés « grade:<id> » parmi `keys` dont le grade n'est pas marcável (trik_027). */
+async function lockedGrades(communityId: string, keys: string[]): Promise<Set<string>> {
+  const ids = keys.filter(k => k.startsWith('grade:')).map(k => k.slice(6))
+  if (!ids.length) return new Set()
+  const { rows } = await db.query<{ id: string }>(
+    `SELECT id FROM community_grades WHERE community_id = $1 AND id = ANY($2::uuid[]) AND mentionable = false`, [communityId, ids])
+  return new Set(rows.map(r => 'grade:' + r.id))
 }
 
 export interface GroupCard { key: string; label: string | null; color: string | null; count: number; sample: { username: string; display_name: string | null }[] }

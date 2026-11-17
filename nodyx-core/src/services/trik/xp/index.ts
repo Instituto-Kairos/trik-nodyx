@@ -15,6 +15,7 @@ import { dayAlerts, addDays, type Climate } from '../weather'
 import { matchCharacterByHeader, matchByHeader } from './matcher'
 import {
   calculateSceneXp, calculateTrainingSceneXp, calculateNarratorXp,
+  applyPermit, permitMultiplier,
 } from './calc'
 import {
   getPlayer, isXpThread, applySceneAward, revertSceneAward, listAwardedPostIdsByThread,
@@ -286,7 +287,8 @@ export async function processScenePost(params: {
       return { awarded: false, reason: decision.rejected }
     }
     const training = decision
-    const xp = training?.xp ?? baseXp
+    // Passe do jogador (trik_026): multiplica o xp final da cena, treino incluso.
+    const xp = applyPermit(training?.xp ?? baseXp, permitMultiplier(player))
 
     // Prêmio + xp + maestria numa transação só. null = o post já tinha prêmio
     // (edições concorrentes): não credita de novo nem mexe na reação.

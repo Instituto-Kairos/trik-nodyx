@@ -2670,6 +2670,11 @@
   "aai.active": "Ativo",
   "aai.enable": "Ativar",
   "aai.no_models": "Nenhum modelo encontrado",
+  "atags.categories": "Categorias",
+  "atags.categories_all": "Todas as categorias",
+  "atags.categories_help": "Nenhuma marcada = a tag vale no fórum inteiro. Marcadas = só aparece e só pode ser usada nelas.",
+  "atags.categories_only": "Só em: {list}",
+  "atags.err_categories": "Categoria inválida.",
   "atags.page_title": "Tags · Administração do Nodyx",
   "atags.title": "Tags",
   "atags.create_tag": "Criar uma tag",
@@ -4592,5 +4597,9 @@
   "hpb.sl_icon_emoji": "Emoji",
   "hpb.sl_icon_image": "Imagem (URL)",
   "hpb.sl_emoji_ph": "ex.: 🎲",
-  "hpb.sl_image_ph": "https://… ou /uploads/…"
+  "hpb.sl_image_ph": "https://… ou /uploads/…",
+  "agrade.mentionable_name": "Pode ser marcado com @",
+  "agrade.mentionable_short": "Qualquer membro pode marcar este cargo e avisar quem o tem. Desmarcado, só a equipe consegue.",
+  "agrade.mentionable_off": "@ só equipe",
+  "agrade.mentionable_off_tip": "Só a equipe pode marcar este cargo"
 }

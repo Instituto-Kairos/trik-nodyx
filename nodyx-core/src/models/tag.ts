@@ -8,6 +8,8 @@ export interface Tag {
   color:        string
   position:     number
   created_at:   Date
+  /** Categorias onde a tag vale. Vazio = todas (trik: migration 144). */
+  category_ids?: string[]
 }
 
 function slugify(name: string): string {
@@ -24,7 +26,8 @@ function slugify(name: string): string {
 /** Todas as tags, na ordem definida pela equipe, cada uma com o número de tópicos que a usam. */
 export async function listByCommunity(communityId: string): Promise<Array<Tag & { thread_count: number }>> {
   const { rows } = await db.query<Tag & { thread_count: number }>(
-    `SELECT t.*, (SELECT COUNT(*)::int FROM thread_tags tt WHERE tt.tag_id = t.id) AS thread_count
+    `SELECT t.*, (SELECT COUNT(*)::int FROM thread_tags tt WHERE tt.tag_id = t.id) AS thread_count,
+            COALESCE((SELECT array_agg(tc.category_id) FROM tag_categories tc WHERE tc.tag_id = t.id), '{}') AS category_ids
        FROM tags t WHERE t.community_id = $1 ORDER BY t.position ASC, t.name ASC`,
     [communityId]
   )
@@ -140,4 +143,40 @@ export async function setThreadTags(threadId: string, tagIds: string[]): Promise
      ON CONFLICT DO NOTHING`,
     [threadId, [...new Set(tagIds)]]
   )
+}
+
+/**
+ * As categorias onde a tag vale passam a ser EXATAMENTE `categoryIds` (vazio =
+ * todas). Só aceita categorias desta comunidade; devolve false se alguma não for.
+ */
+export async function setCategories(tagId: string, communityId: string, categoryIds: string[]): Promise<boolean> {
+  const ids = [...new Set(categoryIds.map((c) => c.toLowerCase()))]
+  if (ids.length) {
+    const { rows } = await db.query<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM categories WHERE id = ANY($1::uuid[]) AND community_id = $2`,
+      [ids, communityId]
+    )
+    if ((rows[0]?.n ?? 0) !== ids.length) return false
+  }
+  await db.query(
+    `WITH gone AS (DELETE FROM tag_categories WHERE tag_id = $1 AND category_id <> ALL($2::uuid[]))
+     INSERT INTO tag_categories (tag_id, category_id)
+     SELECT $1, c FROM unnest($2::uuid[]) AS c
+     ON CONFLICT DO NOTHING`,
+    [tagId, ids]
+  )
+  return true
+}
+
+/** Das `tagIds`, as que NÃO podem ser usadas em `categoryId`. */
+export async function tagsNotAllowedIn(categoryId: string, tagIds: string[]): Promise<string[]> {
+  if (!tagIds.length) return []
+  const { rows } = await db.query<{ id: string }>(
+    `SELECT t.id FROM tags t
+      WHERE t.id = ANY($1::uuid[])
+        AND EXISTS (SELECT 1 FROM tag_categories tc WHERE tc.tag_id = t.id)
+        AND NOT EXISTS (SELECT 1 FROM tag_categories tc WHERE tc.tag_id = t.id AND tc.category_id = $2)`,
+    [tagIds, categoryId]
+  )
+  return rows.map((r) => r.id)
 }

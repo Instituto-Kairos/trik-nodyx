@@ -19,7 +19,7 @@
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
-	const tags = $derived(data.tags ?? []);
+	const allTags = $derived(data.tags ?? []);
 	let selectedTagIds = $state<string[]>([]);
 	// Conteúdo privado (trik_025): cargos que podem ver o tópico (nada = segue a categoria)
 	let selectedGradeIds = $state<string[]>([]);
@@ -79,6 +79,10 @@
 		return out;
 	});
 	const finalCategoryId = $derived(categoryPath[categoryPath.length - 1] ?? '');
+	// Tags restritas a categorias (migration 144): só as que valem na categoria escolhida.
+	const tagAllowed = (tag: { category_ids?: string[] }, cat: string) => !tag.category_ids?.length || tag.category_ids.includes(cat);
+	const tags = $derived(allTags.filter((tag: any) => tagAllowed(tag, finalCategoryId)));
+	const sentTagIds = $derived(selectedTagIds.filter(id => tags.some((tag: any) => tag.id === id)));
 
 	function onLevelChange(level: number, e: Event) {
 		const value = (e.currentTarget as HTMLSelectElement).value;
@@ -100,7 +104,7 @@
 	function toggleTag(id: string) {
 		if (selectedTagIds.includes(id)) {
 			selectedTagIds = selectedTagIds.filter(t => t !== id);
-		} else if (selectedTagIds.length < 5) {
+		} else if (sentTagIds.length < 5) {
 			selectedTagIds = [...selectedTagIds, id];
 		}
 	}
@@ -206,7 +210,7 @@
 		{#if tags.length > 0}
 			<div>
 				<span id="tag-pick-label" class="block text-sm text-[var(--nx-text-muted)] mb-2">
-					{tFn('forum.tags_pick')} <span class="text-[var(--nx-text-muted)] text-xs">{tFn('forum.tags_pick_hint', { n: selectedTagIds.length })}</span>
+					{tFn('forum.tags_pick')} <span class="text-[var(--nx-text-muted)] text-xs">{tFn('forum.tags_pick_hint', { n: sentTagIds.length })}</span>
 				</span>
 				<div class="flex flex-wrap gap-2" role="group" aria-labelledby="tag-pick-label">
 					{#each tags as tag}
@@ -214,7 +218,7 @@
 							type="button"
 							onclick={() => toggleTag(tag.id)}
 							aria-pressed={selectedTagIds.includes(tag.id)}
-							disabled={!selectedTagIds.includes(tag.id) && selectedTagIds.length >= 5}
+							disabled={!selectedTagIds.includes(tag.id) && sentTagIds.length >= 5}
 							class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium border transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed {selectedTagIds.includes(tag.id) ? '' : 'text-gray-200 hover:bg-gray-800'}"
 							style={selectedTagIds.includes(tag.id)
 								? `background-color: ${tag.color}; border-color: ${tag.color}; color: ${tagTextColor(tag.color)};`
@@ -226,7 +230,7 @@
 					{/each}
 				</div>
 				<!-- Hidden inputs for selected tags -->
-				{#each selectedTagIds as tagId}
+				{#each sentTagIds as tagId}
 					<input type="hidden" name="tag_ids" value={tagId} />
 				{/each}
 			</div>

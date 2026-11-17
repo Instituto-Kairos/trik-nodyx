@@ -360,6 +360,11 @@ app.get('/threads', {
       return reply.code(404).send({ error: 'Category not found', code: 'NOT_FOUND' })
     }
 
+    // Tags restritas a categorias (migration 144): fora delas, proibidas.
+    if (tag_ids?.length && (await TagModel.tagsNotAllowedIn(category_id, tag_ids)).length) {
+      return reply.code(400).send({ error: 'Tag not allowed in this category', code: 'THREAD_TAG_NOT_IN_CATEGORY' })
+    }
+
     // Check if user is banned from this community
     const { rows: catRows } = await db.query<{ community_id: string; post_min_role: string }>(
       `SELECT community_id, post_min_role FROM categories WHERE id = $1 LIMIT 1`, [category_id]
@@ -895,6 +900,9 @@ app.get('/threads', {
         const { rows } = await db.query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM tags WHERE id = ANY($1::uuid[])`, [tagIds])
         if ((rows[0]?.n ?? 0) !== tagIds.length) {
           return reply.code(400).send({ error: 'Unknown tag', code: 'THREAD_TAGS_UNKNOWN' })
+        }
+        if ((await TagModel.tagsNotAllowedIn(thread.category_id, tagIds)).length) {
+          return reply.code(400).send({ error: 'Tag not allowed in this category', code: 'THREAD_TAG_NOT_IN_CATEGORY' })
         }
       }
     }

@@ -2711,6 +2711,11 @@
   "aai.active": "Active",
   "aai.enable": "Enable",
   "aai.no_models": "No model found",
+  "atags.categories": "Categories",
+  "atags.categories_all": "All categories",
+  "atags.categories_help": "None checked = the tag works across the whole forum. Checked = it only shows up and can only be used in those.",
+  "atags.categories_only": "Only in: {list}",
+  "atags.err_categories": "Invalid category.",
   "atags.page_title": "Tags · Nodyx Admin",
   "atags.title": "Tags",
   "atags.create_tag": "Create a tag",
@@ -7188,5 +7193,9 @@
   "hpb.sl_icon_emoji": "Emoji",
   "hpb.sl_icon_image": "Image (URL)",
   "hpb.sl_emoji_ph": "e.g. 🎲",
-  "hpb.sl_image_ph": "https://… or /uploads/…"
+  "hpb.sl_image_ph": "https://… or /uploads/…",
+  "agrade.mentionable_name": "Can be @mentioned",
+  "agrade.mentionable_short": "Any member can mention this grade and notify its holders. Unchecked, only the team can.",
+  "agrade.mentionable_off": "@ team only",
+  "agrade.mentionable_off_tip": "Only the team can mention this grade"
 }

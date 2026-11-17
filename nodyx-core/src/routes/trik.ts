@@ -34,6 +34,7 @@ import { getPlayerSummary } from '../models/trikSummary'
 import { submitPlaquinha } from '../services/trik/registro/plaquinha'
 import { submitLevelup } from '../services/trik/xp/levelup'
 import { notifyLevelUp } from '../services/trik/xp'
+import { PERMIT_TYPES } from '../services/trik/xp/calc'
 import { postTrikMessage, getTrikBotProfile, updateTrikBotProfile } from '../services/trik/bot'
 import { botSafe } from '../services/trik/text'
 import { scanBuffer } from '../services/fileScanner'
@@ -118,7 +119,8 @@ const RegistroPlayerPatch = naoVazio({
   name:         z.string().min(1).max(100).optional(),
   pronouns:     z.string().max(50).nullable().optional(),
   birthDate:    ISO_DATE.nullable().optional(),
-  permitActive: z.boolean().optional(),
+  permitType:      z.enum(PERMIT_TYPES).nullable().optional(),
+  permitMultiparo: z.boolean().optional(),
 })
 
 const RegistroCharacterPatch = naoVazio({
@@ -444,6 +446,24 @@ export async function trikPlayerPlugin(app: FastifyInstance) {
     return reply.send({ characters: await getPlayerSummary(request.user!.userId) })
   })
 
+  // Ficha do personagem, só leitura, pro jogador DONO dele (página
+  // /personagens/:id). Personagem de outro jogador responde 404, igual a um
+  // inexistente — não confirma que o id existe. Vem junto o catálogo de
+  // armas/matérias só pra nomear o alvo dos efeitos (describeEffect).
+  app.get('/characters/:id/sheet', {
+    preHandler: validate({ params: IdParams }),
+  }, async (request, reply) => {
+    const { id } = request.params as z.infer<typeof IdParams>
+    const sheet = await getCharacterSheet(id)
+    if (!sheet || sheet.character.player_id !== request.user!.userId) {
+      return reply.code(404).send({ error: 'Personagem não encontrado', code: 'NOT_FOUND' })
+    }
+    const [weapons, knowledges] = await Promise.all([
+      TrikMastery.listCatalog('weapon'), TrikMastery.listCatalog('knowledge'),
+    ])
+    return reply.send({ sheet, weapons, knowledges })
+  })
+
   // GET /api/v1/trik/aliases?q= — alvos mencionáveis por nome de personagem.
   //
   // Alimenta o autocomplete de `@` no chat e no fórum. Cada item traz o par
@@ -738,9 +758,8 @@ export async function trikAdminPlugin(app: FastifyInstance) {
   // (upsertPlayer é DO NOTHING), então sem isto um nome ou um link de ficha
   // digitado errado só se conserta no banco.
   //
-  // `permitActive` (o "Passe" na tela) entra pelo patch do jogador: é a única
-  // escrita dessa coluna no código todo — antes disso ela ficava no DEFAULT
-  // FALSE da migration pra todo mundo.
+  // Os passes (`permitType`/`permitMultiparo`, trik_026) entram pelo patch do
+  // jogador: é a única escrita dessas colunas no código todo.
   app.patch('/registros/players/:id', {
     preHandler: validate({ params: RegistroIdParams, body: RegistroPlayerPatch }),
   }, async (request, reply) => {
