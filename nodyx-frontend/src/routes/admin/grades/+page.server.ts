@@ -19,7 +19,8 @@ export const load: PageServerLoad = async ({ fetch, parent }) => {
 	// Les membres viennent de la liste admin : mêmes membres que partout ailleurs
 	// (ni bannis, ni bot), avec leur grade. La liste publique comptait les bannis.
 	const [gradesRes, membersRes] = await Promise.all([
-		apiFetch(fetch, `/communities/${slug}/grades`),
+		// Com o token : quem gerencia cargos vê também os cargos secretos
+		apiFetch(fetch, `/communities/${slug}/grades`, { headers: { Authorization: `Bearer ${token}` } }),
 		apiFetch(fetch, '/admin/members', { headers: { Authorization: `Bearer ${token}` } }),
 	])
 
@@ -40,6 +41,8 @@ export const actions: Actions = {
 			color:    form.get('color')    as string,
 			position: Number(form.get('position') ?? 0),
 			permissions: permissionsFrom(form),
+			hoist:     form.get('hoist') === 'on',
+			is_secret: form.get('is_secret') === 'on',
 		}
 		const res = await apiFetch(fetch, `/communities/${slug}/grades`, {
 			method: 'POST',
@@ -59,6 +62,8 @@ export const actions: Actions = {
 			name:  form.get('name')  as string,
 			color: form.get('color') as string,
 			permissions: permissionsFrom(form),
+			hoist:     form.get('hoist') === 'on',
+			is_secret: form.get('is_secret') === 'on',
 		}
 		const res = await apiFetch(fetch, `/communities/${slug}/grades/${gradeId}`, {
 			method: 'PATCH',
@@ -92,7 +97,8 @@ export const actions: Actions = {
 		const gradeId = form.get('grade_id') as string
 		const dir     = form.get('dir') === 'up' ? -1 : 1
 
-		const listRes = await apiFetch(fetch, `/communities/${slug}/grades`)
+		// Com o token : sem ele os cargos secretos ficam de fora e a renumeração embaralharia as posições
+		const listRes = await apiFetch(fetch, `/communities/${slug}/grades`, { headers: { Authorization: `Bearer ${token}` } })
 		if (!listRes.ok) return fail(400, { errorKey: 'agrade.err_reorder' })
 		const { grades } = await listRes.json() as { grades: Array<{ id: string; position: number }> }
 		const order = [...grades]
@@ -118,11 +124,12 @@ export const actions: Actions = {
 		const { slug } = await infoRes.json()
 		const form    = await request.formData()
 		const userId  = form.get('user_id')  as string
-		const gradeId = form.get('grade_id') as string
+		// Tous les grades cochés (aucun = le membre n'en a plus)
+		const gradeIds = form.getAll('grade_ids').map(String).filter(Boolean)
 		const res = await apiFetch(fetch, `/communities/${slug}/members/${userId}/grade`, {
 			method: 'PATCH',
 			headers: { Authorization: `Bearer ${token}` },
-			body: JSON.stringify({ grade_id: gradeId === '' ? null : gradeId }),
+			body: JSON.stringify({ grade_ids: gradeIds }),
 		})
 		if (!res.ok) return fail(res.status, { error: (await res.json().catch(() => ({}))).error ?? 'Erreur attribution grade' })
 	},

@@ -36,7 +36,7 @@ beforeEach(() => {
     const s = String(sql).replace(/\s+/g, ' ').trim()
     calls.push({ sql: s, params })
     if (s.includes('FROM communities')) return { rows: [{ id: 'c1' }] }
-    if (s.includes('community_grades cg ON cg.id = cm.grade_id AND')) return { rows: [{ role: params[1] === ADMIN ? 'admin' : 'member', permissions: null }] }
+    if (s.includes('community_grades cg ON cg.id = mg.grade_id AND')) return { rows: [{ role: params[1] === ADMIN ? 'admin' : 'member', permissions: null }] }
     if (s.startsWith('SELECT target_type, target_id FROM reports')) return { rows: st.report ? [{ target_type: 'message', target_id: MSG }] : [] }
     if (s.startsWith('SELECT channel_id, author_id, created_at')) return { rows: st.message ? [{ channel_id: 'ch', author_id: MEMBER, created_at: '2026-11-07T10:00:00Z', content: 'après' }] : [] }
     if (s.includes('FROM message_edits')) return { rows: [{ old_content: 'avant', edited_at: '2026-11-07T10:02:00Z', editor_username: 'u', by_author: true }] }

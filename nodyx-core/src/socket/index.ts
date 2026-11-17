@@ -9,6 +9,7 @@ import jwt from 'jsonwebtoken'
 import sanitizeHtml from 'sanitize-html'
 import { db, redis } from '../config/database'
 import * as ChannelModel from '../models/channel'
+import { visibleGradeJoin, visibleGradesJson } from '../models/grade'
 import { notifyMentions } from '../services/mentionNotify'
 import { recordGhost } from '../services/mentionGhosts'
 import { io } from './io'
@@ -44,6 +45,9 @@ declare module 'socket.io' {
     nameFontFamily?:   string | null
     nameFontUrl?:      string | null
     grade?:            { name: string; color: string } | null
+    /** Cargos visíveis (não secretos, que a pessoa escolheu mostrar), do mais alto ao mais baixo.
+     *  `hoist` : o cargo agrupa os membros online no painel lateral. */
+    grades?:           { name: string; color: string; hoist: boolean; position: number }[]
     status?:           { emoji: string; text: string } | null
     /** État vocal volatile (muet / sourd / partage d'écran), publié par le client
      *  via `voice:state`. Sert à enrichir le roster d'un canal vocal
@@ -138,14 +142,16 @@ export function registerSocketIO(server: Server): void {
           name_font_url: string | null
           grade_name: string | null
           grade_color: string | null
+          grades: { id: string; name: string; color: string; hoist: boolean; position: number }[] | null
         }>(
           `SELECT u.avatar, p.name_color, p.name_glow, p.name_glow_intensity,
                   p.name_animation, p.name_font_family, p.name_font_url,
-                  g.name AS grade_name, g.color AS grade_color
+                  g.name AS grade_name, g.color AS grade_color,
+                  ${visibleGradesJson('cm')} AS grades
            FROM users u
            LEFT JOIN user_profiles p ON p.user_id = u.id
            LEFT JOIN community_members cm ON cm.user_id = u.id
-           LEFT JOIN community_grades g ON g.id = cm.grade_id
+           ${visibleGradeJoin('g', 'cm')}
            WHERE u.id = $1`,
           [userId]
         )
@@ -159,6 +165,7 @@ export function registerSocketIO(server: Server): void {
         socket.data.grade            = rows[0]?.grade_name
           ? { name: rows[0].grade_name, color: rows[0].grade_color! }
           : null
+        socket.data.grades           = (rows[0]?.grades ?? []).map(g => ({ name: g.name, color: g.color, hoist: !!g.hoist, position: g.position ?? 0 }))
       } catch {
         socket.data.avatar           = null
         socket.data.nameColor        = null
@@ -168,6 +175,7 @@ export function registerSocketIO(server: Server): void {
         socket.data.nameFontFamily   = null
         socket.data.nameFontUrl      = null
         socket.data.grade            = null
+        socket.data.grades           = []
       }
 
       // Restore status from Redis (persists across reconnects within session)
@@ -198,6 +206,7 @@ export function registerSocketIO(server: Server): void {
           nameFontFamily:    s.data.nameFontFamily ?? null,
           nameFontUrl:       s.data.nameFontUrl ?? null,
           grade:             s.data.grade ?? null,
+          grades:            s.data.grades ?? [],
           status:            s.data.status ?? null,
         }))
         .filter(m => { if (seen.has(m.userId)) return false; seen.add(m.userId); return true })
@@ -217,6 +226,7 @@ export function registerSocketIO(server: Server): void {
           nameFontFamily:    socket.data.nameFontFamily ?? null,
           nameFontUrl:       socket.data.nameFontUrl ?? null,
           grade:             socket.data.grade ?? null,
+          grades:            socket.data.grades ?? [],
           status:            socket.data.status ?? null,
         })
       }
@@ -362,12 +372,13 @@ export function registerSocketIO(server: Server): void {
     // pour qu'aucun des deux chemins n'en oublie un. Salon rejoint, membre (double
     // vérification en base contre les courses après expulsion), salon système,
     // bannissement, sourdine, bouclier anti-raid. Émet `chat:blocked` quand il refuse.
-    type PostMember = { role: string; is_system_managed: boolean; grade_id: string | null; community_id: string; account_age_days: number }
+    type PostMember = { role: string; is_system_managed: boolean; grade_id: string | null; grade_ids?: string[] | null; community_id: string; account_age_days: number }
     async function canPostHere(channelId: string): Promise<{ member: PostMember; gate: Extract<Awaited<ReturnType<typeof shieldGate>>, { allow: true }> } | null> {
       // Contrôle d'accès : le socket doit avoir rejoint ce canal via chat:join (qui vérifie membership)
       if (!socket.rooms.has(`channel:${channelId}`)) return null
       const { rows: memberCheck } = await db.query<PostMember>(
-        `SELECT cm.role, c.is_system_managed, cm.grade_id, c.community_id,
+        `SELECT cm.role, c.is_system_managed, cm.grade_id,
+                (SELECT COALESCE(array_agg(mg.grade_id), '{}') FROM member_grades mg WHERE mg.community_id = cm.community_id AND mg.user_id = cm.user_id) AS grade_ids, c.community_id,
                 EXTRACT(EPOCH FROM (NOW() - u.created_at)) / 86400 AS account_age_days
          FROM channels c
          JOIN community_members cm ON c.community_id = cm.community_id
@@ -502,7 +513,7 @@ export function registerSocketIO(server: Server): void {
             userCtx:   {
               userId,
               role:     memberCheck[0].role,
-              gradeIds: memberCheck[0].grade_id ? [memberCheck[0].grade_id] : [],
+              gradeIds: memberCheck[0].grade_ids ?? (memberCheck[0].grade_id ? [memberCheck[0].grade_id] : []),
               accountAgeDays: Number(memberCheck[0].account_age_days),
             },
             surface:   'chat',
@@ -663,7 +674,7 @@ export function registerSocketIO(server: Server): void {
         if (question && isOctoGuardEnabled()) {
           const og = await runPipeline({
             content:  `<p>${escapeHtml(question)}</p>`,
-            userCtx:  { userId, role: allowed.member.role, gradeIds: allowed.member.grade_id ? [allowed.member.grade_id] : [], accountAgeDays: Number(allowed.member.account_age_days) },
+            userCtx:  { userId, role: allowed.member.role, gradeIds: allowed.member.grade_ids ?? (allowed.member.grade_id ? [allowed.member.grade_id] : []), accountAgeDays: Number(allowed.member.account_age_days) },
             surface:  'chat',
             channelId,
           })

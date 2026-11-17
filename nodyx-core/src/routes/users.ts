@@ -16,6 +16,7 @@ import {
 import { signToken, trackSession, invalidateUserSessions, SESSION_TTL } from './auth'
 import { toPublicUser, toSelfUser } from '../utils/publicUser'
 import { getAccess } from '../services/permissions'
+import { visibleGradeJoin, visibleGradesJson } from '../models/grade'
 import { moderateText, blockedBody } from '../services/octoguard/moderate'
 import { fileAutoReport } from '../services/octoguard/autoReport'
 import { db, redis } from '../config/database'
@@ -423,12 +424,13 @@ export default async function userRoutes(app: FastifyInstance) {
          (SELECT COUNT(*) FROM status_posts spc WHERE spc.author_id = u.id AND spc.reply_to_id IS NULL) AS post_count,
          (SELECT COUNT(*) FROM follows WHERE following_id = u.id) AS followers_count,
          (SELECT COUNT(*) FROM follows WHERE follower_id  = u.id) AS following_count,
-         g.name AS grade_name, g.color AS grade_color
+         g.name AS grade_name, g.color AS grade_color,
+         ${visibleGradesJson('cm')} AS grades
        FROM users u
        LEFT JOIN user_profiles p ON p.user_id = u.id
        LEFT JOIN community_assets ad  ON ad.id  = p.badge_asset_id AND ad.is_banned = false
        LEFT JOIN community_members cm ON cm.user_id = u.id
-       LEFT JOIN community_grades g ON g.id = cm.grade_id
+       ${visibleGradeJoin('g', 'cm')}
        WHERE u.username = $1
          AND u.is_system = false
        LIMIT 1`,

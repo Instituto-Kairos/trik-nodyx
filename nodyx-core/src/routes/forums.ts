@@ -29,7 +29,7 @@ import { fileAutoReport } from '../services/octoguard/autoReport'
 import { announceThread } from '../services/webhooks/announce'
 import * as TrikModel from '../models/trik'
 import { processScenePost, revertScenePost, revertThreadScenes } from '../services/trik/xp'
-import { canViewThread, canViewCategory, usersWhoCanViewThread, getThreadGrades, setThreadGrades, validGradeIds, memberGradeId } from '../services/privateContent'
+import { canViewThread, canViewCategory, usersWhoCanViewThread, getThreadGrades, setThreadGrades, validGradeIds, memberGradeIds } from '../services/privateContent'
 
 // Un titre de fil est du texte brut, jamais du HTML : checkHtmlContent() ne fait
 // que SCANNER (mots interdits) sans jamais retirer de balises. Sans ce nettoyage,
@@ -224,8 +224,8 @@ export default async function forumRoutes(app: FastifyInstance) {
     const { rows } = await db.query<{ id: string; name: string; color: string }>(
       staff
         ? `SELECT id, name, color FROM community_grades WHERE community_id = $1 ORDER BY position, name`
-        : `SELECT g.id, g.name, g.color FROM community_members cm JOIN community_grades g ON g.id = cm.grade_id
-            WHERE cm.community_id = $1 AND cm.user_id = $2`,
+        : `SELECT g.id, g.name, g.color FROM member_grades mg JOIN community_grades g ON g.id = mg.grade_id
+            WHERE mg.community_id = $1 AND mg.user_id = $2 ORDER BY g.position, g.name`,
       staff ? [communityId] : [communityId, userId])
     return reply.send({ grades: rows, staff })
   })
@@ -366,16 +366,16 @@ app.get('/threads', {
     )
 
     // Cargos do tópico (trik_025). Equipe escolhe qualquer cargo da comunidade;
-    // o autor só o PRÓPRIO cargo, senão criaria um tópico que nem ele vê.
+    // o autor só um dos PRÓPRIOS cargos, senão criaria um tópico que nem ele vê.
     let threadGradeIds: string[] = []
     if (grade_ids?.length && catRows[0]) {
       const valid = await validGradeIds(catRows[0].community_id, grade_ids)
       if (!valid) return reply.code(400).send({ error: 'Unknown grade', code: 'THREAD_GRADES_INVALID' })
       const staff = await can(catRows[0].community_id, request.user!.userId, 'moderate_content')
       if (!staff) {
-        const own = await memberGradeId(catRows[0].community_id, request.user!.userId)
-        if (valid.some(g => g !== own)) {
-          return reply.code(403).send({ error: 'You can only restrict a thread to your own grade', code: 'THREAD_GRADES_FORBIDDEN' })
+        const own = await memberGradeIds(catRows[0].community_id, request.user!.userId)
+        if (valid.some(g => !own.includes(g))) {
+          return reply.code(403).send({ error: 'You can only restrict a thread to your own grades', code: 'THREAD_GRADES_FORBIDDEN' })
         }
       }
       threadGradeIds = valid

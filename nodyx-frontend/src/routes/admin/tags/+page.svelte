@@ -1,15 +1,34 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { untrack, tick } from 'svelte';
+	import { flip } from 'svelte/animate';
+	import { dndzone } from 'svelte-dnd-action';
 	import { enhance } from '$app/forms';
 	import type { PageData, ActionData } from './$types';
 	import { t } from '$lib/i18n';
-	import { inkOn } from '$lib/adminTheme';
+	import { tagBadgeStyle } from '$lib/tagStyle';
 
 	const tFn = $derived($t);
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	const tags = $derived(data.tags ?? []);
+
+	// Cópia local da lista, usada pelo arrastar e soltar (a ordem muda na tela
+	// enquanto se arrasta e só depois é gravada no servidor).
+	type Tag = NonNullable<PageData['tags']>[number];
+	let sortableTags = $state<Tag[]>([]);
+	$effect(() => { sortableTags = [...tags]; });
+	const flipDurationMs = 150;
+	let reorderForm: HTMLFormElement | undefined;
+
+	function handleDndConsider(e: CustomEvent<{ items: Tag[] }>) {
+		sortableTags = e.detail.items;
+	}
+	async function handleDndFinalize(e: CustomEvent<{ items: Tag[] }>) {
+		sortableTags = e.detail.items;
+		await tick(); // deixa o input hidden refletir a nova ordem antes de enviar
+		reorderForm?.requestSubmit();
+	}
 
 	// Panneau « créer » : ouvert d'office tant que la liste est vide, puis libre.
 	// Jamais open={expression} : Svelte 5 la réévalue à chaque frappe dans le
@@ -62,7 +81,7 @@
 	let search = $state('');
 	const filtered = $derived.by(() => {
 		const q = search.trim().toLowerCase();
-		const list = q ? tags.filter((tag: any) => tag.name.toLowerCase().includes(q) || tag.slug.includes(q)) : tags;
+		const list = q ? sortableTags.filter((tag: any) => tag.name.toLowerCase().includes(q) || tag.slug.includes(q)) : sortableTags;
 		// Na ordem definida pela equipe (position), que é a ordem do forum (trik)
 		return list;
 	});
@@ -166,7 +185,7 @@
 				<div class="adm-field">
 					<span class="adm-label">{tFn('atags.preview')}</span>
 					<div class="flex items-center min-h-9">
-						<span class="adm-swatch" style="background:{newColor}; color:{inkOn(newColor)}">{newName.trim() || tFn('atags.name_ph')}</span>
+						<span class="adm-swatch" style={tagBadgeStyle(newColor)}>{newName.trim() || tFn('atags.name_ph')}</span>
 					</div>
 				</div>
 			</div>
@@ -184,6 +203,15 @@
 		{:else}
 			<p class="adm-desc">{tFn(tags.length > 1 ? 'atags.summary_many' : 'atags.summary_one', { n: tags.length, used })}</p>
 		{/if}
+		<!-- Form oculto: grava a ordem completa depois de soltar uma linha -->
+		<form method="POST" action="?/reorder" class="hidden" bind:this={reorderForm}
+			use:enhance={() => async ({ result, update }) => {
+				await update({ reset: false });
+				// Falhou: volta pra ordem que o servidor tem
+				if (result.type !== 'success') sortableTags = [...tags];
+			}}>
+			<input type="hidden" name="ids" value={JSON.stringify(sortableTags.map((tag) => tag.id))} />
+		</form>
 		<div class="adm-table-wrap">
 			<table class="adm-table">
 				<thead>
@@ -194,10 +222,14 @@
 						<th class="adm-num"><span class="sr-only">{tFn('atags.col_action')}</span></th>
 					</tr>
 				</thead>
-				<tbody>
+				<!-- Arrastar e soltar desligado durante uma busca (a lista filtrada não é a ordem completa) ou uma edição -->
+				<tbody
+					use:dndzone={{ items: filtered, flipDurationMs, dragDisabled: editId !== null || search.trim() !== '', dropTargetStyle: {} }}
+					onconsider={handleDndConsider}
+					onfinalize={handleDndFinalize}>
 					{#each filtered as tag (tag.id)}
-						{#if editId === tag.id}
-							<tr class="tag-editing">
+						<tr animate:flip={{ duration: flipDurationMs }} class:tag-editing={editId === tag.id}>
+							{#if editId === tag.id}
 								<td colspan="4">
 									<form method="POST" action="?/update" class="tag-edit"
 										use:enhance={() => { editBusy = true; return async ({ result, update }) => {
@@ -220,7 +252,7 @@
 										<div class="adm-field">
 											<span class="adm-label">{tFn('atags.preview')}</span>
 											<div class="flex items-center min-h-9">
-												<span class="adm-swatch" style="background:{editColor}; color:{inkOn(editColor)}">{editName.trim() || tag.name}</span>
+												<span class="adm-swatch" style={tagBadgeStyle(editColor)}>{editName.trim() || tag.name}</span>
 											</div>
 										</div>
 										<div class="tag-edit-actions">
@@ -231,23 +263,22 @@
 										{#if editError}<p class="adm-notice adm-notice--bad tag-edit-err" role="alert">{editError}</p>{/if}
 									</form>
 								</td>
-							</tr>
-						{:else}
-						<tr>
+							{:else}
 							<td class="adm-cell-main">
-								<span class="adm-swatch" style="background:{tag.color}; color:{inkOn(tag.color)}">{tag.name}</span>
+								<span class="adm-swatch" style={tagBadgeStyle(tag.color)}>{tag.name}</span>
 							</td>
 							<td class="adm-muted" data-label={tFn('atags.col_slug')}><code>{tag.slug}</code></td>
 							<td class="adm-num" data-label={tFn('atags.col_threads')}>{#if tag.thread_count}{tag.thread_count}{:else}<span class="adm-muted" title={tFn('atags.unused_tip')}>{tFn('atags.unused')}</span>{/if}</td>
 							<td class="adm-num">
 								<div class="tag-row-actions">
 									{#if !search.trim()}
-										{@const idx = tags.findIndex((x: any) => x.id === tag.id)}
+										{@const idx = sortableTags.findIndex((x: any) => x.id === tag.id)}
+										<span aria-hidden="true" class="tag-grip">⠿</span>
 										<form method="POST" action="?/move" use:enhance class="inline">
 											<input type="hidden" name="tag_id" value={tag.id} />
 											<button type="submit" name="dir" value="up" disabled={idx === 0}
 												aria-label={tFn('common.move_up_tooltip')} class="adm-btn adm-btn--sm">▲</button>
-											<button type="submit" name="dir" value="down" disabled={idx === tags.length - 1}
+											<button type="submit" name="dir" value="down" disabled={idx === sortableTags.length - 1}
 												aria-label={tFn('common.move_down_tooltip')} class="adm-btn adm-btn--sm">▼</button>
 										</form>
 									{/if}
@@ -261,18 +292,22 @@
 									</form>
 								</div>
 							</td>
+							{/if}
 						</tr>
-						{/if}
-					{:else}
-						<tr><td colspan="4" class="adm-empty">{tFn('atags.none_found')}</td></tr>
 					{/each}
 				</tbody>
+				{#if filtered.length === 0}
+					<!-- tbody à parte: a zona de arrastar só pode conter linhas de tags -->
+					<tbody><tr><td colspan="4" class="adm-empty">{tFn('atags.none_found')}</td></tr></tbody>
+				{/if}
 			</table>
 		</div>
 	{/if}
 </div>
 
 <style>
+	.tag-grip { cursor: grab; user-select: none; touch-action: none; padding: 0 0.25rem; font-size: 1.1rem; color: var(--nx-text-muted); }
+	.tag-grip:active { cursor: grabbing; }
 	.tag-row-actions { display: inline-flex; gap: 0.375rem; justify-content: flex-end; flex-wrap: wrap; }
 	.tag-editing td { background: color-mix(in srgb, var(--nx-header-accent) 5%, var(--nx-surface)) !important; }
 	.tag-edit { display: grid; grid-template-columns: minmax(10rem, 1.4fr) auto minmax(8rem, 1fr) auto; gap: 0.75rem 1rem; align-items: end; text-align: left; }

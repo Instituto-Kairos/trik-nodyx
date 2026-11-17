@@ -40,13 +40,15 @@ export async function isTeam(communityId: string, userId: string): Promise<boole
 }
 
 const MEMBER = `FROM community_members cm JOIN users u ON u.id = cm.user_id
-  LEFT JOIN community_grades g ON g.id = cm.grade_id AND g.community_id = cm.community_id
   WHERE cm.community_id = $1 AND u.is_system = false`
 
+// Um membro pode ter vários cargos : basta UM deles dar o direito.
+const HAS_GRADE = (cond: string) => `EXISTS (SELECT 1 FROM member_grades mg JOIN community_grades g ON g.id = mg.grade_id
+    WHERE mg.community_id = cm.community_id AND mg.user_id = cm.user_id AND ${cond})`
 const TEAM_SQL = `(cm.role IN ('owner','admin','moderator')
-  OR EXISTS (SELECT 1 FROM jsonb_each(COALESCE(g.permissions, '{}'::jsonb)) e WHERE e.value = 'true'::jsonb))`
+  OR ${HAS_GRADE("EXISTS (SELECT 1 FROM jsonb_each(COALESCE(g.permissions, '{}'::jsonb)) e WHERE e.value = 'true'::jsonb)")})`
 const MOD_SQL = `(cm.role IN ('owner','admin','moderator')
-  OR g.permissions->>'moderate_content' = 'true' OR g.permissions->>'moderate_members' = 'true')`
+  OR ${HAS_GRADE("(g.permissions->>'moderate_content' = 'true' OR g.permissions->>'moderate_members' = 'true')")})`
 
 async function onlineUserIds(): Promise<string[]> {
   if (!io) return []
@@ -66,7 +68,7 @@ export async function membersOf(communityId: string, key: string): Promise<strin
   } else if (key === 'moderation') {
     ({ rows } = await db.query(`SELECT cm.user_id ${MEMBER} AND ${MOD_SQL} LIMIT ${lim}`, [communityId]))
   } else if (key.startsWith('grade:')) {
-    ({ rows } = await db.query(`SELECT cm.user_id ${MEMBER} AND cm.grade_id = $2 LIMIT ${lim}`, [communityId, key.slice(6)]))
+    ({ rows } = await db.query(`SELECT cm.user_id ${MEMBER} AND EXISTS (SELECT 1 FROM member_grades mg WHERE mg.community_id = cm.community_id AND mg.user_id = cm.user_id AND mg.grade_id = $2) LIMIT ${lim}`, [communityId, key.slice(6)]))
   } else if (key === 'ici') {
     const online = await onlineUserIds()
     if (!online.length) return []

@@ -38,7 +38,7 @@ escrita em `/tmp`, sem precisar de privilégio nenhum.
 Além do que difere do git, o `stage.sh` também copia todo arquivo de `src/`
 que esteja diferente do instalado em `/opt/nodyx` (ignorando CRLF) — cobre
 arquivo que mudou e depois voltou a ser igual ao git, que senão ficaria com a
-versão velha em `/opt`. Arquivo apagado no fork continua sobrando em `/opt`.
+versão velha em `/opt`. Arquivo apagado no fork (em `nodyx-core/` e `nodyx-frontend/`) é removido de `/opt` pelo `update.sh`.
 
 **2. Deploy (precisa de senha — rodar num terminal WSL de verdade)**:
 
@@ -87,8 +87,7 @@ sudo bash /mnt/c/Users/fefeu/Documents/dev/trik-nodyx/scripts/wsl-local/update.s
 5. Espera o core responder e roda o `verify.sh`.
 
 **Quando usar `full-reset.sh` em vez disso:** pra recomeçar do zero (banco limpo +
-seeds), pra trazer o upstream novo, ou depois de **apagar arquivos** no fork — o
-update só copia/sobrescreve, então um arquivo apagado aqui continua em `/opt/nodyx`.
+seeds), pra trazer o upstream novo. Arquivos apagados no fork o `update.sh` já remove de `/opt/nodyx` sozinho.
 
 **`schema-patches.sql`:** enquanto não há produção, mudança de schema edita
 `trik_001`/`trik_002` direto, e o runner não reaplica migration já registrada. Um

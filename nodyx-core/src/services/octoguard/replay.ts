@@ -53,7 +53,7 @@ export interface ReplayResult {
   truncated: null | 'too_many' | 'too_long'
 }
 
-type Row = { id: string; author_id: string; role: string | null; grade_id: string | null; author: string | null; author_created: string; place: string | null; content: string; at: string }
+type Row = { id: string; author_id: string; role: string | null; grade_id: string | null; grade_ids?: string[] | null; author: string | null; author_created: string; place: string | null; content: string; at: string }
 
 const yieldToLoop = () => new Promise<void>(r => setImmediate(r))
 const clean = (s: string) => normalize(s).replace(/[^\p{L}]/gu, '')
@@ -112,7 +112,8 @@ export async function replayRule(rule: AutomodRuleRow): Promise<ReplayResult> {
       const params: unknown[] = [communityId, String(REPLAY_DAYS), READ_MAX_CHARS, cursor?.at ?? null, cursor?.id ?? null, limit]
       const { rows }: { rows: Row[] } = surface === 'chat'
         ? await db.query<Row>(
-          `SELECT m.id, m.author_id, cm.role, cm.grade_id, u.username AS author, u.created_at::text AS author_created,
+          `SELECT m.id, m.author_id, cm.role, cm.grade_id,
+                  (SELECT COALESCE(array_agg(mg.grade_id), '{}') FROM member_grades mg WHERE mg.community_id = cm.community_id AND mg.user_id = cm.user_id) AS grade_ids, u.username AS author, u.created_at::text AS author_created,
                   ch.name AS place, LEFT(m.content, $3) AS content, m.created_at::text AS at
              FROM channel_messages m
              JOIN users u ON u.id = m.author_id
@@ -123,7 +124,8 @@ export async function replayRule(rule: AutomodRuleRow): Promise<ReplayResult> {
             ORDER BY m.created_at, m.id
             LIMIT $6`, params)
         : await db.query<Row>(
-          `SELECT p.id, p.author_id, cm.role, cm.grade_id, u.username AS author, u.created_at::text AS author_created,
+          `SELECT p.id, p.author_id, cm.role, cm.grade_id,
+                  (SELECT COALESCE(array_agg(mg.grade_id), '{}') FROM member_grades mg WHERE mg.community_id = cm.community_id AND mg.user_id = cm.user_id) AS grade_ids, u.username AS author, u.created_at::text AS author_created,
                   t.title AS place, LEFT(p.content, $3) AS content, p.created_at::text AS at
              FROM posts p
              JOIN users u ON u.id = p.author_id
@@ -145,7 +147,7 @@ export async function replayRule(rule: AutomodRuleRow): Promise<ReplayResult> {
         result.scanned++
         const at = new Date(r.at).getTime()
         const ageDays = (at - new Date(r.author_created).getTime()) / 86_400_000
-        const user = { userId: r.author_id, role: r.role ?? 'member', gradeIds: r.grade_id ? [r.grade_id] : [], accountAgeDays: ageDays }
+        const user = { userId: r.author_id, role: r.role ?? 'member', gradeIds: r.grade_ids ?? (r.grade_id ? [r.grade_id] : []), accountAgeDays: ageDays }
         // Même texte que le moteur en direct : le chat lit le HTML nettoyé, le forum son texte (liens compris)
         const content = surface === 'forum' ? textForModeration(r.content) : r.content
 

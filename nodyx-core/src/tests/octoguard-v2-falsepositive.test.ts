@@ -90,7 +90,7 @@ describe('les routes', () => {
       const s = String(sql).replace(/\s+/g, ' ').trim()
       calls.push({ sql: s, params })
       if (s.includes('FROM communities')) return { rows: [{ id: 'c1' }] }
-      if (s.includes('community_grades cg ON cg.id = cm.grade_id AND')) return { rows: [{ role: params[1] === ADMIN ? 'admin' : 'member', permissions: null }] }
+      if (s.includes('community_grades cg ON cg.id = mg.grade_id AND')) return { rows: [{ role: params[1] === ADMIN ? 'admin' : 'member', permissions: null }] }
       if (s.startsWith('SELECT l.id, l.action, l.metadata')) return { rows: st.entry ? [st.entry] : [] }
       if (s.startsWith('SELECT id, name, type, params FROM octoguard_automod_rules')) return { rows: st.rule ? [st.rule] : [] }
       if (s.startsWith('SELECT action, metadata, created_at FROM admin_audit_log')) return { rows: st.entry ? [{ action: st.entry.action, metadata: st.entry.metadata, created_at: '2026-11-07T10:00:00Z' }] : [] }

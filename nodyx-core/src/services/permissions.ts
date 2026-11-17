@@ -48,16 +48,24 @@ export function rankOf(role: string | null | undefined): number {
   return role && role in ROLE_RANK ? ROLE_RANK[role as Role] : -1
 }
 
-/** Calcul pur : socle du rôle + permissions vraies du grade. */
+/**
+ * Calcul pur : socle du rôle + permissions vraies de TOUS les grades du membre
+ * (union : un membre peut avoir plusieurs grades, chacun AJOUTE ses droits).
+ * Accepte un seul jeu de permissions ou une liste.
+ */
 export function effectivePermissions(
   role: string | null | undefined,
-  gradePermissions: Record<string, unknown> | null | undefined,
+  gradePermissions: Record<string, unknown> | null | undefined | ReadonlyArray<Record<string, unknown> | null | undefined>,
 ): Permission[] {
   const set = new Set<Permission>(role && role in ROLE_BASE ? ROLE_BASE[role as Role] : [])
   // Un non-membre n'hérite d'aucun grade (il n'en a pas de toute façon)
   if (role && gradePermissions) {
-    for (const [k, v] of Object.entries(gradePermissions)) {
-      if (v === true && isPermission(k)) set.add(k)
+    const list = Array.isArray(gradePermissions) ? gradePermissions : [gradePermissions as Record<string, unknown>]
+    for (const perms of list) {
+      if (!perms) continue
+      for (const [k, v] of Object.entries(perms)) {
+        if (v === true && isPermission(k)) set.add(k)
+      }
     }
   }
   return GRADE_PERMISSIONS.filter(p => set.has(p))
@@ -77,12 +85,14 @@ async function loadAccess(communityId: string, userId: string): Promise<MemberAc
   const { rows } = await db.query<{ role: string; permissions: Record<string, unknown> | null }>(
     `SELECT cm.role, cg.permissions
      FROM community_members cm
-     LEFT JOIN community_grades cg ON cg.id = cm.grade_id AND cg.community_id = cm.community_id
+     LEFT JOIN member_grades mg ON mg.community_id = cm.community_id AND mg.user_id = cm.user_id
+     LEFT JOIN community_grades cg ON cg.id = mg.grade_id AND cg.community_id = cm.community_id
      WHERE cm.community_id = $1 AND cm.user_id = $2`,
     [communityId, userId],
   )
+  // Une ligne par grade (ou une seule, sans grade) : les droits sont l'union
   const role = (rows[0]?.role ?? null) as Role | null
-  return { role, rank: rankOf(role), permissions: effectivePermissions(role, rows[0]?.permissions) }
+  return { role, rank: rankOf(role), permissions: effectivePermissions(role, rows.map(r => r.permissions)) }
 }
 
 /** Rôle, rang et droits effectifs d'un utilisateur dans une communauté. */

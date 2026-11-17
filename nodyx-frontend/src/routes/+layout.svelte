@@ -413,6 +413,7 @@
 						nameFontFamily:    null,
 						nameFontUrl:       null,
 						grade:             null,
+						grades:            [],
 						status:            null,
 					}]
 				})
@@ -706,19 +707,29 @@
 	const vcMembers        = $derived($voiceChannelMembersStore)
 	const voiceToasts      = $derived($voiceEventsStore)
 
-	// ── Member groups by grade ─────────────────────────────────────────────────
+	// ── Member groups by grade (estilo Discord) ───────────────────────────────
+	// Só os cargos marcados como « separado no painel » (hoist) formam um grupo. Cada
+	// membro fica sob o MAIS ALTO dos seus cargos separados; sem nenhum, vai em « Online ».
+	// Cargos secretos nunca chegam aqui (o servidor não os envia).
 	const memberGroups = $derived((() => {
 		const groups = new Map<string, typeof onlineMembers>()
+		const colors = new Map<string, string>()
+		const order  = new Map<string, number>()
 		const ungrouped: typeof onlineMembers = []
 		for (const m of onlineMembers) {
-			if (m.grade) {
-				if (!groups.has(m.grade.name)) groups.set(m.grade.name, [])
-				groups.get(m.grade.name)!.push(m)
+			// Servidor antigo (sem `grades`) : o cargo único agrupa como antes
+			const hoisted = m.grades ? m.grades.find((g) => g.hoist) : (m.grade ? { ...m.grade, position: 0 } : undefined)
+			if (hoisted) {
+				if (!groups.has(hoisted.name)) groups.set(hoisted.name, [])
+				groups.get(hoisted.name)!.push(m)
+				colors.set(hoisted.name, hoisted.color)
+				order.set(hoisted.name, (hoisted as { position?: number }).position ?? 0)
 			} else {
 				ungrouped.push(m)
 			}
 		}
-		return { groups, ungrouped }
+		const sorted = new Map([...groups.entries()].sort((a, b) => (order.get(a[0]) ?? 0) - (order.get(b[0]) ?? 0)))
+		return { groups: sorted, colors, ungrouped }
 	})())
 
 

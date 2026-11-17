@@ -12,6 +12,7 @@ export interface FullMember {
   grade_id:     string | null
   grade_name:   string | null
   grade_color:  string | null
+  grades?:      { id: string; name: string; color: string }[]
   points:       number
   joined_at:    string
   is_online:    boolean

@@ -1,4 +1,5 @@
 import { db } from '../config/database'
+import { visibleGradeJoin, visibleGradesJson } from './grade'
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -22,6 +23,8 @@ export interface CommunityMember {
   username:     string
   avatar:       string | null
   grade_id:     string | null
+  /** Todos os cargos VISÍVEIS (não secretos, que o membro escolheu mostrar), do mais alto ao mais baixo */
+  grades?:      { id: string; name: string; color: string }[]
   grade_name:   string | null
   grade_color:  string | null
 }
@@ -168,12 +171,13 @@ export async function getMembers(communityId: string): Promise<CommunityMember[]
   const { rows } = await db.query<CommunityMember>(
     `SELECT cm.community_id, cm.user_id, cm.role, cm.joined_at,
             u.username, u.avatar,
-            cm.grade_id,
+            cg.id    AS grade_id,
             cg.name  AS grade_name,
-            cg.color AS grade_color
+            cg.color AS grade_color,
+            ${visibleGradesJson('cm')} AS grades
      FROM community_members cm
      JOIN users u ON u.id = cm.user_id
-     LEFT JOIN community_grades cg ON cg.id = cm.grade_id
+     ${visibleGradeJoin('cg', 'cm')}
      WHERE cm.community_id = $1
      ORDER BY cm.joined_at ASC`,
     [communityId]

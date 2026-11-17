@@ -29,6 +29,9 @@ export interface OnlineMember {
   nameFontFamily:    string | null
   nameFontUrl:       string | null
   grade:             { name: string; color: string } | null
+  /** Cargos visíveis (não secretos, que a pessoa escolheu mostrar), do mais alto ao mais baixo.
+   *  `hoist`: o cargo agrupa os membros online no painel lateral. */
+  grades?:           { name: string; color: string; hoist: boolean; position?: number }[]
   status:            UserStatus | null
 }
 
@@ -102,6 +105,13 @@ export async function initSocket(token: string, initialCount: number): Promise<v
 
   _socket.on('presence:offline', ({ userId }: { userId: string }) => {
     onlineMembersStore.update(list => list.filter(m => m.userId !== userId))
+  })
+
+  // Cargos mostrados mudaram (a pessoa escolheu o que exibir, ou a equipe mexeu num cargo)
+  _socket.on('presence:grades_update', ({ userId, grade, grades }: { userId: string; grade: OnlineMember['grade']; grades: NonNullable<OnlineMember['grades']> }) => {
+    onlineMembersStore.update(list =>
+      list.map(m => m.userId === userId ? { ...m, grade: grade ?? null, grades: grades ?? [] } : m)
+    )
   })
 
   _socket.on('presence:status_update', ({ userId, status }: { userId: string; status: UserStatus | null }) => {

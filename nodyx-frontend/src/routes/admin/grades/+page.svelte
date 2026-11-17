@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { untrack } from 'svelte'
+	import { untrack, tick } from 'svelte'
 	import { enhance } from '$app/forms'
 	import type { PageData, ActionData } from './$types'
 	import { t } from '$lib/i18n'
@@ -40,23 +40,32 @@
 	// ── Création / édition ────────────────────────────────────────────────
 	let newName  = $state('')
 	let newColor = $state('#99aab5')
+	let newHoist  = $state(false)
+	let newSecret = $state(false)
 
 	let editingId = $state<string | null>(null)
 	let editName  = $state('')
 	let editColor = $state('#99aab5')
+	let editHoist  = $state(false)
+	let editSecret = $state(false)
 	function startEdit(g: any) {
 		editingId = g.id
 		editName  = g.name
 		editColor = g.color
+		editHoist  = !!g.hoist
+		editSecret = !!g.is_secret
 	}
+
+	// Un membre peut avoir plusieurs grades : `grades` les liste tous (grade_id n'est que le principal)
+	const gradeIdsOf = (m: any): string[] => (m.grades ?? (m.grade_id ? [{ id: m.grade_id }] : [])).map((g: any) => g.id)
 
 	// Combien de membres portent chaque grade (lu dans la liste déjà chargée)
 	const holders = $derived.by(() => {
 		const c: Record<string, number> = {}
-		for (const m of members) if (m.grade_id) c[m.grade_id] = (c[m.grade_id] ?? 0) + 1
+		for (const m of members) for (const id of gradeIdsOf(m)) c[id] = (c[id] ?? 0) + 1
 		return c
 	})
-	const ungraded = $derived(members.filter((m: any) => !m.grade_id).length)
+	const ungraded = $derived(members.filter((m: any) => gradeIdsOf(m).length === 0).length)
 
 	// ── Attribution ───────────────────────────────────────────────────────
 	let search      = $state('')
@@ -64,7 +73,7 @@
 	const filteredMembers = $derived.by(() => {
 		const q = search.trim().toLowerCase()
 		return members
-			.filter((m: any) => gradeFilter === 'all' || (gradeFilter === 'none' ? !m.grade_id : m.grade_id === gradeFilter))
+			.filter((m: any) => gradeFilter === 'all' || (gradeFilter === 'none' ? gradeIdsOf(m).length === 0 : gradeIdsOf(m).includes(gradeFilter)))
 			.filter((m: any) => !q || m.username.toLowerCase().includes(q))
 			.sort((a: any, b: any) => a.username.localeCompare(b.username))
 	})
@@ -72,6 +81,16 @@
 	let savedFor  = $state<string | null>(null)
 	let savingFor = $state<string | null>(null)
 	let failedFor = $state<string | null>(null)
+
+	// Sélection en cours par membre (avant l'enregistrement). Absente = ce que la base a.
+	let picks = $state<Record<string, string[]>>({})
+	const picksOf = (m: any): string[] => picks[m.user_id] ?? gradeIdsOf(m)
+	async function toggleGrade(m: any, gid: string, btn: HTMLElement) {
+		const cur = picksOf(m)
+		picks[m.user_id] = cur.includes(gid) ? cur.filter((x) => x !== gid) : [...cur, gid]
+		await tick() // laisse les <input hidden> refléter la sélection avant l'envoi
+		btn.closest('form')?.requestSubmit()
+	}
 </script>
 
 <svelte:head><title>{tFn('agrade.page_title')}</title></svelte:head>
@@ -81,6 +100,30 @@
 		<button type="button" class="adm-tip-btn" aria-label={title} aria-describedby={id}>?</button>
 		<span class="adm-tip-bubble" role="tooltip" id={id}><strong>{title}</strong>{body}</span>
 	</span>
+{/snippet}
+
+{#snippet visChecks(scope: string, hoist: boolean, secret: boolean, set: (hoist: boolean, secret: boolean) => void)}
+	<fieldset class="adm-field">
+		<legend class="adm-label mb-1">{tFn('agrade.visibility')}</legend>
+		<div class="flex flex-col gap-2">
+			<label class="flex items-start gap-2">
+				<input type="checkbox" name="hoist" id="grade-hoist-{scope}" class="mt-1" checked={hoist && !secret} disabled={secret}
+					onchange={(e) => set(e.currentTarget.checked, secret)} />
+				<span>
+					<span class="adm-perm-name block">{tFn('agrade.hoist')}</span>
+					<span class="adm-hint block">{tFn('agrade.hoist_help')}</span>
+				</span>
+			</label>
+			<label class="flex items-start gap-2">
+				<input type="checkbox" name="is_secret" id="grade-secret-{scope}" class="mt-1" checked={secret}
+					onchange={(e) => set(e.currentTarget.checked ? false : hoist, e.currentTarget.checked)} />
+				<span>
+					<span class="adm-perm-name block">🔒 {tFn('agrade.secret')}</span>
+					<span class="adm-hint block">{tFn('agrade.secret_help')}</span>
+				</span>
+			</label>
+		</div>
+	</fieldset>
 {/snippet}
 
 {#snippet permChecks(current: Record<string, boolean> | null, scope: string)}
@@ -178,7 +221,7 @@
 		<form method="POST" action="?/create" class="adm-form"
 			use:enhance={() => async ({ result, update }) => {
 				await update()
-				if (result.type === 'success') newName = ''
+				if (result.type === 'success') { newName = ''; newHoist = false; newSecret = false }
 			}}>
 			<input type="hidden" name="position" value={grades.length} />
 			<div class="adm-form-grid">
@@ -200,6 +243,7 @@
 					</div>
 				</div>
 			</div>
+			{@render visChecks('new', newHoist, newSecret, (h, s) => { newHoist = h; newSecret = s })}
 			{@render permChecks(null, 'new')}
 			<div>
 				<button type="submit" class="adm-btn adm-btn--primary">{tFn('agrade.create')}</button>
@@ -251,6 +295,7 @@
 												</div>
 											</div>
 										</div>
+										{@render visChecks(`edit-${grade.id}`, editHoist, editSecret, (h, s) => { editHoist = h; editSecret = s })}
 										{@render permChecks(grade.permissions ?? {}, `edit-${grade.id}`)}
 										<div class="adm-actions">
 											<button type="submit" class="adm-btn adm-btn--primary adm-btn--sm">{tFn('agrade.save')}</button>
@@ -261,6 +306,8 @@
 							{:else}
 								<td class="adm-cell-main">
 									<span class="adm-swatch" style="background:{grade.color}; color:{inkOn(grade.color)}">{grade.name}</span>
+									{#if grade.is_secret}<span class="adm-pill" title={tFn('agrade.secret_help')}>🔒 {tFn('agrade.badge_secret')}</span>{/if}
+									{#if grade.hoist}<span class="adm-pill" title={tFn('agrade.hoist_help')}>{tFn('agrade.badge_hoist')}</span>{/if}
 								</td>
 								<td data-label={tFn('agrade.permissions')}>
 									{#if GRADE_PERMISSIONS.some((p) => grade.permissions?.[p])}
@@ -353,33 +400,36 @@
 							</td>
 							<td data-label={tFn('agrade.col_assign')}>
 								<form method="POST" action="?/assign" class="flex items-center gap-2 justify-end md:justify-start"
-									use:enhance={({ formElement }) => {
+									use:enhance={() => {
 										savingFor = member.user_id
 										failedFor = null
 										return async ({ result, update }) => {
 											savingFor = null
 											if (result.type === 'success') {
 												await update({ reset: false })
+												delete picks[member.user_id]
 												savedFor = member.user_id
 												setTimeout(() => { if (savedFor === member.user_id) savedFor = null }, 2000)
 											} else {
-												// Échec : le menu revient sur le grade réellement en base,
+												// Échec : la sélection revient sur les grades réellement en base,
 												// et la ligne le dit (jamais de « Enregistré » mensonger).
-												const sel = formElement.querySelector('select')
-												if (sel) sel.value = member.grade_id ?? ''
+												delete picks[member.user_id]
 												failedFor = member.user_id
 											}
 										}
 									}}>
 									<input type="hidden" name="user_id" value={member.user_id} />
-									<select name="grade_id" class="adm-input" aria-label={tFn('agrade.assign_to', { name: member.username })}
-										disabled={grades.length === 0 || savingFor === member.user_id}
-										onchange={(e) => (e.currentTarget as HTMLSelectElement).form?.requestSubmit()}>
-										<option value="" selected={!member.grade_id}>{tFn('agrade.none')}</option>
+									{#each picksOf(member) as gid (gid)}<input type="hidden" name="grade_ids" value={gid} />{/each}
+									<div class="adm-chips" role="group" aria-label={tFn('agrade.assign_to', { name: member.username })}>
 										{#each grades as g (g.id)}
-											<option value={g.id} selected={g.id === member.grade_id}>{g.name}</option>
+											<button type="button" class="adm-chip" aria-pressed={picksOf(member).includes(g.id)}
+												disabled={savingFor === member.user_id}
+												onclick={(e) => toggleGrade(member, g.id, e.currentTarget)}>
+												<span class="inline-block w-2 h-2 rounded-full" style="background:{g.color}" aria-hidden="true"></span>
+												{g.name}
+											</button>
 										{/each}
-									</select>
+									</div>
 									<span class="text-xs adm-muted min-w-[4.5rem]" role="status">
 										{#if savedFor === member.user_id}{tFn('agrade.saved')}{:else if failedFor === member.user_id}<span style="color:var(--nx-bad)">{tFn('agrade.assign_failed')}</span>{/if}
 									</span>

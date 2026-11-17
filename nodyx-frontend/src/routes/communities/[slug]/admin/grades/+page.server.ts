@@ -9,8 +9,10 @@ export const load: PageServerLoad = async ({ params, fetch, cookies }) => {
 	// Load community info, grade list, and member list in parallel
 	const [communityRes, gradesRes, membersRes] = await Promise.all([
 		apiFetch(fetch, `/communities/${params.slug}`),
-		apiFetch(fetch, `/communities/${params.slug}/grades`),
-		apiFetch(fetch, `/communities/${params.slug}/members`),
+		// Com o token : a equipe vê os cargos secretos e a lista COMPLETA de cargos de cada membro
+		// (a rota pública de membros só traz os cargos visíveis; salvar a partir dela apagaria os secretos)
+		apiFetch(fetch, `/communities/${params.slug}/grades`, { headers: { Authorization: `Bearer ${token}` } }),
+		apiFetch(fetch, '/admin/members', { headers: { Authorization: `Bearer ${token}` } }),
 	])
 
 	if (communityRes.status === 404) error(404, 'Communauté introuvable')
@@ -79,12 +81,13 @@ export const actions: Actions = {
 
 		const form    = await request.formData()
 		const userId  = form.get('user_id')  as string
-		const gradeId = form.get('grade_id') as string | null
+		// Todos os grades marcados (nenhum = o membro fica sem grade)
+		const gradeIds = form.getAll('grade_ids').map(String).filter(Boolean)
 
 		const res = await apiFetch(fetch, `/communities/${params.slug}/members/${userId}/grade`, {
 			method: 'PATCH',
 			headers: { Authorization: `Bearer ${token}` },
-			body: JSON.stringify({ grade_id: gradeId === '' ? null : gradeId }),
+			body: JSON.stringify({ grade_ids: gradeIds }),
 		})
 
 		if (!res.ok) {

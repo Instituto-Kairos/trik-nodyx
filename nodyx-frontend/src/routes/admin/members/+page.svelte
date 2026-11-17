@@ -89,13 +89,17 @@
 	const ariaSort = (key: SortKey) =>
 		sortKey === key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'
 
+	// Tous les grades du membre ; sans la liste (ancienne réponse), seulement le principal
+	const shownGrades = (m: any): { id: string; name: string; color: string }[] =>
+		m.grades?.length ? m.grades : (m.grade_name && m.grade_color ? [{ id: m.grade_id, name: m.grade_name, color: m.grade_color }] : [])
+
 	const filtered = $derived.by(() => {
 		const q = search.trim().toLowerCase()
 		const list = members.filter((m: any) =>
 			(roleFilter === 'all' || m.role === roleFilter) &&
 			(!q ||
 				m.username.toLowerCase().includes(q) ||
-				(m.grade_name ?? '').toLowerCase().includes(q) ||
+				(m.grades?.length ? m.grades.some((g: any) => g.name.toLowerCase().includes(q)) : (m.grade_name ?? '').toLowerCase().includes(q)) ||
 				tFn(`amem.role_${m.role}`).toLowerCase().includes(q) ||
 				(revealed[m.user_id] ?? '').toLowerCase().includes(q))
 		)
@@ -285,8 +289,13 @@
 						</td>
 
 						<td data-label={tFn('amem.col_grade')}>
-							{#if member.grade_name && member.grade_color}
-								<span class="grade" style="background-color:{member.grade_color}; color:{luminance(member.grade_color) > 0.5 ? '#111' : '#fff'}">{member.grade_name}</span>
+							<!-- Todos os cargos (grades) do membro; sem a lista, só o principal -->
+							{#if shownGrades(member).length}
+								<span class="flex flex-wrap gap-1">
+									{#each shownGrades(member) as g (g.id)}
+										<span class="grade" style="background-color:{g.color}; color:{luminance(g.color) > 0.5 ? '#111' : '#fff'}">{g.name}</span>
+									{/each}
+								</span>
 							{:else}
 								<span class="adm-muted">·</span>
 							{/if}
