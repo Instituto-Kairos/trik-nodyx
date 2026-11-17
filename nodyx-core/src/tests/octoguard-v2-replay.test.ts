@@ -46,7 +46,7 @@ beforeEach(() => {
     const s = String(sql).replace(/\s+/g, ' ').trim()
     calls.push({ sql: s, params })
     if (s.includes('FROM communities')) return { rows: [{ id: 'c1' }] }
-    if (s.includes('community_grades cg ON cg.id = cm.grade_id AND')) return { rows: [{ role: params[1] === ADMIN ? 'admin' : 'member', permissions: null }] }
+    if (s.includes('community_grades cg ON cg.id = mg.grade_id AND')) return { rows: [{ role: params[1] === ADMIN ? 'admin' : 'member', permissions: null }] }
     if (s.includes('FROM channel_messages m') || s.includes('FROM posts p')) {
       const src = s.includes('FROM channel_messages m') ? st.chat : st.forum
       const after = params[3] ? src.findIndex(r => r.id === params[4]) + 1 : 0

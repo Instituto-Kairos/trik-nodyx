@@ -330,6 +330,10 @@ export default async function adminRoutes(app: FastifyInstance) {
          cg.id   AS grade_id,
          cg.name AS grade_name,
          cg.color AS grade_color,
+         -- Todos os cargos (o principal acima é só o exibido ao lado do nome)
+         (SELECT COALESCE(json_agg(json_build_object('id', g.id, 'name', g.name, 'color', g.color) ORDER BY g.position, g.created_at), '[]'::json)
+            FROM member_grades mg JOIN community_grades g ON g.id = mg.grade_id
+           WHERE mg.community_id = cm.community_id AND mg.user_id = cm.user_id) AS grades,
          (SELECT COUNT(*)::int FROM threads t
           JOIN categories c ON c.id = t.category_id
           WHERE t.author_id = u.id AND c.community_id = $1) AS thread_count,
@@ -734,7 +738,7 @@ export default async function adminRoutes(app: FastifyInstance) {
 
     const { rows: lifted } = await db.query(
       `DELETE FROM community_bans WHERE community_id = $1 AND user_id = $2
-       RETURNING user_id, community_id, prev_role, prev_grade_id, prev_joined_at::text AS prev_joined_at`,
+       RETURNING user_id, community_id, prev_role, prev_grade_id, prev_grade_ids, prev_joined_at::text AS prev_joined_at`,
       [communityId, userId]
     )
     // Efface la marque Redis (le membre peut se reconnecter) et, si c'était une

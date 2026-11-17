@@ -32,7 +32,7 @@ beforeEach(() => {
   vi.mocked(db.query).mockImplementation((async (sql: string, params: unknown[] = []) => {
     const s = String(sql).replace(/\s+/g, ' ')
     if (s.includes('FROM communities')) return { rows: [{ id: 'c1' }] }
-    if (s.includes('community_grades cg ON cg.id = cm.grade_id AND')) return { rows: [{ role: params[1] === ADMIN ? 'admin' : 'member', permissions: null }] }
+    if (s.includes('community_grades cg ON cg.id = mg.grade_id AND')) return { rows: [{ role: params[1] === ADMIN ? 'admin' : 'member', permissions: null }] }
     return { rows: [{ username: 'u' }] }
   }) as never)
 })

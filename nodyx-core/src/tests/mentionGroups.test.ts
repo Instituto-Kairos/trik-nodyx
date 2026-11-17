@@ -47,7 +47,7 @@ beforeEach(() => {
     const s = String(sql)
     if (s.includes("key = 'mentions_group_confirm'")) return { rows: threshold ? [{ value: threshold }] : [] } as any
     if (s.includes('FROM community_grades WHERE community_id = $1 AND id = ANY')) return { rows: [{ id: G, name: 'Organisation' }] } as any
-    if (s.includes('cm.grade_id = $2')) return { rows: members.grade } as any
+    if (s.includes('mg.grade_id = $2')) return { rows: members.grade } as any
     if (s.includes("e.value = 'true'::jsonb")) return { rows: members.team } as any
     if (s.includes("moderate_members' = 'true'")) return { rows: members.team } as any
     if (s.includes('AND cm.user_id = ANY($2::uuid[]) AND u.is_system = false')) return { rows: [] } as any   // preview : personne n'est membre

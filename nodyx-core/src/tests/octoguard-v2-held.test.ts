@@ -89,7 +89,7 @@ beforeEach(() => {
     const s = String(sql).replace(/\s+/g, ' ').trim()
     calls.push({ sql: s, params })
     if (s.includes('FROM communities')) return { rows: [{ id: 'c1' }], rowCount: 1 }
-    if (s.includes('community_grades cg ON cg.id = cm.grade_id AND')) {
+    if (s.includes('community_grades cg ON cg.id = mg.grade_id AND')) {
       return { rows: [{ role: params[1] === MOD ? 'admin' : st.role, permissions: null }], rowCount: 1 }
     }
     if (s.includes('LEFT JOIN community_members cm ON cm.user_id = u.id')) return { rows: [{ role: 'member', grade_id: null, account_age_days: 400 }] }

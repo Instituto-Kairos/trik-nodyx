@@ -63,6 +63,8 @@ export interface LiftedBan {
   community_id: string
   prev_role: string | null
   prev_grade_id: string | null
+  /** Todos os cargos que tinha (o principal inclusive) */
+  prev_grade_ids?: string[] | null
   prev_joined_at: string | null
 }
 
@@ -77,12 +79,22 @@ export async function restoreAfterBan(lifted: LiftedBan[]): Promise<void> {
     try {
       await redis.del(`banned:${b.user_id}`)
       if (!b.prev_role) continue
-      await db.query(
+      const back = await db.query(
         `INSERT INTO community_members (community_id, user_id, role, grade_id, joined_at)
          VALUES ($1, $2, $3, (SELECT id FROM community_grades WHERE id = $4::uuid), COALESCE($5::timestamp, NOW()))
          ON CONFLICT (community_id, user_id) DO NOTHING`,
         [b.community_id, b.user_id, b.prev_role, b.prev_grade_id, b.prev_joined_at]
       )
+      // Os outros cargos voltam também (só os que ainda existem). Se a pessoa já tinha
+      // voltado por conta própria (linha de membro presente), nada é devolvido.
+      if (back?.rowCount !== 0 && b.prev_grade_ids?.length) {
+        await db.query(
+          `INSERT INTO member_grades (community_id, user_id, grade_id)
+           SELECT $1, $2, g.id FROM community_grades g WHERE g.community_id = $1 AND g.id = ANY($3::uuid[])
+           ON CONFLICT DO NOTHING`,
+          [b.community_id, b.user_id, b.prev_grade_ids]
+        )
+      }
     } catch (err) {
       console.warn('[octoguard:bans] restoreAfterBan failed for', b.user_id, err)
     }
@@ -103,20 +115,26 @@ export async function applyTempBan(input: TempBanInput): Promise<boolean> {
       [communityId, input.userId]
     )
     const prev = was[0] ?? null
+    const { rows: allGrades } = await db.query<{ ids: string[] | null }>(
+      `SELECT COALESCE(array_agg(grade_id), '{}') AS ids FROM member_grades WHERE community_id = $1 AND user_id = $2`,
+      [communityId, input.userId]
+    )
+    const prevGradeIds = allGrades[0]?.ids ?? []
     // Un bannissement définitif déjà en place n'est jamais raccourci. Une
     // exclusion prolongée garde ce que le membre était AVANT la première.
     const { rows } = await db.query<{ user_id: string; expires_at: string }>(
-      `INSERT INTO community_bans (community_id, user_id, banned_by, reason, expires_at, prev_role, prev_grade_id, prev_joined_at)
-       VALUES ($1, $2, $8, $3, $4, $5, $6, $7)
+      `INSERT INTO community_bans (community_id, user_id, banned_by, reason, expires_at, prev_role, prev_grade_id, prev_joined_at, prev_grade_ids)
+       VALUES ($1, $2, $8, $3, $4, $5, $6, $7, $9)
        ON CONFLICT (community_id, user_id) DO UPDATE
          SET expires_at     = GREATEST(community_bans.expires_at, EXCLUDED.expires_at),
              reason         = EXCLUDED.reason,
              prev_role      = COALESCE(community_bans.prev_role, EXCLUDED.prev_role),
              prev_grade_id  = COALESCE(community_bans.prev_grade_id, EXCLUDED.prev_grade_id),
-             prev_joined_at = COALESCE(community_bans.prev_joined_at, EXCLUDED.prev_joined_at)
+             prev_joined_at = COALESCE(community_bans.prev_joined_at, EXCLUDED.prev_joined_at),
+             prev_grade_ids = COALESCE(community_bans.prev_grade_ids, EXCLUDED.prev_grade_ids)
          WHERE community_bans.expires_at IS NOT NULL
        RETURNING user_id, expires_at`,
-      [communityId, input.userId, input.reason, expiresAt, prev?.role ?? null, prev?.grade_id ?? null, prev?.joined_at ?? null, input.actorId ?? null]
+      [communityId, input.userId, input.reason, expiresAt, prev?.role ?? null, prev?.grade_id ?? null, prev?.joined_at ?? null, input.actorId ?? null, prevGradeIds]
     )
     if (!rows[0]) return true // déjà banni définitivement
     // Les sessions déjà ouvertes sont bloquées tout de suite, jusqu'à l'échéance
@@ -142,7 +160,7 @@ export async function purgeExpiredBans(): Promise<number> {
   try {
     const { rows } = await db.query<LiftedBan>(
       `DELETE FROM community_bans WHERE expires_at IS NOT NULL AND expires_at <= NOW()
-       RETURNING user_id, community_id, prev_role, prev_grade_id, prev_joined_at::text AS prev_joined_at`
+       RETURNING user_id, community_id, prev_role, prev_grade_id, prev_grade_ids, prev_joined_at::text AS prev_joined_at`
     )
     for (const r of rows) {
       logOctoGuardAction({

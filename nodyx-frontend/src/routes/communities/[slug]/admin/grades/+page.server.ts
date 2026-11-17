@@ -79,12 +79,13 @@ export const actions: Actions = {
 
 		const form    = await request.formData()
 		const userId  = form.get('user_id')  as string
-		const gradeId = form.get('grade_id') as string | null
+		// Todos os grades marcados (nenhum = o membro fica sem grade)
+		const gradeIds = form.getAll('grade_ids').map(String).filter(Boolean)
 
 		const res = await apiFetch(fetch, `/communities/${params.slug}/members/${userId}/grade`, {
 			method: 'PATCH',
 			headers: { Authorization: `Bearer ${token}` },
-			body: JSON.stringify({ grade_id: gradeId === '' ? null : gradeId }),
+			body: JSON.stringify({ grade_ids: gradeIds }),
 		})
 
 		if (!res.ok) {

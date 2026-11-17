@@ -23,7 +23,7 @@ vi.mock('../services/privateContent', async (orig) => ({
 
 // ── Un petit monde : qui est qui dans la communauté c1 ────────────────────────
 
-type Member = { role: string; permissions: Record<string, boolean> | null }
+type Member = { role: string; permissions: Record<string, boolean> | null; grades?: { id: string; permissions: Record<string, boolean> }[] }
 const world: Record<string, Member> = {}
 const U = {
   owner:     '11111111-1111-4111-8111-111111111111',
@@ -70,6 +70,15 @@ vi.mock('../models/grade', () => ({
   update: vi.fn().mockResolvedValue({ id: 'g' }),
   remove: vi.fn().mockResolvedValue(true),
   assignToMember: vi.fn().mockResolvedValue({ found: true, gradeValid: true }),
+  // Os grades que la cible porte déjà : ceux du faux monde, un par jeu de permissions
+  listForMember: vi.fn(async (_c: string, uid: string) => {
+    const m = world[uid]
+    return m?.grades ?? (m?.permissions ? [{ id: 'current', permissions: m.permissions }] : [])
+  }),
+  findManyInCommunity: vi.fn(async (_c: string, ids: string[]) => ids.flatMap(id =>
+    id === GRADE_BAN ? [{ id, community_id: 'c1', permissions: { ban_members: true } }]
+    : id === GRADE_TITLE ? [{ id, community_id: 'c1', permissions: {} }] : [])),
+  setMemberGrades: vi.fn().mockResolvedValue({ found: true, gradeValid: true }),
 }))
 
 vi.mock('../models/thread', () => ({
@@ -98,8 +107,8 @@ function routeDb() {
     const s = String(sql)
     if (s.includes('FROM communities')) return { rows: [{ id: 'c1' }], rowCount: 1 }
     if (s.includes('FROM threads t JOIN categories')) return { rows: [{ community_id: 'c1' }], rowCount: 1 }
-    // getAccess et la cible d'une attribution de grade : (community_id, user_id)
-    if (s.includes('FROM community_members cm') && s.includes('community_grades cg')) {
+    // getAccess et la cible d'une attribution de grade (son rôle) : (community_id, user_id)
+    if (s.includes('FROM community_members cm')) {
       const m = world[String(params[1])]
       return { rows: m ? [m] : [], rowCount: m ? 1 : 0 }
     }
@@ -150,6 +159,26 @@ describe('effectivePermissions : socle du rôle + grade', () => {
   })
   it('un non-membre n’hérite de rien, même avec des permissions', () => {
     expect(effectivePermissions(null, { ban_members: true })).toEqual([])
+  })
+  it('plusieurs grades : les droits s’additionnent (union)', () => {
+    expect(effectivePermissions('member', [{ ban_members: true }, { view_audit_log: true }, null]))
+      .toEqual(['ban_members', 'view_audit_log'])
+  })
+  it('un grade qui ne donne rien n’en retire pas un autre', () => {
+    expect(effectivePermissions('member', [{ ban_members: true }, { ban_members: false }])).toEqual(['ban_members'])
+  })
+})
+
+describe('getAccess : un membre avec plusieurs grades', () => {
+  it('additionne les droits de toutes les lignes (un grade par ligne)', async () => {
+    vi.mocked(redis.get).mockResolvedValue(null)
+    vi.mocked(db.query).mockResolvedValueOnce({ rows: [
+      { role: 'member', permissions: { ban_members: true } },
+      { role: 'member', permissions: { view_audit_log: true } },
+    ], rowCount: 2 } as never)
+    const a = await getAccess('c1', U.member)
+    expect(a.permissions).toEqual(['ban_members', 'view_audit_log'])
+    expect(a.role).toBe('member')
   })
 })
 
@@ -285,7 +314,7 @@ describe('grades : manage_grades et anti-escalade', () => {
   it('on ne donne pas un grade plus puissant que soi', async () => {
     const res = await assign(U.gradeur, U.member, GRADE_BAN)
     expect(res.statusCode).toBe(403)
-    expect(GradeModel.assignToMember).not.toHaveBeenCalled()
+    expect(GradeModel.setMemberGrades).not.toHaveBeenCalled()
   })
   it('sous le rang d’admin, on ne touche pas au grade d’un rang égal ou supérieur', async () => {
     world[U.mod] = { role: 'moderator', permissions: { manage_grades: true } }
@@ -295,5 +324,49 @@ describe('grades : manage_grades et anti-escalade', () => {
   })
   it('on peut se donner un grade titre à soi-même', async () => {
     expect((await assign(U.gradeur, U.gradeur, GRADE_TITLE)).statusCode).toBe(200)
+  })
+
+  // Plusieurs grades par membre
+  const assignMany = (who: string, target: string, grade_ids: string[]) =>
+    a.inject({ method: 'PATCH', url: `/c/nodyx/members/${target}/grade`, headers: { authorization: token(who) }, payload: { grade_ids } })
+
+  it('plusieurs grades d’un coup : l’ensemble complet est enregistré', async () => {
+    expect((await assignMany(U.admin, U.member, [GRADE_TITLE, GRADE_BAN])).statusCode).toBe(200)
+    expect(GradeModel.setMemberGrades).toHaveBeenCalledWith('c1', U.member, [GRADE_TITLE, GRADE_BAN])
+  })
+  it('liste vide : la personne n’a plus aucun grade', async () => {
+    expect((await assignMany(U.admin, U.member, [])).statusCode).toBe(200)
+    expect(GradeModel.setMemberGrades).toHaveBeenCalledWith('c1', U.member, [])
+  })
+  it('l’ancienne forme grade_id continue de marcher (un seul grade, ou null)', async () => {
+    await assign(U.admin, U.member, GRADE_TITLE)
+    expect(GradeModel.setMemberGrades).toHaveBeenLastCalledWith('c1', U.member, [GRADE_TITLE])
+    await assign(U.admin, U.member, null)
+    expect(GradeModel.setMemberGrades).toHaveBeenLastCalledWith('c1', U.member, [])
+  })
+  it('un grade inconnu : 404, rien n’est écrit', async () => {
+    const res = await assignMany(U.admin, U.member, [GRADE_TITLE, '00000000-0000-4000-8000-000000000000'])
+    expect(res.statusCode).toBe(404)
+    expect(GradeModel.setMemberGrades).not.toHaveBeenCalled()
+  })
+  it('sans grade_id ni grade_ids : refusé', async () => {
+    const res = await a.inject({ method: 'PATCH', url: `/c/nodyx/members/${U.member}/grade`, headers: { authorization: token(U.admin) }, payload: {} })
+    expect(res.statusCode).toBe(400)
+  })
+  it('ajouter un grade titre à quelqu’un qui garde un grade puissant : permis (seul ce qui change compte)', async () => {
+    // Ator : moderador com manage_grades (rank acima do membro), sem ban_members
+    world[U.mod] = { role: 'moderator', permissions: { manage_grades: true } }
+    world[U.member] = { role: 'member', permissions: null, grades: [{ id: GRADE_BAN, permissions: { ban_members: true } }] }
+    const res = await assignMany(U.mod, U.member, [GRADE_BAN, GRADE_TITLE])
+    expect(res.statusCode).toBe(200)
+    expect(GradeModel.setMemberGrades).toHaveBeenCalledWith('c1', U.member, [GRADE_BAN, GRADE_TITLE])
+  })
+  it('mais lui retirer ce grade puissant reste interdit sans ce droit', async () => {
+    world[U.mod] = { role: 'moderator', permissions: { manage_grades: true } }
+    world[U.member] = { role: 'member', permissions: null, grades: [{ id: GRADE_BAN, permissions: { ban_members: true } }] }
+    const res = await assignMany(U.mod, U.member, [GRADE_TITLE])
+    expect(res.statusCode).toBe(403)
+    expect(res.json().code).toBe('GRADE_ESCALATION')
+    expect(GradeModel.setMemberGrades).not.toHaveBeenCalled()
   })
 })

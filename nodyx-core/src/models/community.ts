@@ -22,6 +22,8 @@ export interface CommunityMember {
   username:     string
   avatar:       string | null
   grade_id:     string | null
+  /** Todos os cargos do membro (grade_id é só o principal, o exibido) */
+  grade_ids?:   string[]
   grade_name:   string | null
   grade_color:  string | null
 }
@@ -169,6 +171,7 @@ export async function getMembers(communityId: string): Promise<CommunityMember[]
     `SELECT cm.community_id, cm.user_id, cm.role, cm.joined_at,
             u.username, u.avatar,
             cm.grade_id,
+            (SELECT COALESCE(array_agg(mg.grade_id), '{}') FROM member_grades mg WHERE mg.community_id = cm.community_id AND mg.user_id = cm.user_id) AS grade_ids,
             cg.name  AS grade_name,
             cg.color AS grade_color
      FROM community_members cm
@@ -186,6 +189,7 @@ export async function getMember(communityId: string, userId: string): Promise<Co
     `SELECT cm.community_id, cm.user_id, cm.role, cm.joined_at,
             u.username, u.avatar,
             cm.grade_id,
+            (SELECT COALESCE(array_agg(mg.grade_id), '{}') FROM member_grades mg WHERE mg.community_id = cm.community_id AND mg.user_id = cm.user_id) AS grade_ids,
             cg.name  AS grade_name,
             cg.color AS grade_color
      FROM community_members cm

@@ -61,7 +61,7 @@ function routeDb() {
     const s = String(sql).replace(/\s+/g, ' ').trim()
     calls.push({ sql: s, params })
     if (s.includes('FROM communities')) return { rows: [{ id: 'c1' }], rowCount: 1 }
-    if (s.includes('FROM community_members cm') && s.includes('community_grades cg ON cg.id = cm.grade_id AND')) {
+    if (s.includes('FROM community_members cm') && s.includes('community_grades cg ON cg.id = mg.grade_id AND')) {
       const m = world[String(params[1])]
       return { rows: m ? [m] : [], rowCount: m ? 1 : 0 }
     }

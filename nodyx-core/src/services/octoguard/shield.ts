@@ -92,11 +92,12 @@ async function teamIds(except: string | null): Promise<string[]> {
     `SELECT cm.user_id
        FROM community_members cm
        JOIN users u ON u.id = cm.user_id AND u.is_system = false
-       LEFT JOIN community_grades cg ON cg.id = cm.grade_id AND cg.community_id = cm.community_id
       WHERE cm.community_id = $1
         AND (cm.role IN ('owner', 'admin', 'moderator')
-             OR cg.permissions -> 'moderate_members' = 'true'::jsonb
-             OR cg.permissions -> 'manage_octoguard' = 'true'::jsonb)
+             OR EXISTS (SELECT 1 FROM member_grades mg JOIN community_grades cg ON cg.id = mg.grade_id
+                         WHERE mg.community_id = cm.community_id AND mg.user_id = cm.user_id
+                           AND (cg.permissions -> 'moderate_members' = 'true'::jsonb
+                                OR cg.permissions -> 'manage_octoguard' = 'true'::jsonb)))
         AND ($2::uuid IS NULL OR cm.user_id <> $2::uuid)`,
     [communityId, except])
   return rows.map(r => r.user_id)

@@ -99,9 +99,11 @@ async function banCapableIds(except: string | null): Promise<string[]> {
     `SELECT cm.user_id
        FROM community_members cm
        JOIN users u ON u.id = cm.user_id AND u.is_system = false
-       LEFT JOIN community_grades cg ON cg.id = cm.grade_id AND cg.community_id = cm.community_id
       WHERE cm.community_id = $1
-        AND (cm.role IN ('owner', 'admin') OR cg.permissions -> 'ban_members' = 'true'::jsonb)
+        AND (cm.role IN ('owner', 'admin')
+             OR EXISTS (SELECT 1 FROM member_grades mg JOIN community_grades cg ON cg.id = mg.grade_id
+                         WHERE mg.community_id = cm.community_id AND mg.user_id = cm.user_id
+                           AND cg.permissions -> 'ban_members' = 'true'::jsonb))
         AND ($2::uuid IS NULL OR cm.user_id <> $2::uuid)`,
     [communityId, except])
   return rows.map(r => r.user_id)
@@ -408,7 +410,7 @@ export async function undoLadder(actor: Actor, ladderId: string): Promise<{ ok: 
     const communityId = await getInstanceCommunityId()
     const { rows: lifted } = await db.query<LiftedBan>(
       `DELETE FROM community_bans WHERE community_id = $1 AND user_id = $2 AND expires_at IS NOT NULL
-       RETURNING user_id, community_id, prev_role, prev_grade_id, prev_joined_at::text AS prev_joined_at`,
+       RETURNING user_id, community_id, prev_role, prev_grade_id, prev_grade_ids, prev_joined_at::text AS prev_joined_at`,
       [communityId, row.user_id])
     if (lifted.length) await restoreAfterBan(lifted)
     else await invalidatePermissions(communityId)

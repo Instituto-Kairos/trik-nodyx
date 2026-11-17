@@ -118,11 +118,12 @@ export const actions: Actions = {
 		const { slug } = await infoRes.json()
 		const form    = await request.formData()
 		const userId  = form.get('user_id')  as string
-		const gradeId = form.get('grade_id') as string
+		// Tous les grades cochés (aucun = le membre n'en a plus)
+		const gradeIds = form.getAll('grade_ids').map(String).filter(Boolean)
 		const res = await apiFetch(fetch, `/communities/${slug}/members/${userId}/grade`, {
 			method: 'PATCH',
 			headers: { Authorization: `Bearer ${token}` },
-			body: JSON.stringify({ grade_id: gradeId === '' ? null : gradeId }),
+			body: JSON.stringify({ grade_ids: gradeIds }),
 		})
 		if (!res.ok) return fail(res.status, { error: (await res.json().catch(() => ({}))).error ?? 'Erreur attribution grade' })
 	},

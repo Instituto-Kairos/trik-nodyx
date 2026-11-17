@@ -38,9 +38,12 @@ function exceeds(actor: MemberAccess, perms: Record<string, unknown> | null | un
 
 const PatchGradeBody = GradeBody.partial()
 
+// `grade_ids` : o conjunto completo de cargos do membro (vazio = nenhum).
+// `grade_id`  : forma antiga, um cargo só (ou null) : equivale a grade_ids [id] / [].
 const AssignGradeBody = z.object({
-  grade_id: z.string().uuid().nullable(),
-})
+  grade_id:  z.string().uuid().nullable().optional(),
+  grade_ids: z.array(z.string().uuid()).max(50).optional(),
+}).refine(b => b.grade_id !== undefined || b.grade_ids !== undefined, { message: 'grade_id or grade_ids is required' })
 
 const CreateBody = z.object({
   name:        z.string().min(2).max(100),
@@ -279,7 +282,8 @@ export default async function communityRoutes(app: FastifyInstance) {
     preHandler: [rateLimit, requireAuth, validate({ body: AssignGradeBody })],
   }, async (request, reply) => {
     const { slug, userId } = request.params as { slug: string; userId: string }
-    const { grade_id } = request.body as z.infer<typeof AssignGradeBody>
+    const body = request.body as z.infer<typeof AssignGradeBody>
+    const nextIds = [...new Set(body.grade_ids ?? (body.grade_id ? [body.grade_id] : []))]
 
     const community = await CommunityModel.findBySlug(slug)
     if (!community) {
@@ -291,12 +295,9 @@ export default async function communityRoutes(app: FastifyInstance) {
       return reply.code(403).send({ error: 'Missing permission: manage_grades', code: 'FORBIDDEN' })
     }
 
-    // La cible : son rang, et le grade qu'elle porte déjà
-    const { rows: targetRows } = await db.query<{ role: string; permissions: Record<string, unknown> | null }>(
-      `SELECT cm.role, cg.permissions
-       FROM community_members cm
-       LEFT JOIN community_grades cg ON cg.id = cm.grade_id
-       WHERE cm.community_id = $1 AND cm.user_id = $2`,
+    // La cible : son rang
+    const { rows: targetRows } = await db.query<{ role: string }>(
+      `SELECT cm.role FROM community_members cm WHERE cm.community_id = $1 AND cm.user_id = $2`,
       [community.id, userId]
     )
     if (!targetRows[0]) {
@@ -308,13 +309,22 @@ export default async function communityRoutes(app: FastifyInstance) {
     if (!self && actor.rank < ROLE_ADMIN_RANK && rankOf(targetRows[0].role) >= actor.rank) {
       return reply.code(403).send({ error: 'Cannot change the grade of a member of equal or higher rank', code: 'RANK_TOO_LOW' })
     }
-    // Ni retirer un grade plus puissant que soi, ni en donner un
-    const next = grade_id ? await GradeModel.findById(grade_id) : null
-    if (exceeds(actor, targetRows[0].permissions).length > 0 || exceeds(actor, next?.permissions).length > 0) {
+    // Ni retirer un grade plus puissant que soi, ni en donner un. Seuls comptent
+    // les grades qui changent : ceux que la cible garde ne sont pas touchés.
+    const currentGrades = await GradeModel.listForMember(community.id, userId)
+    const nextGrades    = await GradeModel.findManyInCommunity(community.id, nextIds)
+    if (nextGrades.length !== nextIds.length) {
+      return reply.code(404).send({ error: 'Grade not found', code: 'NOT_FOUND' })
+    }
+    const keep    = new Set(nextIds)
+    const had     = new Set(currentGrades.map(g => g.id))
+    const removed = currentGrades.filter(g => !keep.has(g.id))
+    const added   = nextGrades.filter(g => !had.has(g.id))
+    if ([...removed, ...added].some(g => exceeds(actor, g.permissions).length > 0)) {
       return reply.code(403).send({ error: 'Cannot grant or remove a permission you do not have', code: 'GRADE_ESCALATION' })
     }
 
-    const result = await GradeModel.assignToMember(community.id, userId, grade_id)
+    const result = await GradeModel.setMemberGrades(community.id, userId, nextIds)
     if (!result.found) {
       return reply.code(404).send({ error: 'Member not found', code: 'NOT_FOUND' })
     }

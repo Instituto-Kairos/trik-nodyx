@@ -120,9 +120,9 @@ export async function setCategoryGrades(categoryId: string, gradeIds: string[]):
   }
 }
 
-/** O cargo de um membro (ou null): o autor só pode restringir um tópico ao próprio cargo. */
-export async function memberGradeId(communityId: string, userId: string): Promise<string | null> {
-  const { rows } = await db.query<{ grade_id: string | null }>(
-    `SELECT grade_id FROM community_members WHERE community_id = $1 AND user_id = $2`, [communityId, userId])
-  return rows[0]?.grade_id ?? null
+/** Os cargos de um membro: o autor só pode restringir um tópico a um dos próprios cargos. */
+export async function memberGradeIds(communityId: string, userId: string): Promise<string[]> {
+  const { rows } = await db.query<{ grade_id: string }>(
+    `SELECT grade_id FROM member_grades WHERE community_id = $1 AND user_id = $2`, [communityId, userId])
+  return rows.map(r => r.grade_id)
 }

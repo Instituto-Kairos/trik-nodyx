@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { untrack } from 'svelte'
+	import { untrack, tick } from 'svelte'
 	import { enhance } from '$app/forms'
 	import type { PageData, ActionData } from './$types'
 	import { t } from '$lib/i18n'
@@ -50,13 +50,16 @@
 		editColor = g.color
 	}
 
+	// Un membre peut avoir plusieurs grades : `grades` les liste tous (grade_id n'est que le principal)
+	const gradeIdsOf = (m: any): string[] => (m.grades ?? (m.grade_id ? [{ id: m.grade_id }] : [])).map((g: any) => g.id)
+
 	// Combien de membres portent chaque grade (lu dans la liste déjà chargée)
 	const holders = $derived.by(() => {
 		const c: Record<string, number> = {}
-		for (const m of members) if (m.grade_id) c[m.grade_id] = (c[m.grade_id] ?? 0) + 1
+		for (const m of members) for (const id of gradeIdsOf(m)) c[id] = (c[id] ?? 0) + 1
 		return c
 	})
-	const ungraded = $derived(members.filter((m: any) => !m.grade_id).length)
+	const ungraded = $derived(members.filter((m: any) => gradeIdsOf(m).length === 0).length)
 
 	// ── Attribution ───────────────────────────────────────────────────────
 	let search      = $state('')
@@ -64,7 +67,7 @@
 	const filteredMembers = $derived.by(() => {
 		const q = search.trim().toLowerCase()
 		return members
-			.filter((m: any) => gradeFilter === 'all' || (gradeFilter === 'none' ? !m.grade_id : m.grade_id === gradeFilter))
+			.filter((m: any) => gradeFilter === 'all' || (gradeFilter === 'none' ? gradeIdsOf(m).length === 0 : gradeIdsOf(m).includes(gradeFilter)))
 			.filter((m: any) => !q || m.username.toLowerCase().includes(q))
 			.sort((a: any, b: any) => a.username.localeCompare(b.username))
 	})
@@ -72,6 +75,16 @@
 	let savedFor  = $state<string | null>(null)
 	let savingFor = $state<string | null>(null)
 	let failedFor = $state<string | null>(null)
+
+	// Sélection en cours par membre (avant l'enregistrement). Absente = ce que la base a.
+	let picks = $state<Record<string, string[]>>({})
+	const picksOf = (m: any): string[] => picks[m.user_id] ?? gradeIdsOf(m)
+	async function toggleGrade(m: any, gid: string, btn: HTMLElement) {
+		const cur = picksOf(m)
+		picks[m.user_id] = cur.includes(gid) ? cur.filter((x) => x !== gid) : [...cur, gid]
+		await tick() // laisse les <input hidden> refléter la sélection avant l'envoi
+		btn.closest('form')?.requestSubmit()
+	}
 </script>
 
 <svelte:head><title>{tFn('agrade.page_title')}</title></svelte:head>
@@ -353,33 +366,36 @@
 							</td>
 							<td data-label={tFn('agrade.col_assign')}>
 								<form method="POST" action="?/assign" class="flex items-center gap-2 justify-end md:justify-start"
-									use:enhance={({ formElement }) => {
+									use:enhance={() => {
 										savingFor = member.user_id
 										failedFor = null
 										return async ({ result, update }) => {
 											savingFor = null
 											if (result.type === 'success') {
 												await update({ reset: false })
+												delete picks[member.user_id]
 												savedFor = member.user_id
 												setTimeout(() => { if (savedFor === member.user_id) savedFor = null }, 2000)
 											} else {
-												// Échec : le menu revient sur le grade réellement en base,
+												// Échec : la sélection revient sur les grades réellement en base,
 												// et la ligne le dit (jamais de « Enregistré » mensonger).
-												const sel = formElement.querySelector('select')
-												if (sel) sel.value = member.grade_id ?? ''
+												delete picks[member.user_id]
 												failedFor = member.user_id
 											}
 										}
 									}}>
 									<input type="hidden" name="user_id" value={member.user_id} />
-									<select name="grade_id" class="adm-input" aria-label={tFn('agrade.assign_to', { name: member.username })}
-										disabled={grades.length === 0 || savingFor === member.user_id}
-										onchange={(e) => (e.currentTarget as HTMLSelectElement).form?.requestSubmit()}>
-										<option value="" selected={!member.grade_id}>{tFn('agrade.none')}</option>
+									{#each picksOf(member) as gid (gid)}<input type="hidden" name="grade_ids" value={gid} />{/each}
+									<div class="adm-chips" role="group" aria-label={tFn('agrade.assign_to', { name: member.username })}>
 										{#each grades as g (g.id)}
-											<option value={g.id} selected={g.id === member.grade_id}>{g.name}</option>
+											<button type="button" class="adm-chip" aria-pressed={picksOf(member).includes(g.id)}
+												disabled={savingFor === member.user_id}
+												onclick={(e) => toggleGrade(member, g.id, e.currentTarget)}>
+												<span class="inline-block w-2 h-2 rounded-full" style="background:{g.color}" aria-hidden="true"></span>
+												{g.name}
+											</button>
 										{/each}
-									</select>
+									</div>
 									<span class="text-xs adm-muted min-w-[4.5rem]" role="status">
 										{#if savedFor === member.user_id}{tFn('agrade.saved')}{:else if failedFor === member.user_id}<span style="color:var(--nx-bad)">{tFn('agrade.assign_failed')}</span>{/if}
 									</span>

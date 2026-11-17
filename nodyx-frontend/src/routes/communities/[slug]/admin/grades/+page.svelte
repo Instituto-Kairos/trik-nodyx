@@ -277,20 +277,19 @@
 								<td class="px-4 py-3">
 									<form method="POST" action="?/assign" use:enhance class="flex items-center gap-2">
 										<input type="hidden" name="user_id" value={member.user_id} />
-										<select
-											name="grade_id"
-											class="rounded bg-gray-800 border border-gray-700 px-2 py-1 text-white text-xs focus:outline-none focus:border-indigo-500"
-										>
-											<option value="">{tFn('grades.none')}</option>
+										<div class="flex flex-wrap gap-x-3 gap-y-1">
 											{#each data.grades as grade}
-												<option
-													value={grade.id}
-													selected={grade.id === member.grade_id}
-												>
+												<label class="inline-flex items-center gap-1 text-xs text-gray-300">
+													<input
+														type="checkbox"
+														name="grade_ids"
+														value={grade.id}
+														checked={(member.grade_ids ?? (member.grade_id ? [member.grade_id] : [])).includes(grade.id)}
+													/>
 													{grade.name}
-												</option>
+												</label>
 											{/each}
-										</select>
+										</div>
 										<button
 											type="submit"
 											class="rounded bg-indigo-600 hover:bg-indigo-500 px-3 py-1 text-xs font-semibold text-white transition-colors"
