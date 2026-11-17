@@ -4569,5 +4569,18 @@
   "private.no_grades_admin": "Criar cargos",
   "private.err_load": "Não foi possível carregar os cargos.",
   "private.err_save": "Não foi possível salvar os cargos.",
-  "private.err_forbidden": "Você não pode mudar quem vê este tópico."
+  "private.err_forbidden": "Você não pode mudar quem vê este tópico.",
+  "agrade.visibility": "Visibilidade",
+  "agrade.hoist": "Exibir separado no painel de membros",
+  "agrade.hoist_help": "Os membros online com este cargo ficam agrupados sob ele no painel lateral (como no Discord). Cada membro aparece sob o cargo separado mais alto que tiver.",
+  "agrade.secret": "Cargo secreto",
+  "agrade.secret_help": "Nunca aparece publicamente: nem nos posts, nem no perfil, nem na lista ou no painel de membros. Só a equipe o vê, e quem o tem o vê nas próprias configurações. Continua valendo para permissões e conteúdo privado.",
+  "agrade.badge_secret": "Secreto",
+  "agrade.badge_hoist": "Separado",
+  "mybadges.title": "Cargos exibidos ao lado do meu nome",
+  "mybadges.desc": "Escolha quais dos seus cargos aparecem nos seus posts, no seu perfil e na lista de membros.",
+  "mybadges.hint": "Cargos riscados ficam escondidos. Eles continuam dando as permissões a você.",
+  "mybadges.secret_tip": "Cargo secreto: nunca é mostrado aos outros",
+  "mybadges.saved": "Salvo.",
+  "mybadges.error": "Não foi possível salvar. Tente de novo."
 }

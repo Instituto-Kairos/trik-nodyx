@@ -2,6 +2,7 @@
     import NetworkDoctor from '$lib/components/NetworkDoctor.svelte';
     import E2EKeyBackup from '$lib/components/E2EKeyBackup.svelte';
     import MentionSettings from '$lib/components/MentionSettings.svelte';
+    import MyBadgesSettings from '$lib/components/MyBadgesSettings.svelte';
     import { page } from '$app/state';
     import { enhance } from '$app/forms';
     import { goto } from '$app/navigation';
@@ -1266,6 +1267,8 @@
                     </p>
                 {/if}
             </div>
+
+            {#if page.data.user}<MyBadgesSettings />{/if}
         </div>
         {/if}
 

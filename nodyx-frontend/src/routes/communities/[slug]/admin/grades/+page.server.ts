@@ -9,8 +9,10 @@ export const load: PageServerLoad = async ({ params, fetch, cookies }) => {
 	// Load community info, grade list, and member list in parallel
 	const [communityRes, gradesRes, membersRes] = await Promise.all([
 		apiFetch(fetch, `/communities/${params.slug}`),
-		apiFetch(fetch, `/communities/${params.slug}/grades`),
-		apiFetch(fetch, `/communities/${params.slug}/members`),
+		// Com o token : a equipe vê os cargos secretos e a lista COMPLETA de cargos de cada membro
+		// (a rota pública de membros só traz os cargos visíveis; salvar a partir dela apagaria os secretos)
+		apiFetch(fetch, `/communities/${params.slug}/grades`, { headers: { Authorization: `Bearer ${token}` } }),
+		apiFetch(fetch, '/admin/members', { headers: { Authorization: `Bearer ${token}` } }),
 	])
 
 	if (communityRes.status === 404) error(404, 'Communauté introuvable')

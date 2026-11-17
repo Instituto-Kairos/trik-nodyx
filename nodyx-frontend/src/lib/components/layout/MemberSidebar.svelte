@@ -50,7 +50,7 @@
 		sidebarBg: SidebarBg | null | undefined;
 		user: UserLite | null;
 		onlineMembers: OnlineMember[];
-		memberGroups: { groups: Map<string, OnlineMember[]>; ungrouped: OnlineMember[] };
+		memberGroups: { groups: Map<string, OnlineMember[]>; colors: Map<string, string>; ungrouped: OnlineMember[] };
 		offlineMembers: OfflineMember[];
 		memberCount: number;
 		screenSharingUserIds: Set<string>;
@@ -172,7 +172,7 @@
 			<!-- ── Grouped by grade ──────────────────────────────────────── -->
 			{#each [...memberGroups.groups.entries()] as [gradeName, members]}
 				<div class="group-label">
-					<span class="w-1.5 h-1.5 rounded-full shrink-0" style="background: {members[0]?.grade?.color ?? '#6b7280'}"></span>
+					<span class="w-1.5 h-1.5 rounded-full shrink-0" style="background: {memberGroups.colors.get(gradeName) ?? '#6b7280'}"></span>
 					<span class="gt">{gradeName}</span>
 					<span class="gc">{members.length}</span>
 				</div>
@@ -181,7 +181,7 @@
 					{@const hasStatus   = !!(member.status?.text || member.status?.emoji)}
 					{@const isSharing   = screenSharingUserIds.has(member.userId)}
 					{@const isStreaming = streamingUserIds.has(member.userId)}
-					{@const avatarColor = members[0]?.grade?.color ?? 'var(--nx-accent-2-strong)'}
+					{@const avatarColor = memberGroups.colors.get(gradeName) ?? 'var(--nx-accent-2-strong)'}
 
 					<button type="button"
 					        class="member {isMe ? 'me' : ''}"

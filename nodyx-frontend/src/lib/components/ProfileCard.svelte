@@ -19,6 +19,8 @@
 		tags: string[]
 		memberSince: string // ISO date string
 		grade?: { name: string; color: string } | null
+		/** Todos os cargos visíveis (a lista, quando enviada, substitui `grade`; vazia = nenhum) */
+		grades?: { name: string; color: string }[]
 		// Variants: 'forum' and 'full' are implemented.
 		// 'chat' and 'vocal' are reserved for Phase 2 (chat & vocal rooms).
 		variant: 'forum' | 'full' | 'chat' | 'vocal'
@@ -38,8 +40,11 @@
 		tags,
 		memberSince,
 		grade = null,
+		grades,
 		variant = 'forum',
 	}: ProfileCardProps = $props()
+
+	const shownGrades = $derived(grades ?? (grade ? [grade] : []))
 
 	$effect(() => ensureFontLoaded(nameFontFamily, nameFontUrl))
 
@@ -121,13 +126,17 @@
 		</a>
 
 		<!-- Grade badge -->
-		{#if grade}
-			<span
-				class="text-xs font-medium rounded px-1.5 py-0.5 truncate max-w-full"
-				style="background-color: {grade.color}; color: {gradeTextColor(grade.color)}"
-			>
-				{grade.name}
-			</span>
+		{#if shownGrades.length}
+			<div class="flex flex-wrap justify-center gap-1 max-w-full">
+				{#each shownGrades as g (g.name)}
+					<span
+						class="text-xs font-medium rounded px-1.5 py-0.5 truncate max-w-full"
+						style="background-color: {g.color}; color: {gradeTextColor(g.color)}"
+					>
+						{g.name}
+					</span>
+				{/each}
+			</div>
 		{/if}
 
 		<!-- Points + Level -->
@@ -187,14 +196,14 @@
 			<span class="text-sm text-[var(--nx-text-muted)]">@{username}</span>
 
 			<!-- Grade badge -->
-			{#if grade}
+			{#each shownGrades as g (g.name)}
 				<span
 					class="self-start text-xs font-medium rounded px-2 py-0.5"
-					style="background-color: {grade.color}; color: {gradeTextColor(grade.color)}"
+					style="background-color: {g.color}; color: {gradeTextColor(g.color)}"
 				>
-					{grade.name}
+					{g.name}
 				</span>
-			{/if}
+			{/each}
 
 			<span class="text-sm text-[var(--nx-warn)]">{points} pts</span>
 			<div class="flex items-center gap-2 mt-0.5">

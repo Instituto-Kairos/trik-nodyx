@@ -7165,5 +7165,18 @@
   "private.no_grades_admin": "Create grades",
   "private.err_load": "Could not load the grades.",
   "private.err_save": "Could not save the grades.",
-  "private.err_forbidden": "You cannot change who sees this topic."
+  "private.err_forbidden": "You cannot change who sees this topic.",
+  "agrade.visibility": "Visibility",
+  "agrade.hoist": "Show separately in the member list",
+  "agrade.hoist_help": "Online members with this grade are grouped under it in the side panel (like Discord). A member appears under their highest separated grade.",
+  "agrade.secret": "Secret grade",
+  "agrade.secret_help": "Never shown publicly: not on posts, profiles, the member list or the side panel. Only the team sees it, and each holder sees it in their own settings. It still works for permissions and private content.",
+  "agrade.badge_secret": "Secret",
+  "agrade.badge_hoist": "Separated",
+  "mybadges.title": "Grades shown next to my name",
+  "mybadges.desc": "Pick which of your grades appear on your posts, your profile and the member list.",
+  "mybadges.hint": "Crossed-out grades are hidden. They still give you their permissions.",
+  "mybadges.secret_tip": "Secret grade: never shown to others",
+  "mybadges.saved": "Saved.",
+  "mybadges.error": "Could not save. Try again."
 }

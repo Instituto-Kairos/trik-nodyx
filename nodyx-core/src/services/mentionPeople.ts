@@ -6,6 +6,7 @@
 // avatar, grade. Jamais d'e-mail, de rôle technique ni de date de connexion.
 import { db } from '../config/database'
 import * as CommunityModel from '../models/community'
+import { visibleGradeJoin } from '../models/grade'
 import { describeGroups, isTeam } from './mentionGroups'
 
 let communityIdCache: string | null = null
@@ -181,7 +182,7 @@ export async function peopleByIds(ids: string[]): Promise<MentionPerson[]> {
             g.name AS grade_name, g.color AS grade_color
      FROM users u JOIN community_members cm ON cm.user_id = u.id AND cm.community_id = $2
      LEFT JOIN user_profiles up ON up.user_id = u.id
-     LEFT JOIN community_grades g ON g.id = cm.grade_id
+     ${visibleGradeJoin('g', 'cm')}
      WHERE u.id = ANY($1::uuid[]) AND u.is_system = false`, [clean, communityId])
   const found = new Map(rows.map(r => [r.id, r]))
   return clean.map(id => {

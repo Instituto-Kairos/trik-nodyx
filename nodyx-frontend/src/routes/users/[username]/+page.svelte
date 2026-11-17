@@ -442,12 +442,13 @@
 					<span class="text-sm font-medium drop-shadow" style="color: var(--p-text-muted)">
 						@{profile.username}
 					</span>
-					{#if profile.grade_name && profile.grade_color}
+					<!-- Todos os cargos visíveis (os secretos e os que a pessoa escondeu não chegam aqui) -->
+					{#each (profile.grades ?? (profile.grade_name && profile.grade_color ? [{ name: profile.grade_name, color: profile.grade_color }] : [])) as g (g.name)}
 						<span class="text-xs font-semibold px-2 py-0.5 shrink-0"
-						      style="background-color: {profile.grade_color}; color: {gradeTextColor(profile.grade_color)}">
-							{profile.grade_name}
+						      style="background-color: {g.color}; color: {gradeTextColor(g.color)}">
+							{g.name}
 						</span>
-					{/if}
+					{/each}
 					<span class="text-xs px-2 py-0.5 rounded-full font-medium"
 					      style="background: color-mix(in srgb, var(--p-accent) 15%, transparent); color: var(--p-accent); border: 1px solid color-mix(in srgb, var(--p-accent) 30%, transparent)">
 						{rankLabel}

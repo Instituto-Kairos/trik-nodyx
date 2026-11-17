@@ -7165,5 +7165,18 @@
   "private.no_grades_admin": "Créer des grades",
   "private.err_load": "Impossible de charger les grades.",
   "private.err_save": "Impossible d’enregistrer les grades.",
-  "private.err_forbidden": "Tu ne peux pas changer qui voit ce sujet."
+  "private.err_forbidden": "Tu ne peux pas changer qui voit ce sujet.",
+  "agrade.visibility": "Visibilité",
+  "agrade.hoist": "Afficher séparément dans la liste des membres",
+  "agrade.hoist_help": "Les membres en ligne qui ont ce grade sont regroupés dessous dans le panneau latéral (comme sur Discord). Un membre apparaît sous son grade séparé le plus haut.",
+  "agrade.secret": "Grade secret",
+  "agrade.secret_help": "Jamais affiché publiquement : ni sur les messages, ni sur les profils, ni dans la liste ou le panneau des membres. Seule l'équipe le voit, et chaque titulaire le voit dans ses réglages. Il compte toujours pour les permissions et le contenu privé.",
+  "agrade.badge_secret": "Secret",
+  "agrade.badge_hoist": "Séparé",
+  "mybadges.title": "Grades affichés à côté de mon nom",
+  "mybadges.desc": "Choisissez lesquels de vos grades apparaissent sur vos messages, votre profil et la liste des membres.",
+  "mybadges.hint": "Les grades barrés sont cachés. Ils vous donnent toujours leurs permissions.",
+  "mybadges.secret_tip": "Grade secret : jamais montré aux autres",
+  "mybadges.saved": "Enregistré.",
+  "mybadges.error": "Enregistrement impossible. Réessayez."
 }

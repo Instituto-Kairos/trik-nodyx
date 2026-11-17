@@ -18,6 +18,9 @@ import { requireAuth, optionalAuth } from '../middleware/auth'
 import * as CommunityModel from '../models/community'
 import * as ThreadModel from '../models/thread'
 import * as TagModel from '../models/tag'
+import { z } from 'zod'
+import { visibleGradeJoin, visibleGradesJson, listMine, setMyBadges } from '../models/grade'
+import { publishGrades } from '../services/presenceGrades'
 
 const TAG_COLOR_RE = /^#[0-9a-f]{6}$/i
 const TAG_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -151,6 +154,26 @@ export default async function instanceRoutes(app: FastifyInstance) {
     })
   })
 
+  // GET /api/v1/instance/me/grades — os MEUS cargos (secretos inclusive) e quais eu mostro
+  app.get('/me/grades', { preHandler: [rateLimit, requireAuth] }, async (request, reply) => {
+    const communityId = await getCommunityId()
+    if (!communityId) return reply.send({ grades: [] })
+    return reply.send({ grades: await listMine(communityId, request.user!.userId) })
+  })
+
+  // PUT /api/v1/instance/me/grades/display — escolho quais dos meus cargos aparecem ao lado do
+  // meu nome (posts, perfil, painel de membros). Os de grade_ids ficam visíveis, os outros
+  // escondidos. Cargo secreto nunca aparece, não importa a escolha.
+  app.put('/me/grades/display', { preHandler: [rateLimit, requireAuth] }, async (request, reply) => {
+    const body = z.object({ grade_ids: z.array(z.string().uuid()).max(50) }).safeParse(request.body)
+    if (!body.success) return reply.code(400).send({ error: 'grade_ids must be a list of ids', code: 'INVALID_REQUEST' })
+    const communityId = await getCommunityId()
+    if (!communityId) return reply.code(404).send({ error: 'No community', code: 'NOT_FOUND' })
+    await setMyBadges(communityId, request.user!.userId, body.data.grade_ids)
+    void publishGrades(communityId, request.user!.userId)
+    return reply.send({ grades: await listMine(communityId, request.user!.userId) })
+  })
+
   // GET /api/v1/instance/members — full member list (username + avatar), for presence sidebar
   app.get('/members', { preHandler: [rateLimit] }, async (_request, reply) => {
     const communityId = await getCommunityId()
@@ -184,13 +207,15 @@ export default async function instanceRoutes(app: FastifyInstance) {
     const { rows } = await db.query(
       `SELECT u.id AS user_id, u.username, u.avatar, u.points, u.created_at AS user_created_at,
               up.display_name, up.name_color, up.bio,
-              cm.role, cm.joined_at, cm.grade_id,
+              cm.role, cm.joined_at,
+              cg.id    AS grade_id,
               cg.name  AS grade_name,
-              cg.color AS grade_color
+              cg.color AS grade_color,
+              ${visibleGradesJson('cm')} AS grades
        FROM community_members cm
        JOIN users u ON u.id = cm.user_id
        LEFT JOIN user_profiles  up ON up.user_id = u.id
-       LEFT JOIN community_grades cg ON cg.id = cm.grade_id
+       ${visibleGradeJoin('cg', 'cm')}
        WHERE cm.community_id = $1
          AND u.is_system = false
          AND NOT EXISTS (
@@ -222,6 +247,7 @@ export default async function instanceRoutes(app: FastifyInstance) {
       grade_id:     r.grade_id,
       grade_name:   r.grade_name,
       grade_color:  r.grade_color,
+      grades:       r.grades,
       points:       r.points,
       joined_at:    r.joined_at,
       is_online:    onlineIds.has(r.user_id),

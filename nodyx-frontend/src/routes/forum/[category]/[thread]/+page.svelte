@@ -834,6 +834,7 @@
 				tags={post.author_tags ?? []}
 				memberSince={post.author_member_since}
 				grade={post.author_grade_name ? { name: post.author_grade_name, color: post.author_grade_color ?? '#99AAB5' } : null}
+				grades={post.author_grades}
 				variant="forum"
 			/>
 

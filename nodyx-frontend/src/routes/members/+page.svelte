@@ -154,11 +154,13 @@
 						class="mb-display"
 						style={m.name_color ? `color: ${contrastSafeColor(m.name_color, 'var(--nx-text)', $isDarkTheme)}` : ''}
 					>{m.display_name || m.username}</span>
-					{#if m.grade_name}
-						<span
-							class="mb-grade"
-							style={m.grade_color ? `color: ${contrastSafeColor(m.grade_color, 'var(--nx-header-accent)', $isDarkTheme)}; border-color: ${m.grade_color}55` : ''}
-						>{m.grade_name}</span>
+					{#if m.grades?.length || m.grade_name}
+						{#each (m.grades?.length ? m.grades : [{ id: m.grade_id, name: m.grade_name, color: m.grade_color }]) as g (g.id ?? g.name)}
+							<span
+								class="mb-grade"
+								style={g.color ? `color: ${contrastSafeColor(g.color, 'var(--nx-header-accent)', $isDarkTheme)}; border-color: ${g.color}55` : ''}
+							>{g.name}</span>
+						{/each}
 					{:else if roleLabels[m.role] && m.role !== 'member'}
 						<span class="mb-grade mb-grade--role">{tFn('members.role_' + m.role)}</span>
 					{/if}

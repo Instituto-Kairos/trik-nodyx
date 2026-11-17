@@ -326,6 +326,27 @@ describe('grades : manage_grades et anti-escalade', () => {
     expect((await assign(U.gradeur, U.gradeur, GRADE_TITLE)).statusCode).toBe(200)
   })
 
+  // Cargos secretos : fora da listagem pública
+  const list = (who?: string) => a.inject({ method: 'GET', url: '/c/nodyx/grades', headers: who ? { authorization: token(who) } : {} })
+  const withSecret = () => vi.mocked(GradeModel.listByCommunity).mockResolvedValueOnce([
+    { id: 'visible', name: 'Mestres', is_secret: false },
+    { id: 'oculto',  name: 'Fantasma', is_secret: true },
+  ] as never)
+  it('visitante : a listagem não traz cargo secreto (nem o nome)', async () => {
+    withSecret()
+    const res = await list()
+    expect(res.statusCode).toBe(200)
+    expect(res.json().grades.map((g: { id: string }) => g.id)).toEqual(['visible'])
+  })
+  it('membro comum : também não vê o secreto', async () => {
+    withSecret()
+    expect((await list(U.member)).json().grades.map((g: { id: string }) => g.id)).toEqual(['visible'])
+  })
+  it('quem gerencia cargos vê todos, secretos inclusive', async () => {
+    withSecret()
+    expect((await list(U.gradeur)).json().grades.map((g: { id: string }) => g.id)).toEqual(['visible', 'oculto'])
+  })
+
   // Plusieurs grades par membre
   const assignMany = (who: string, target: string, grade_ids: string[]) =>
     a.inject({ method: 'PATCH', url: `/c/nodyx/members/${target}/grade`, headers: { authorization: token(who) }, payload: { grade_ids } })

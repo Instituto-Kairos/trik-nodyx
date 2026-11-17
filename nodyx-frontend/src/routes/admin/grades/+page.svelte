@@ -40,14 +40,20 @@
 	// ── Création / édition ────────────────────────────────────────────────
 	let newName  = $state('')
 	let newColor = $state('#99aab5')
+	let newHoist  = $state(false)
+	let newSecret = $state(false)
 
 	let editingId = $state<string | null>(null)
 	let editName  = $state('')
 	let editColor = $state('#99aab5')
+	let editHoist  = $state(false)
+	let editSecret = $state(false)
 	function startEdit(g: any) {
 		editingId = g.id
 		editName  = g.name
 		editColor = g.color
+		editHoist  = !!g.hoist
+		editSecret = !!g.is_secret
 	}
 
 	// Un membre peut avoir plusieurs grades : `grades` les liste tous (grade_id n'est que le principal)
@@ -94,6 +100,30 @@
 		<button type="button" class="adm-tip-btn" aria-label={title} aria-describedby={id}>?</button>
 		<span class="adm-tip-bubble" role="tooltip" id={id}><strong>{title}</strong>{body}</span>
 	</span>
+{/snippet}
+
+{#snippet visChecks(scope: string, hoist: boolean, secret: boolean, set: (hoist: boolean, secret: boolean) => void)}
+	<fieldset class="adm-field">
+		<legend class="adm-label mb-1">{tFn('agrade.visibility')}</legend>
+		<div class="flex flex-col gap-2">
+			<label class="flex items-start gap-2">
+				<input type="checkbox" name="hoist" id="grade-hoist-{scope}" class="mt-1" checked={hoist && !secret} disabled={secret}
+					onchange={(e) => set(e.currentTarget.checked, secret)} />
+				<span>
+					<span class="adm-perm-name block">{tFn('agrade.hoist')}</span>
+					<span class="adm-hint block">{tFn('agrade.hoist_help')}</span>
+				</span>
+			</label>
+			<label class="flex items-start gap-2">
+				<input type="checkbox" name="is_secret" id="grade-secret-{scope}" class="mt-1" checked={secret}
+					onchange={(e) => set(e.currentTarget.checked ? false : hoist, e.currentTarget.checked)} />
+				<span>
+					<span class="adm-perm-name block">🔒 {tFn('agrade.secret')}</span>
+					<span class="adm-hint block">{tFn('agrade.secret_help')}</span>
+				</span>
+			</label>
+		</div>
+	</fieldset>
 {/snippet}
 
 {#snippet permChecks(current: Record<string, boolean> | null, scope: string)}
@@ -191,7 +221,7 @@
 		<form method="POST" action="?/create" class="adm-form"
 			use:enhance={() => async ({ result, update }) => {
 				await update()
-				if (result.type === 'success') newName = ''
+				if (result.type === 'success') { newName = ''; newHoist = false; newSecret = false }
 			}}>
 			<input type="hidden" name="position" value={grades.length} />
 			<div class="adm-form-grid">
@@ -213,6 +243,7 @@
 					</div>
 				</div>
 			</div>
+			{@render visChecks('new', newHoist, newSecret, (h, s) => { newHoist = h; newSecret = s })}
 			{@render permChecks(null, 'new')}
 			<div>
 				<button type="submit" class="adm-btn adm-btn--primary">{tFn('agrade.create')}</button>
@@ -264,6 +295,7 @@
 												</div>
 											</div>
 										</div>
+										{@render visChecks(`edit-${grade.id}`, editHoist, editSecret, (h, s) => { editHoist = h; editSecret = s })}
 										{@render permChecks(grade.permissions ?? {}, `edit-${grade.id}`)}
 										<div class="adm-actions">
 											<button type="submit" class="adm-btn adm-btn--primary adm-btn--sm">{tFn('agrade.save')}</button>
@@ -274,6 +306,8 @@
 							{:else}
 								<td class="adm-cell-main">
 									<span class="adm-swatch" style="background:{grade.color}; color:{inkOn(grade.color)}">{grade.name}</span>
+									{#if grade.is_secret}<span class="adm-pill" title={tFn('agrade.secret_help')}>🔒 {tFn('agrade.badge_secret')}</span>{/if}
+									{#if grade.hoist}<span class="adm-pill" title={tFn('agrade.hoist_help')}>{tFn('agrade.badge_hoist')}</span>{/if}
 								</td>
 								<td data-label={tFn('agrade.permissions')}>
 									{#if GRADE_PERMISSIONS.some((p) => grade.permissions?.[p])}

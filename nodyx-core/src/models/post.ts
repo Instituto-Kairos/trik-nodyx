@@ -2,6 +2,7 @@ import { db } from '../config/database'
 import { getReactionsForPosts, type ReactionSummary } from './reaction'
 import { getThanksForPosts } from './thanks'
 import { getSceneRejections } from './trik'
+import { visibleGradeJoin, visibleGradesJson } from './grade'
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -32,6 +33,8 @@ export interface PostWithAuthor extends Post {
   author_member_since: Date
   author_grade_name:   string | null
   author_grade_color:  string | null
+  /** Todos os cargos visíveis do autor (não secretos, que ele escolheu mostrar), do mais alto ao mais baixo */
+  author_grades?:      { id: string; name: string; color: string }[]
   // Social
   reactions:    ReactionSummary[]
   thanks_count: number
@@ -83,14 +86,15 @@ export async function findById(id: string): Promise<PostWithAuthor | null> {
             u.created_at AS author_member_since,
             COALESCE(up.tags, '{}') AS author_tags,
             cg.name      AS author_grade_name,
-            cg.color     AS author_grade_color
+            cg.color     AS author_grade_color,
+            ${visibleGradesJson('cm')} AS author_grades
      FROM posts p
      JOIN users u ON u.id = p.author_id
      LEFT JOIN user_profiles up ON up.user_id = p.author_id
      JOIN threads t ON t.id = p.thread_id
      JOIN categories cat ON cat.id = t.category_id
      LEFT JOIN community_members cm ON cm.community_id = cat.community_id AND cm.user_id = p.author_id
-     LEFT JOIN community_grades cg ON cg.id = cm.grade_id
+     ${visibleGradeJoin('cg', 'cm')}
      WHERE p.id = $1`,
     [id]
   )
@@ -118,14 +122,15 @@ export async function listByThread(threadId: string, opts: {
             u.created_at AS author_member_since,
             COALESCE(up.tags, '{}') AS author_tags,
             cg.name      AS author_grade_name,
-            cg.color     AS author_grade_color
+            cg.color     AS author_grade_color,
+            ${visibleGradesJson('cm')} AS author_grades
      FROM posts p
      JOIN users u ON u.id = p.author_id
      LEFT JOIN user_profiles up ON up.user_id = p.author_id
      JOIN threads t ON t.id = p.thread_id
      JOIN categories cat ON cat.id = t.category_id
      LEFT JOIN community_members cm ON cm.community_id = cat.community_id AND cm.user_id = p.author_id
-     LEFT JOIN community_grades cg ON cg.id = cm.grade_id
+     ${visibleGradeJoin('cg', 'cm')}
      WHERE p.thread_id = $1
      ORDER BY p.created_at ASC, p.id ASC
      LIMIT $2 OFFSET $3`,

@@ -33,6 +33,7 @@
 		points:             number
 		grade_name:         string | null
 		grade_color:        string | null
+		grades?:            { name: string; color: string }[]
 		created_at:         string
 		tags:               string[]
 	}
@@ -188,12 +189,14 @@
 					</p>
 					<p class="text-xs text-gray-500 leading-tight">@{profile.username}</p>
 				</div>
-				{#if profile.grade_name && profile.grade_color}
-					<span class="shrink-0 text-[10px] font-semibold rounded px-1.5 py-0.5 leading-tight"
-					      style="background-color: {profile.grade_color}; color: {gradeTextColor(profile.grade_color)}">
-						{profile.grade_name}
-					</span>
-				{/if}
+				<div class="flex flex-wrap justify-end gap-1 shrink-0 max-w-[50%]">
+					{#each (profile.grades ?? (profile.grade_name && profile.grade_color ? [{ name: profile.grade_name, color: profile.grade_color }] : [])) as g (g.name)}
+						<span class="text-[10px] font-semibold rounded px-1.5 py-0.5 leading-tight"
+						      style="background-color: {g.color}; color: {gradeTextColor(g.color)}">
+							{g.name}
+						</span>
+					{/each}
+				</div>
 			</div>
 
 			<!-- Status -->

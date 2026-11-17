@@ -284,7 +284,7 @@
 														type="checkbox"
 														name="grade_ids"
 														value={grade.id}
-														checked={(member.grade_ids ?? (member.grade_id ? [member.grade_id] : [])).includes(grade.id)}
+														checked={(member.grades ?? []).some((g: any) => g.id === grade.id)}
 													/>
 													{grade.name}
 												</label>

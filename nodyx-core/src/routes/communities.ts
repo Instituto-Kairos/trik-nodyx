@@ -2,10 +2,11 @@ import { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { validate } from '../middleware/validate'
 import { rateLimit } from '../middleware/rateLimit'
-import { requireAuth } from '../middleware/auth'
+import { requireAuth, optionalAuth } from '../middleware/auth'
 import { adminOnly } from '../middleware/adminOnly'
 import * as CommunityModel from '../models/community'
 import * as GradeModel from '../models/grade'
+import { publishGrades, publishGradeHolders } from '../services/presenceGrades'
 import { db } from '../config/database'
 import {
   GRADE_PERMISSIONS, getAccess, invalidatePermissions, rankOf,
@@ -21,6 +22,8 @@ const GradeBody = z.object({
   color:       z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
   position:    z.number().int().optional(),
   permissions: GradePermissionsBody.optional(),
+  hoist:       z.boolean().optional(), // separado no painel de membros
+  is_secret:   z.boolean().optional(), // secreto: nunca aparece ao público
 })
 
 // Permissions qu'un grade accorde (clés à true reconnues)
@@ -174,7 +177,7 @@ export default async function communityRoutes(app: FastifyInstance) {
 
   // GET /api/v1/communities/:slug/grades
   app.get('/:slug/grades', {
-    preHandler: [rateLimit],
+    preHandler: [rateLimit, optionalAuth],
   }, async (request, reply) => {
     const { slug } = request.params as { slug: string }
 
@@ -183,7 +186,12 @@ export default async function communityRoutes(app: FastifyInstance) {
       return reply.code(404).send({ error: 'Community not found', code: 'NOT_FOUND' })
     }
 
-    const grades = await GradeModel.listByCommunity(community.id)
+    const all = await GradeModel.listByCommunity(community.id)
+    // Cargos secretos : só quem gerencia cargos os vê (nem o nome vaza pro público)
+    const canSeeSecret = request.user
+      ? (await getAccess(community.id, request.user.userId)).permissions.includes('manage_grades')
+      : false
+    const grades = canSeeSecret ? all : all.filter(g => !g.is_secret)
     return reply.send({ grades })
   })
 
@@ -241,6 +249,7 @@ export default async function communityRoutes(app: FastifyInstance) {
       return reply.code(404).send({ error: 'Grade not found', code: 'NOT_FOUND' })
     }
     if (data.permissions !== undefined) await invalidatePermissions(community.id)
+    void publishGradeHolders(community.id, id) // nome, cor, separado ou secreto mudou: o painel relê
 
     return reply.send({ grade })
   })
@@ -332,6 +341,7 @@ export default async function communityRoutes(app: FastifyInstance) {
       return reply.code(404).send({ error: 'Grade not found', code: 'NOT_FOUND' })
     }
     await invalidatePermissions(community.id)
+    void publishGrades(community.id, userId) // o painel de membros reflete na hora
 
     return reply.send({ ok: true })
   })
