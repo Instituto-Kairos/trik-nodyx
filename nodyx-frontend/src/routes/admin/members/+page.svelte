@@ -89,6 +89,10 @@
 	const ariaSort = (key: SortKey) =>
 		sortKey === key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'
 
+	// Tous les grades du membre ; sans la liste (ancienne réponse), seulement le principal
+	const shownGrades = (m: any): { id: string; name: string; color: string }[] =>
+		m.grades?.length ? m.grades : (m.grade_name && m.grade_color ? [{ id: m.grade_id, name: m.grade_name, color: m.grade_color }] : [])
+
 	const filtered = $derived.by(() => {
 		const q = search.trim().toLowerCase()
 		const list = members.filter((m: any) =>
@@ -286,10 +290,9 @@
 
 						<td data-label={tFn('amem.col_grade')}>
 							<!-- Todos os cargos (grades) do membro; sem a lista, só o principal -->
-							{@const shown = member.grades?.length ? member.grades : (member.grade_name && member.grade_color ? [{ id: member.grade_id, name: member.grade_name, color: member.grade_color }] : [])}
-							{#if shown.length}
+							{#if shownGrades(member).length}
 								<span class="flex flex-wrap gap-1">
-									{#each shown as g (g.id)}
+									{#each shownGrades(member) as g (g.id)}
 										<span class="grade" style="background-color:{g.color}; color:{luminance(g.color) > 0.5 ? '#111' : '#fff'}">{g.name}</span>
 									{/each}
 								</span>
