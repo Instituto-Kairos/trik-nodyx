@@ -61,7 +61,7 @@ export async function create(data: {
 }): Promise<Grade> {
   const secret = data.is_secret ?? false
   const { rows } = await db.query<Grade>(
-    `INSERT INTO community_grades (community_id, name, color, position, permissions, hoist, is_secret, mentionable)
+    `INSERT INTO community_grades (community_id, name, color, position, permissions, mentionable, hoist, is_secret)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING *`,
     [
@@ -70,9 +70,9 @@ export async function create(data: {
       data.color       ?? '#99AAB5',
       data.position    ?? 0,
       JSON.stringify(data.permissions ?? {}),
+      data.mentionable ?? true,
       secret ? false : (data.hoist ?? false), // secreto nunca é separado no painel
       secret,
-      data.mentionable ?? true,
     ]
   )
   return rows[0]
