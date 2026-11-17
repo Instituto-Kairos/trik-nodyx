@@ -4582,5 +4582,15 @@
   "mybadges.hint": "Cargos riscados ficam escondidos. Eles continuam dando as permissões a você.",
   "mybadges.secret_tip": "Cargo secreto: nunca é mostrado aos outros",
   "mybadges.saved": "Salvo.",
-  "mybadges.error": "Não foi possível salvar. Tente de novo."
+  "mybadges.error": "Não foi possível salvar. Tente de novo.",
+  "hpb.sl_more": "Nome e ícone",
+  "hpb.sl_name": "Nome",
+  "hpb.sl_name_ph": "Aparece ao lado do ícone",
+  "hpb.sl_icon": "Ícone",
+  "hpb.sl_icon_default": "Ícone da rede",
+  "hpb.sl_icon_preset": "Ícone pronto",
+  "hpb.sl_icon_emoji": "Emoji",
+  "hpb.sl_icon_image": "Imagem (URL)",
+  "hpb.sl_emoji_ph": "ex.: 🎲",
+  "hpb.sl_image_ph": "https://… ou /uploads/…"
 }

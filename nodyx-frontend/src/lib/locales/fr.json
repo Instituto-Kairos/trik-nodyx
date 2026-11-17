@@ -7178,5 +7178,15 @@
   "mybadges.hint": "Les grades barrés sont cachés. Ils vous donnent toujours leurs permissions.",
   "mybadges.secret_tip": "Grade secret : jamais montré aux autres",
   "mybadges.saved": "Enregistré.",
-  "mybadges.error": "Enregistrement impossible. Réessayez."
+  "mybadges.error": "Enregistrement impossible. Réessayez.",
+  "hpb.sl_more": "Nom et icône",
+  "hpb.sl_name": "Nom",
+  "hpb.sl_name_ph": "Affiché à côté de l'icône",
+  "hpb.sl_icon": "Icône",
+  "hpb.sl_icon_default": "Icône du réseau",
+  "hpb.sl_icon_preset": "Icône prête",
+  "hpb.sl_icon_emoji": "Emoji",
+  "hpb.sl_icon_image": "Image (URL)",
+  "hpb.sl_emoji_ph": "ex. : 🎲",
+  "hpb.sl_image_ph": "https://… ou /uploads/…"
 }

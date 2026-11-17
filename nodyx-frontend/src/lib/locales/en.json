@@ -7178,5 +7178,15 @@
   "mybadges.hint": "Crossed-out grades are hidden. They still give you their permissions.",
   "mybadges.secret_tip": "Secret grade: never shown to others",
   "mybadges.saved": "Saved.",
-  "mybadges.error": "Could not save. Try again."
+  "mybadges.error": "Could not save. Try again.",
+  "hpb.sl_more": "Name and icon",
+  "hpb.sl_name": "Name",
+  "hpb.sl_name_ph": "Shown next to the icon",
+  "hpb.sl_icon": "Icon",
+  "hpb.sl_icon_default": "Network icon",
+  "hpb.sl_icon_preset": "Ready-made icon",
+  "hpb.sl_icon_emoji": "Emoji",
+  "hpb.sl_icon_image": "Image (URL)",
+  "hpb.sl_emoji_ph": "e.g. 🎲",
+  "hpb.sl_image_ph": "https://… or /uploads/…"
 }

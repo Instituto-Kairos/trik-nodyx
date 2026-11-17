@@ -1,8 +1,15 @@
 <script lang="ts">
+	import { LINK_ICON_PRESETS, safeImageUrl } from '../linkIcons'
+
 	interface SocialLink {
 		type:   string
 		url:    string
+		/** Nome personalizado. Preenchido, é sempre exibido ao lado do ícone. */
 		label?: string
+		/** Ícone: 'default' (o da rede), 'preset' (um dos prontos), 'emoji' ou 'image' (URL). */
+		icon_kind?: 'default' | 'preset' | 'emoji' | 'image'
+		/** Chave do ícone pronto, o emoji ou a URL da imagem, conforme icon_kind. */
+		icon?: string
 	}
 
 	interface Props {
@@ -222,35 +229,61 @@
 	function getIcon(type: string) {
 		return ICONS[type] ?? ICONS.custom
 	}
+
+	/** Como desenhar o ícone deste link. */
+	function iconFor(link: SocialLink):
+		| { kind: 'emoji'; text: string }
+		| { kind: 'image'; src: string }
+		| { kind: 'svg'; path: string; color: string; stroke: boolean } {
+		if (link.icon_kind === 'emoji' && link.icon?.trim()) return { kind: 'emoji', text: link.icon.trim().slice(0, 8) }
+		if (link.icon_kind === 'image') {
+			const src = safeImageUrl(link.icon)
+			if (src) return { kind: 'image', src }
+		}
+		if (link.icon_kind === 'preset' && link.icon && LINK_ICON_PRESETS[link.icon]) {
+			return { kind: 'svg', path: LINK_ICON_PRESETS[link.icon], color: 'var(--nl)', stroke: true }
+		}
+		const n = getIcon(link.type)
+		return { kind: 'svg', path: n.path, color: n.color, stroke: !!n.stroke }
+	}
 </script>
 
 {#if links.length > 0}
 <div class="sl-root" style="justify-content: {align}; gap: {gap}">
 	{#each links as link}
-		{@const icon = getIcon(link.type)}
+		{@const icon = iconFor(link)}
+		{@const name = link.label?.trim()}
 		<a
 			href={link.url}
 			target="_blank"
 			rel="noopener noreferrer"
 			class="sl-link"
 			class:sl-link--pill={style === 'pills'}
-			style="--ic: {icon.color}"
-			title={link.label ?? link.type}
+			style="--ic: {icon.kind === 'svg' ? icon.color : 'var(--nl)'}"
+			title={name || link.type}
+			aria-label={name || link.type}
 		>
-			<svg
-				viewBox="0 0 24 24"
-				style="width:{iconSize}; height:{iconSize}"
-				fill={icon.stroke ? 'none' : 'currentColor'}
-				stroke={icon.stroke ? 'currentColor' : 'none'}
-				stroke-width={icon.stroke ? '2' : undefined}
-				stroke-linecap={icon.stroke ? 'round' : undefined}
-				stroke-linejoin={icon.stroke ? 'round' : undefined}
-				aria-hidden="true"
-			>
-				<path d={icon.path} />
-			</svg>
-			{#if showLabels}
-				<span class="sl-label">{link.label || link.type}</span>
+			{#if icon.kind === 'emoji'}
+				<span class="sl-emoji" style="font-size:{iconSize}" aria-hidden="true">{icon.text}</span>
+			{:else if icon.kind === 'image'}
+				<img class="sl-img" src={icon.src} alt="" loading="lazy" style="width:{iconSize}; height:{iconSize}" />
+			{:else}
+				<svg
+					viewBox="0 0 24 24"
+					style="width:{iconSize}; height:{iconSize}"
+					fill={icon.stroke ? 'none' : 'currentColor'}
+					stroke={icon.stroke ? 'currentColor' : 'none'}
+					stroke-width={icon.stroke ? '2' : undefined}
+					stroke-linecap={icon.stroke ? 'round' : undefined}
+					stroke-linejoin={icon.stroke ? 'round' : undefined}
+					aria-hidden="true"
+				>
+					<path d={icon.path} />
+				</svg>
+			{/if}
+			<!-- Nome personalizado : sempre exibido. Sem nome, só se « mostrar os nomes » estiver ligado. -->
+			{#if name || showLabels}
+				<span class="sl-label">{name || link.type}</span>
 			{/if}
 		</a>
 	{/each}
@@ -290,6 +323,8 @@
 		background: rgba(255,255,255,.09);
 		border-color: var(--ic, rgb(var(--np-rgb) / .4));
 	}
+	.sl-emoji { line-height: 1; display: inline-block; }
+	.sl-img { object-fit: contain; display: block; border-radius: 4px; }
 	.sl-label {
 		font-size: 12px;
 		font-weight: 500;

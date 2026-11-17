@@ -5,6 +5,7 @@
 	import { ambiancePalette } from '$lib/shellTheme'
 	import { page as appPage } from '$app/state'
 	import ImagePositionPicker from '$lib/components/homepage/ImagePositionPicker.svelte'
+	import { LINK_ICON_PRESETS } from '$lib/components/homepage/linkIcons'
 	import type { WidgetFamily } from '$lib/components/homepage/plugins'
 	import {
 		buildCatalog, buildCatalogIndex, toInstalledWidgetsMap,
@@ -627,10 +628,12 @@
 		{ id: 'custom',      labelKey: 'hpb.social_custom'  },
 	]
 
-	function slLinks(): { type: string; url: string; label?: string }[] {
-		return (configFields.links as any[] | undefined) ?? []
+	// Um link da barra : rede, URL, nome próprio e ícone (o da rede, um pronto, um emoji ou uma imagem)
+	interface SlLink { type: string; url: string; label?: string; icon_kind?: 'default' | 'preset' | 'emoji' | 'image'; icon?: string }
+	function slLinks(): SlLink[] {
+		return (configFields.links as SlLink[] | undefined) ?? []
 	}
-	function slApply(links: { type: string; url: string; label?: string }[], extra?: Record<string, unknown>) {
+	function slApply(links: SlLink[], extra?: Record<string, unknown>) {
 		configFields = { ...configFields, links, ...(extra ?? {}) }
 		applyConfig()
 	}
@@ -643,6 +646,9 @@
 	function slUpdateLink(i: number, field: string, value: string) {
 		const links = slLinks().map((l, idx) => idx === i ? { ...l, [field]: value } : l)
 		slApply(links)
+	}
+	function slPatchLink(i: number, patch: Partial<SlLink>) {
+		slApply(slLinks().map((l, idx) => idx === i ? { ...l, ...patch } : l))
 	}
 	function slMoveLink(i: number, dir: -1 | 1) {
 		const links = [...slLinks()]
@@ -893,6 +899,7 @@
 					{:else}
 						<div class="sl-editor">
 							{#each slLinks() as link, i}
+								<div class="sl-item">
 								<div class="sl-row">
 									<select
 										class="sl-select"
@@ -915,6 +922,50 @@
 										<button class="ss-src-btn" onclick={() => slMoveLink(i, 1)} disabled={i === slLinks().length - 1}>↓</button>
 										<button class="ss-src-btn ss-src-btn--del" onclick={() => slRemoveLink(i)}>✕</button>
 									</div>
+								</div>
+
+								<!-- Nome e ícone próprios deste link -->
+								<details class="sl-more">
+									<summary>{tFn('hpb.sl_more')}{#if link.label?.trim()} · {link.label.trim()}{/if}</summary>
+									<label class="sl-field">
+										<span>{tFn('hpb.sl_name')}</span>
+										<input class="sl-input" type="text" maxlength="40" value={link.label ?? ''}
+											placeholder={tFn('hpb.sl_name_ph')}
+											onchange={(e) => slUpdateLink(i, 'label', (e.target as HTMLInputElement).value)} />
+									</label>
+									<label class="sl-field">
+										<span>{tFn('hpb.sl_icon')}</span>
+										<select class="sl-select sl-select--wide" value={link.icon_kind ?? 'default'}
+											onchange={(e) => {
+												const kind = (e.target as HTMLSelectElement).value as NonNullable<SlLink['icon_kind']>
+												slPatchLink(i, { icon_kind: kind, icon: kind === 'preset' ? 'link' : '' })
+											}}>
+											<option value="default">{tFn('hpb.sl_icon_default')}</option>
+											<option value="preset">{tFn('hpb.sl_icon_preset')}</option>
+											<option value="emoji">{tFn('hpb.sl_icon_emoji')}</option>
+											<option value="image">{tFn('hpb.sl_icon_image')}</option>
+										</select>
+									</label>
+									{#if link.icon_kind === 'preset'}
+										<div class="sl-presets" role="group" aria-label={tFn('hpb.sl_icon_preset')}>
+											{#each Object.entries(LINK_ICON_PRESETS) as [key, d] (key)}
+												<button type="button" class="sl-preset" class:active={link.icon === key}
+													aria-pressed={link.icon === key} aria-label={key} title={key}
+													onclick={() => slPatchLink(i, { icon: key })}>
+													<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d={d} /></svg>
+												</button>
+											{/each}
+										</div>
+									{:else if link.icon_kind === 'emoji'}
+										<input class="sl-input" type="text" maxlength="8" value={link.icon ?? ''}
+											placeholder={tFn('hpb.sl_emoji_ph')} aria-label={tFn('hpb.sl_icon_emoji')}
+											onchange={(e) => slUpdateLink(i, 'icon', (e.target as HTMLInputElement).value)} />
+									{:else if link.icon_kind === 'image'}
+										<input class="sl-input" type="url" value={link.icon ?? ''}
+											placeholder={tFn('hpb.sl_image_ph')} aria-label={tFn('hpb.sl_icon_image')}
+											onchange={(e) => slUpdateLink(i, 'icon', (e.target as HTMLInputElement).value)} />
+									{/if}
+								</details>
 								</div>
 							{/each}
 						</div>
@@ -2583,6 +2634,21 @@
 		color: #e2e8f0;
 		border-radius: 3px;
 	}
+	.sl-item { display: flex; flex-direction: column; gap: 4px; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,.06); }
+	.sl-more { font-size: 11px; color: #94a3b8; }
+	.sl-more > summary { cursor: pointer; user-select: none; padding: 2px 0; }
+	.sl-more[open] { display: flex; flex-direction: column; gap: 4px; }
+	.sl-field { display: flex; align-items: center; gap: 6px; }
+	.sl-field > span { flex: 0 0 4.5rem; }
+	.sl-select--wide { width: auto; flex: 1; min-width: 0; }
+	.sl-presets { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+	.sl-preset {
+		display: grid; place-items: center; aspect-ratio: 1; padding: 0; cursor: pointer;
+		background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1); color: #cbd5e1; border-radius: 4px;
+	}
+	.sl-preset svg { width: 60%; height: 60%; }
+	.sl-preset:hover { border-color: rgba(167,139,250,.5); }
+	.sl-preset.active { background: rgba(167,139,250,.2); border-color: rgba(167,139,250,.8); color: #fff; }
 	.sl-input:focus, .sl-select:focus {
 		outline: none;
 		border-color: rgba(167,139,250,.5);
