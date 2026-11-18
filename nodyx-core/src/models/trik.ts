@@ -1115,6 +1115,7 @@ export async function setXpLevels(type: string, levels: XpLevelInput[]): Promise
          lvl.reqWeaponLevel ?? 0, lvl.reqKnowledgeId ?? null, lvl.reqKnowledgeId ? (lvl.reqKnowledgeLevel ?? 0) : 0]
       )
     }
+    if (type === 'character') await reconcileCharacterRewards(client)
     await client.query('COMMIT')
   } catch (err) {
     await client.query('ROLLBACK')
@@ -1122,6 +1123,56 @@ export async function setXpLevels(type: string, levels: XpLevelInput[]): Promise
   } finally {
     client.release()
   }
+}
+
+/**
+ * Reconcilia os pontos de todo personagem com a curva atual. Os points_* só
+ * são escritos por applyXpInTx (level-up), então o total esperado de quem está
+ * no nível N é a soma das recompensas das linhas com level < N (a linha L paga
+ * ao sair do nível L). Idempotente: rodar de novo sem mudar a curva não altera
+ * nada, e também corrige defasagem de edições antigas da curva.
+ *
+ * Piso em spent_*: se a curva foi cortada abaixo do que o personagem já gastou,
+ * o disponível fica em 0 em vez de negativo (o gasto não é desfeito). Interesses
+ * não têm spent (piso natural em 0). has_goal nunca é revogado — o objetivo pode
+ * já ter sido escolhido.
+ */
+async function reconcileCharacterRewards(client: TxClient): Promise<void> {
+  await client.query(
+    `UPDATE trik_character_progress p
+        SET points_conduct            = GREATEST(p.spent_conduct,            e.conduct),
+            points_principles         = GREATEST(p.spent_principles,         e.principles),
+            points_preferences        = GREATEST(p.spent_preferences,        e.preferences),
+            points_natural_aptitudes  = GREATEST(p.spent_natural_aptitudes,  e.nat),
+            points_acquired_aptitudes = GREATEST(p.spent_acquired_aptitudes, e.acq),
+            points_primary_interest   = e.pri,
+            points_secondary_interest = e.sec,
+            has_goal                  = p.has_goal OR e.goal,
+            updated_at = NOW()
+       FROM (
+         SELECT cp.character_id,
+                COALESCE(SUM(t.reward_conduct), 0)              AS conduct,
+                COALESCE(SUM(t.reward_principles), 0)           AS principles,
+                COALESCE(SUM(t.reward_preferences), 0)          AS preferences,
+                COALESCE(SUM(t.reward_natural_aptitudes), 0)    AS nat,
+                COALESCE(SUM(t.reward_acquired_aptitudes), 0)   AS acq,
+                COALESCE(SUM(t.reward_primary_interest), 0)     AS pri,
+                COALESCE(SUM(t.reward_secondary_interest), 0)   AS sec,
+                COALESCE(BOOL_OR(t.reward_goal), FALSE)         AS goal
+           FROM trik_character_progress cp
+           LEFT JOIN trik_progression t ON t.type = 'character' AND t.level < cp.level
+          GROUP BY cp.character_id
+       ) e
+      WHERE p.character_id = e.character_id
+        AND (p.points_conduct, p.points_principles, p.points_preferences,
+             p.points_natural_aptitudes, p.points_acquired_aptitudes,
+             p.points_primary_interest, p.points_secondary_interest, p.has_goal)
+            IS DISTINCT FROM
+            (GREATEST(p.spent_conduct, e.conduct), GREATEST(p.spent_principles, e.principles),
+             GREATEST(p.spent_preferences, e.preferences),
+             GREATEST(p.spent_natural_aptitudes, e.nat), GREATEST(p.spent_acquired_aptitudes, e.acq),
+             e.pri, e.sec, p.has_goal OR e.goal)`
+  )
 }
 
 // ─── Fase 2: tópicos elegíveis pra contagem de XP ──────────────────────────
