@@ -43,5 +43,7 @@ export const load: LayoutServerLoad = async ({ fetch, cookies, url }) => {
 		: null
 	const updateCheck = updateRes?.ok ? await updateRes.json().catch(() => null) : null
 
-	return { token, stats, updateCheck, access, auNarrator: false }
+	// Moderação na aba AU: mesma tela só leitura do narrador, com o AU inteiro
+	const auNarrator = !isAdmin && url.pathname.startsWith('/admin/trik')
+	return { token, stats, updateCheck, access, auNarrator }
 }

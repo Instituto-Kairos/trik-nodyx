@@ -18,6 +18,7 @@ import { mkdirSync } from 'fs'
 import path from 'path'
 import { db } from '../config/database'
 import { adminOnly } from '../middleware/adminOnly'
+import { canInInstance } from '../services/permissions'
 import { requireAuth } from '../middleware/auth'
 import { validate } from '../middleware/validate'
 import * as ChannelModel from '../models/channel'
@@ -348,6 +349,9 @@ const XpGrantBody = z.object({
   xp:     z.number().int().min(1).max(100000),
   reason: z.string().trim().max(200).optional(),
 })
+const AuXpAdjustBody = z.object({
+  delta: z.number().int().min(-100000).max(100000).refine(n => n !== 0),
+})
 const CharacterTraitParams = z.object({
   id:     z.string().uuid(),
   kind:   z.enum(TrikEffects.TRAIT_KINDS),
@@ -382,6 +386,11 @@ const RegistroAuBody = z.object({
   channelId: z.string().uuid(),
   name:      AuAliasBody.shape.name,
   fichaLink: z.string().url().max(500),
+})
+
+const AuCharacterEditBody = z.object({
+  name:      RegistroAuBody.shape.name,
+  fichaLink: RegistroAuBody.shape.fichaLink,
 })
 
 const AuNarratorBody = z.object({
@@ -551,13 +560,68 @@ export async function trikPlayerPlugin(app: FastifyInstance) {
     return ok ? reply.code(204).send() : reply.code(404).send({ error: 'Alias não encontrado', code: 'NOT_FOUND' })
   })
 
-  // Aba AU para quem narra (trik_015): só leitura e só as raízes dele. A lista
-  // de raízes é o que autoriza; admin usa as rotas de /admin/trik.
+  // Aba AU só leitura (admin usa as rotas de /admin/trik):
+  //  - moderação (moderate_members, socle do cargo moderador): o AU inteiro,
+  //    todas as raízes, todos os personagens e os narradores;
+  //  - narrador (trik_015): só as raízes dele, que são o que autoriza.
   app.get('/au-panel', async (request, reply) => {
-    const roots = await TrikAu.listNarratedRoots(request.user!.userId)
+    const userId = request.user!.userId
+    if (await canInInstance(userId, 'moderate_members')) {
+      const communityId = await getCommunityId()
+      if (!communityId) return reply.code(503).send({ error: 'Community not configured' })
+      const [cats, characters, narrators] = await Promise.all([
+        TrikAu.listAuCategories(communityId),
+        TrikAu.listAllAuCharacters(),
+        TrikAu.listAuNarrators(communityId),
+      ])
+      const roots = cats.filter(c => c.enabled).map(c => ({ id: c.id, name: c.name }))
+      return reply.send({ scope: 'moderator', roots, characters, narrators })
+    }
+    const roots = await TrikAu.listNarratedRoots(userId)
     if (roots.length === 0) return reply.code(403).send({ error: 'Forbidden', code: 'FORBIDDEN' })
     const characters = await TrikAu.listAuCharactersForRoots(roots.map(r => r.id))
-    return reply.send({ roots, characters })
+    return reply.send({ scope: 'narrator', roots, characters, narrators: [] })
+  })
+
+  // Botão +/- de XP na listagem da aba AU: admin e moderação (moderate_members).
+  // Fica no plugin do jogador porque o de admin exige adminOnly.
+  app.post('/au-characters/:id/xp', {
+    preHandler: validate({ params: IdParams, body: AuXpAdjustBody }),
+  }, async (request, reply) => {
+    if (!await canInInstance(request.user!.userId, 'moderate_members')) {
+      return reply.code(403).send({ error: 'Forbidden', code: 'FORBIDDEN' })
+    }
+    const { id } = request.params as z.infer<typeof IdParams>
+    const { delta } = request.body as z.infer<typeof AuXpAdjustBody>
+    const xp = await TrikAu.adjustAuCharacterXp(id, delta)
+    if (xp === null) return reply.code(404).send({ error: 'Personagem não encontrado', code: 'NOT_FOUND' })
+    return reply.send({ xp })
+  })
+
+  // Editar / excluir personagem AU pela aba AU: mesma permissão do ajuste de XP.
+  app.patch('/au-characters/:id', {
+    preHandler: validate({ params: IdParams, body: AuCharacterEditBody }),
+  }, async (request, reply) => {
+    if (!await canInInstance(request.user!.userId, 'moderate_members')) {
+      return reply.code(403).send({ error: 'Forbidden', code: 'FORBIDDEN' })
+    }
+    const { id } = request.params as z.infer<typeof IdParams>
+    const { name, fichaLink } = request.body as z.infer<typeof AuCharacterEditBody>
+    const result = await TrikAu.updateAuCharacter(id, name, fichaLink)
+    if (result === 'not_found') return reply.code(404).send({ error: 'Personagem não encontrado', code: 'NOT_FOUND' })
+    if (result === 'duplicate') return reply.code(409).send({ error: 'Esse jogador já tem um personagem AU com esse nome', code: 'DUPLICATE_NAME' })
+    return reply.send({ character: result })
+  })
+
+  app.delete('/au-characters/:id', {
+    preHandler: validate({ params: IdParams }),
+  }, async (request, reply) => {
+    if (!await canInInstance(request.user!.userId, 'moderate_members')) {
+      return reply.code(403).send({ error: 'Forbidden', code: 'FORBIDDEN' })
+    }
+    const { id } = request.params as z.infer<typeof IdParams>
+    const ok = await TrikAu.deleteAuCharacter(id)
+    return ok ? reply.code(204).send() : reply.code(404).send({ error: 'Personagem não encontrado', code: 'NOT_FOUND' })
   })
 
   // ── /registro-au (trik_014): personagens AU — nome + ficha, xp sem nível ──

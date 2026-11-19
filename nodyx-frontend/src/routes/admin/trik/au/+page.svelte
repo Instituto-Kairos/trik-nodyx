@@ -16,7 +16,9 @@
 
 	// Narrador (trik_015): só leitura, sem configuração do AU.
 	const narratorRoots = $derived((data.roots ?? []) as { id: string; name: string }[]);
-	const isNarrator = $derived(narratorRoots.length > 0);
+	// Só leitura: narrador (só as raízes dele) ou moderação (o AU inteiro).
+	const isNarrator = $derived(!!data.readOnly);
+	const isModView = $derived(data.scope === 'moderator');
 	const narrators = $derived(
 		(data.narrators ?? []) as { category_id: string; user_id: string; username: string }[]
 	);
@@ -116,6 +118,10 @@
 		);
 	});
 
+	// Edição inline: um personagem por vez.
+	let editingId = $state<string | null>(null);
+	const canManage = $derived(!isNarrator || isModView);
+
 	// Só http(s) vira link: a ficha é texto do jogador.
 	function safeHref(url: string): string | null {
 		return /^https?:\/\//i.test(url) ? url : null;
@@ -127,7 +133,12 @@
 <div class="space-y-6">
 	<div>
 		<h1 class="text-2xl font-bold text-white mb-1">Módulo RPG — Universo Alternativo</h1>
-		{#if isNarrator}
+		{#if isModView}
+		<p class="text-sm text-gray-500">
+			Visão da moderação, só leitura. Raízes do AU:
+			<span class="text-gray-300">{narratorRoots.length ? narratorRoots.map((r) => r.name).join(', ') : 'nenhuma marcada'}</span>.
+		</p>
+		{:else if isNarrator}
 		<p class="text-sm text-gray-500">
 			Você narra: <span class="text-gray-300">{narratorRoots.map((r) => r.name).join(', ')}</span>.
 			Aparecem aqui os personagens com cena premiada nessas categorias.
@@ -279,6 +290,23 @@
 		</section>
 	{/if}
 
+	{#if isModView}
+		<section class="space-y-3">
+			<h2 class="text-lg font-semibold text-white">Narradores</h2>
+			{#if narrators.length === 0}
+				<p class="text-sm text-gray-500">Nenhum narrador definido.</p>
+			{:else}
+				<ul class="rounded-xl border border-gray-800 bg-gray-900/40 divide-y divide-gray-800">
+					{#each narrators as n (n.category_id + ':' + n.user_id)}
+						<li class="px-5 py-2.5 text-sm text-white">
+							@{n.username} <span class="text-gray-500">· {narratorRoots.find((r) => r.id === n.category_id)?.name ?? '—'}</span>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</section>
+	{/if}
+
 	<section class="space-y-3">
 		<div class="flex flex-wrap items-end justify-between gap-3">
 			<div>
@@ -308,15 +336,60 @@
 							<th class="px-5 py-2 font-medium">Jogador</th>
 							<th class="px-5 py-2 font-medium text-right">XP</th>
 							<th class="px-5 py-2 font-medium">Ficha</th>
+							{#if canManage}<th class="px-5 py-2"></th>{/if}
 						</tr>
 					</thead>
 					<tbody class="divide-y divide-gray-800">
 						{#each filteredCharacters as c (c.id)}
 							{@const href = safeHref(c.ficha_link)}
+							{#if editingId === c.id}
+							<tr>
+								<td colspan="5" class="px-5 py-3">
+									<form method="POST" action="?/editCharacter"
+										use:enhance={() => async ({ result, update }) => {
+											await update({ reset: false });
+											if (result.type === 'success') editingId = null;
+										}}
+										class="flex flex-wrap items-end gap-3">
+										<input type="hidden" name="characterId" value={c.id} />
+										<label class="flex flex-col gap-1 text-xs text-gray-400">
+											Nome
+											<input name="name" required maxlength="100" value={c.name}
+												class="min-w-48 rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-white" />
+										</label>
+										<label class="flex flex-1 flex-col gap-1 text-xs text-gray-400">
+											Ficha (URL)
+											<input name="fichaLink" type="url" required maxlength="500" value={c.ficha_link}
+												class="min-w-64 rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-white" />
+										</label>
+										<span class="text-xs text-gray-500 pb-2">@{c.username}</span>
+										<button type="submit" class="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-sm font-medium text-white">Salvar</button>
+										<button type="button" onclick={() => (editingId = null)}
+											class="px-3 py-2 rounded-lg border border-gray-700 text-sm text-gray-400 hover:text-white">Cancelar</button>
+									</form>
+								</td>
+							</tr>
+							{:else}
 							<tr>
 								<td class="px-5 py-2.5 text-white">{c.name}</td>
 								<td class="px-5 py-2.5 text-gray-400">@{c.username}</td>
-								<td class="px-5 py-2.5 text-right text-gray-300 tabular-nums">{c.xp}</td>
+								<td class="px-5 py-2.5 text-right text-gray-300 tabular-nums">
+									{#if isNarrator && !isModView}
+										{c.xp}
+									{:else}
+										<form method="POST" action="?/adjustXp" use:enhance={() => async ({ update }) => update({ reset: false })}
+											class="inline-flex items-center justify-end gap-1.5">
+											<input type="hidden" name="characterId" value={c.id} />
+											<span class="min-w-10">{c.xp}</span>
+											<button type="submit" name="op" value="sub" aria-label="Subtrair XP de {c.name}"
+												class="h-7 w-7 rounded-md border border-gray-700 bg-gray-900 text-gray-300 hover:border-red-500 hover:text-red-300">−</button>
+											<input name="amount" type="number" min="1" max="100000" value="1" inputmode="numeric" aria-label="Quantidade de XP"
+												class="w-16 rounded-md border border-gray-700 bg-gray-900 px-1.5 py-1 text-right text-sm text-white" />
+											<button type="submit" name="op" value="add" aria-label="Somar XP a {c.name}"
+												class="h-7 w-7 rounded-md border border-gray-700 bg-gray-900 text-gray-300 hover:border-emerald-500 hover:text-emerald-300">+</button>
+										</form>
+									{/if}
+								</td>
 								<td class="px-5 py-2.5">
 									{#if href}
 										<a {href} target="_blank" rel="noopener noreferrer" class="text-indigo-400 hover:text-indigo-300">abrir</a>
@@ -324,7 +397,22 @@
 										<span class="text-gray-600">{c.ficha_link}</span>
 									{/if}
 								</td>
+								{#if canManage}
+									<td class="px-5 py-2.5 text-right whitespace-nowrap">
+										<button type="button" onclick={() => (editingId = c.id)}
+											class="text-xs text-gray-400 hover:text-white transition-colors">Editar</button>
+										<form method="POST" action="?/deleteCharacter" class="inline ml-3"
+											use:enhance={({ cancel }) => {
+												if (!confirm(`Excluir "${c.name}" (@${c.username})? O XP e os prêmios de cena dele somem junto. Não dá pra desfazer.`)) cancel();
+												return async ({ update }) => update({ reset: false });
+											}}>
+											<input type="hidden" name="characterId" value={c.id} />
+											<button type="submit" class="text-xs text-gray-500 hover:text-red-400 transition-colors">Excluir</button>
+										</form>
+									</td>
+								{/if}
 							</tr>
+							{/if}
 						{/each}
 					</tbody>
 				</table>

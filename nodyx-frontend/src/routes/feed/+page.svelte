@@ -87,7 +87,9 @@
 				const post = await res.json()
 				triggerPointsBurst()   // +2 réputation, petit feedback qui s'envole
 				if (!replyTo) {
-					posts = [post, ...posts]
+					// Le socket 'feed:new' peut arriver AVANT la réponse HTTP et avoir déjà
+					// inséré le post -> sans dédup, clé dupliquée dans le {#each} = page 500.
+					if (!posts.some(p => p.id === post.id)) posts = [post, ...posts]
 				} else {
 					// Fil aplati : on ouvre + recharge le fil de la RACINE, pas du parent
 					// direct -> une réponse à une réponse apparaît bien sous la racine.

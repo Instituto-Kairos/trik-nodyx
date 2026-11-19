@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { untrack, tick } from 'svelte';
 	import { flip } from 'svelte/animate';
-	import { dndzone } from 'svelte-dnd-action';
+	import { dragHandleZone, dragHandle } from 'svelte-dnd-action';
 	import { enhance } from '$app/forms';
 	import type { PageData, ActionData } from './$types';
 	import { t } from '$lib/i18n';
@@ -21,6 +21,8 @@
 	const flipDurationMs = 150;
 	let reorderForm: HTMLFormElement | undefined;
 
+	// Arrasto só pela alça (⠿): no mobile, tocar ou rolar a linha não pode
+	// iniciar um arrasto (dragHandleZone + use:dragHandle).
 	function handleDndConsider(e: CustomEvent<{ items: Tag[] }>) {
 		sortableTags = e.detail.items;
 	}
@@ -257,7 +259,7 @@
 				</thead>
 				<!-- Arrastar e soltar desligado durante uma busca (a lista filtrada não é a ordem completa) ou uma edição -->
 				<tbody
-					use:dndzone={{ items: filtered, flipDurationMs, dragDisabled: editId !== null || search.trim() !== '', dropTargetStyle: {} }}
+					use:dragHandleZone={{ items: filtered, flipDurationMs, dragDisabled: editId !== null || search.trim() !== '', dropTargetStyle: {} }}
 					onconsider={handleDndConsider}
 					onfinalize={handleDndFinalize}>
 					{#each filtered as tag (tag.id)}
@@ -310,7 +312,7 @@
 								<div class="tag-row-actions">
 									{#if !search.trim()}
 										{@const idx = sortableTags.findIndex((x: any) => x.id === tag.id)}
-										<span aria-hidden="true" class="tag-grip">⠿</span>
+										<span class="tag-grip" use:dragHandle>⠿</span>
 										<form method="POST" action="?/move" use:enhance class="inline">
 											<input type="hidden" name="tag_id" value={tag.id} />
 											<button type="submit" name="dir" value="up" disabled={idx === 0}
@@ -343,7 +345,7 @@
 </div>
 
 <style>
-	.tag-grip { cursor: grab; user-select: none; touch-action: none; padding: 0 0.25rem; font-size: 1.1rem; color: var(--nx-text-muted); }
+	.tag-grip { cursor: grab; user-select: none; touch-action: none; padding: 0.5rem 0.6rem; display: inline-flex; align-items: center; justify-content: center; min-width: 2.25rem; min-height: 2.25rem; font-size: 1.1rem; color: var(--nx-text-muted); }
 	.tag-grip:active { cursor: grabbing; }
 	.tag-cats { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.375rem; }
 	.tag-cats-state { font-weight: 400; color: var(--nx-text-muted); }

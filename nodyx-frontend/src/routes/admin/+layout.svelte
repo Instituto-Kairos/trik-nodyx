@@ -101,7 +101,9 @@
 					.map((i) =>
 						i.href === '/admin/octoguard' && !mayOpenAdmin(i.href, access) && mayOpenAdmin('/admin/octoguard/mutes', access)
 							? { ...i, href: '/admin/octoguard/mutes' }
-							: i,
+							: i.labelKey === 'anav.lbl_trik' && !mayOpenAdmin(i.href, access) && mayOpenAdmin('/admin/trik/au', access)
+								? { ...i, href: '/admin/trik/au' }
+								: i,
 					)
 					.filter((i) => mayOpenAdmin(i.href, access)),
 			}))

@@ -185,6 +185,47 @@ export async function listAllAuCharacters(): Promise<TrikAuCharacterAdmin[]> {
   return rows
 }
 
+/**
+ * Ajuste manual de XP pelo admin (aba AU): soma ou subtrai, sem passar de 0.
+ * AU não tem nível (trik_018), então é só o número. null = não achou.
+ */
+export async function adjustAuCharacterXp(characterId: string, delta: number): Promise<number | null> {
+  const { rows } = await db.query<{ xp: number }>(
+    `UPDATE trik_au_characters SET xp = GREATEST(0, xp + $2) WHERE id = $1 RETURNING xp::int AS xp`,
+    [characterId, delta]
+  )
+  return rows[0]?.xp ?? null
+}
+
+/**
+ * Edição pelo admin/moderação (aba AU): nome e ficha.
+ * 'not_found' = id inexistente; 'duplicate' = o dono já tem outro com esse nome.
+ */
+export async function updateAuCharacter(
+  characterId: string, name: string, fichaLink: string
+): Promise<TrikAuCharacter | 'not_found' | 'duplicate'> {
+  try {
+    const { rows } = await db.query<TrikAuCharacter>(
+      `UPDATE trik_au_characters SET name = $2, ficha_link = $3 WHERE id = $1
+       RETURNING ${AU_CHARACTER_COLS}`,
+      [characterId, name, fichaLink]
+    )
+    return rows[0] ?? 'not_found'
+  } catch (err: any) {
+    if (err?.code === '23505') return 'duplicate'
+    throw err
+  }
+}
+
+/**
+ * Exclusão pelo admin/moderação. Os prêmios de cena (trik_au_scene_awards)
+ * caem em cascata; distribuições de narrador ficam com au_character_id NULL.
+ */
+export async function deleteAuCharacter(characterId: string): Promise<boolean> {
+  const { rowCount } = await db.query(`DELETE FROM trik_au_characters WHERE id = $1`, [characterId])
+  return (rowCount ?? 0) > 0
+}
+
 /** null = o jogador já tem um personagem AU com esse nome (sem diferenciar caixa). */
 export async function createAuCharacter(userId: string, name: string, fichaLink: string): Promise<TrikAuCharacter | null> {
   const { rows } = await db.query<TrikAuCharacter>(

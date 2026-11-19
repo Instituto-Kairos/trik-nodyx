@@ -24,6 +24,8 @@ const RULES: Array<{ prefix: string; exact?: boolean; any: Permission[] | 'staff
 	// Le bouclier : toute l'équipe le lève et le baisse (pendant un raid, on n'attend pas un admin)
 	{ prefix: '/admin/octoguard/shield', any: ['moderate_members', 'manage_octoguard'] },
 	{ prefix: '/admin/octoguard', any: ['manage_octoguard'] },
+	// RPG: a moderação lê a aba AU (só leitura); o resto do /admin/trik é de admin
+	{ prefix: '/admin/trik/au', any: ['moderate_members'] },
 ]
 
 function isAdmin(a: AdminAccess | null | undefined): boolean {
