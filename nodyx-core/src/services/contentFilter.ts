@@ -2,7 +2,7 @@
  * contentFilter.ts — Filtre de contenu haineux / symboles interdits.
  *
  * Bloque :
- *  1. Symboles Unicode nazis / haineux (swastika, runes SS, rune Odal…)
+ *  1. Symboles Unicode haineux — DÉSACTIVÉ (liste BLOCKED_CODEPOINTS vide)
  *  2. Patterns configurés par l'admin via BLOCKED_CONTENT_PATTERNS (regex, séparés par |)
  *
  * Usage :
@@ -47,12 +47,9 @@ import { logOctoGuardAction } from './octoguard/logger'
 // ── Code points bloqués ───────────────────────────────────────────────────────
 
 const BLOCKED_CODEPOINTS: ReadonlySet<number> = new Set([
-  0x5350,  // 卐  Swastika droit (croix gammée nazie)
-  0x534D,  // 卍  Swastika gauche / manji
-  0x16CB,  // ᛋ  Rune Sowilō — sigle SS nazi
-  0x16C9,  // ᛉ  Rune Algiz/Elhaz — Lebensrune SS
-  0x16DF,  // ᛟ  Rune Othala/Odal — insigne Waffen-SS
-  0x16F3,  // ᛳ  Rune Arlaug
+  // Filtre de symboles désactivé à la demande de l'admin (runes nordiques et
+  // croix gammées retirées). Pour le réactiver, rajouter des code points ici :
+  //   0x5350 (卐), 0x534D (卍), 0x16CB, 0x16C9, 0x16DF, 0x16F3 (runes)
 ])
 
 // ── Patterns admin (BLOCKED_CONTENT_PATTERNS=regex1|regex2) ───────────────────
@@ -82,15 +79,17 @@ const ADMIN_PATTERNS: readonly RegExp[] = buildAdminPatterns()
  *          { ok: false, reason } si un symbole interdit est détecté
  */
 export function checkContent(text: string, opts: { silent?: boolean } = {}): ContentCheckResult {
-  // 1 — Scan code-point par code-point
-  for (const char of text) {
-    const cp = char.codePointAt(0) ?? 0
-    if (BLOCKED_CODEPOINTS.has(cp)) {
-      if (!opts.silent) journal('hate_symbol', text)
-      return {
-        ok:     false,
-        reason: 'Contenu refusé : symbole haineux ou interdit détecté',
-        rule:   'hate_symbol',
+  // 1 — Scan code-point par code-point (désactivé : voir BLOCKED_CODEPOINTS)
+  if (BLOCKED_CODEPOINTS.size > 0) {
+    for (const char of text) {
+      const cp = char.codePointAt(0) ?? 0
+      if (BLOCKED_CODEPOINTS.has(cp)) {
+        if (!opts.silent) journal('hate_symbol', text)
+        return {
+          ok:     false,
+          reason: 'Contenu refusé : symbole haineux ou interdit détecté',
+          rule:   'hate_symbol',
+        }
       }
     }
   }

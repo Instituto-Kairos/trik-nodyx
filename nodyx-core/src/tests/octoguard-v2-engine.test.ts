@@ -150,12 +150,9 @@ describe('le point d’entrée unique (forum, profils, sondages, wiki)', () => {
 })
 
 describe('le filtre des symboles haineux (D11)', () => {
-  it('reste actif OctoGuard éteint, et passe au journal', async () => {
+  it('est désactivé : runes et croix gammées passent', () => {
     process.env.OCTOGUARD_ENABLED = 'false'
-    const r = checkContent('salut 卐')
-    expect(r).toMatchObject({ ok: false, rule: 'hate_symbol' })
-    await flush()
-    expect(calls.some(c => c.params.includes('octoguard.hate_symbol_blocked'))).toBe(true)
+    expect(checkContent('salut 卐 ᛋ ᛉ ᛟ ᛳ')).toEqual({ ok: true })
   })
 })
 
